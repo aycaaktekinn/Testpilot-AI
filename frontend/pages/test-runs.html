@@ -1,0 +1,759 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full gap-lg">
+
+    <!-- PAGE HEADER -->
+    <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-md">
+
+        <div class="flex flex-col gap-base">
+            <h1 class="font-display-lg text-display-lg text-on-surface tracking-tight">
+                Test Runs
+            </h1>
+
+            <p class="font-body-lg text-body-lg text-on-surface-variant">
+                History of all Playwright test executions.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+
+            <button
+                    id="refreshTestRunsButton"
+                    class="flex items-center gap-2
+                           px-4 py-2 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-container-high
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">
+                    refresh
+                </span>
+
+                Refresh
+            </button>
+
+            <!-- Kırmızı DEĞİL, nötr çerçeveli — sadece hover'da kırmızıya döner. Yıkıcı bir
+                 işlem olduğu için Refresh'ten fazla göz alıcı olmamalı (yanlışlıkla tıklama
+                 riskini azaltmak için), ama tıklayınca zaten confirm() ile ayrıca onay isteniyor.
+                 Bkz. generated-tests.html'deki clearAllGeneratedTestsButton — aynı desen. -->
+            <button
+                    id="clearAllTestRunsButton"
+                    class="flex items-center gap-2
+                           px-4 py-2 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-error
+                           hover:border-error/40
+                           hover:bg-error/10
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">
+                    delete_sweep
+                </span>
+
+                Clear All
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <!-- STATS -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-md">
+
+        <!-- TOTAL -->
+        <div
+                class="bg-surface-container-low rounded-lg
+                       border border-outline-variant
+                       p-md flex flex-col gap-xs
+                       relative overflow-hidden
+                       hover:border-[#334155]
+                       transition-colors"
+        >
+
+            <div
+                    class="absolute inset-0
+                           bg-gradient-to-br
+                           from-surface-bright/5
+                           to-transparent
+                           pointer-events-none"
+            ></div>
+
+            <span
+                    class="font-label-caps text-label-caps
+                           text-on-surface-variant
+                           uppercase tracking-wider"
+            >
+                Total Runs
+            </span>
+
+            <span
+                    id="totalRunsCount"
+                    class="font-headline-md text-headline-md
+                           text-on-surface"
+            >
+                0
+            </span>
+
+        </div>
+
+
+        <!-- PASSED -->
+        <div
+                class="bg-surface-container-low rounded-lg
+                       border border-outline-variant
+                       p-md flex flex-col gap-xs
+                       relative overflow-hidden
+                       hover:border-[#334155]
+                       transition-colors"
+        >
+
+            <div
+                    class="absolute inset-0
+                           bg-gradient-to-br
+                           from-secondary/5
+                           to-transparent
+                           pointer-events-none"
+            ></div>
+
+            <span
+                    class="font-label-caps text-label-caps
+                           text-on-surface-variant
+                           uppercase tracking-wider"
+            >
+                Passed
+            </span>
+
+            <div class="flex items-baseline gap-sm">
+
+                <span
+                        id="passedRunsCount"
+                        class="font-headline-md text-headline-md
+                               text-secondary"
+                >
+                    0
+                </span>
+
+                <span
+                        id="passedRunsPercentage"
+                        class="font-body-sm text-body-sm
+                               text-secondary
+                               bg-secondary/10
+                               px-xs py-[2px]
+                               rounded-full"
+                >
+                    0%
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <!-- FAILED -->
+        <div
+                class="bg-surface-container-low rounded-lg
+                       border border-outline-variant
+                       p-md flex flex-col gap-xs
+                       relative overflow-hidden
+                       hover:border-error/30
+                       transition-colors"
+        >
+
+            <div
+                    class="absolute inset-0
+                           bg-gradient-to-br
+                           from-error/5
+                           to-transparent
+                           pointer-events-none"
+            ></div>
+
+            <span
+                    class="font-label-caps text-label-caps
+                           text-on-surface-variant
+                           uppercase tracking-wider"
+            >
+                Failed
+            </span>
+
+            <div class="flex items-baseline gap-sm">
+
+                <span
+                        id="failedRunsCount"
+                        class="font-headline-md text-headline-md
+                               text-error"
+                >
+                    0
+                </span>
+
+                <span
+                        id="failedRunsPercentage"
+                        class="font-body-sm text-body-sm
+                               text-error
+                               bg-error/10
+                               px-xs py-[2px]
+                               rounded-full"
+                >
+                    0%
+                </span>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- DATA TABLE CARD -->
+    <div
+            class="bg-surface
+                   border border-outline-variant
+                   rounded-xl
+                   flex flex-col flex-1
+                   overflow-hidden
+                   shadow-[0_4px_20px_-10px_rgba(0,0,0,0.5)]"
+    >
+
+        <!-- FILTER BAR -->
+        <div
+                class="p-md
+                       border-b border-outline-variant
+                       flex flex-wrap
+                       items-center gap-sm
+                       bg-surface-container-low"
+        >
+
+            <!-- SEARCH -->
+            <div class="relative flex-1 min-w-[200px]">
+
+                <span
+                        class="material-symbols-outlined
+                               absolute left-sm top-1/2
+                               -translate-y-1/2
+                               text-on-surface-variant
+                               text-[18px]"
+                >
+                    search
+                </span>
+
+                <input
+                        id="testRunsSearchInput"
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               pl-xl pr-sm py-xs
+                               text-body-md text-on-surface
+                               placeholder:text-on-surface-variant/50
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none"
+                        placeholder="Search test files or errors..."
+                        aria-label="Search test files or errors"
+                        type="text"
+                />
+
+            </div>
+
+
+            <!-- FILTERS -->
+            <div class="flex items-center gap-sm flex-wrap">
+
+                <select
+                        id="browserFilter"
+                        class="bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-xs
+                               text-body-md text-on-surface
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none
+                               min-w-[130px]
+                               cursor-pointer"
+                >
+                    <option value="">Browser: All</option>
+                    <option value="chromium">Chromium</option>
+                    <option value="firefox">Firefox</option>
+                    <option value="webkit">WebKit</option>
+                </select>
+
+
+                <select
+                        id="statusFilter"
+                        class="bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-xs
+                               text-body-md text-on-surface
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none
+                               min-w-[120px]
+                               cursor-pointer"
+                >
+                    <option value="">Status: All</option>
+                    <option value="passed">Passed</option>
+                    <option value="failed">Failed</option>
+                    <option value="running">Running</option>
+                </select>
+
+            </div>
+
+        </div>
+
+
+        <!-- TABLE -->
+        <div class="overflow-x-auto">
+
+            <table class="w-full text-left border-collapse">
+
+                <thead
+                        class="bg-surface-container-highest
+                               border-b border-outline-variant
+                               font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+
+                <tr>
+
+                    <th class="px-md py-sm font-semibold w-12 text-center">
+                        Status
+                    </th>
+
+                    <th class="px-md py-sm font-semibold">
+                        Test File
+                    </th>
+
+                    <th class="px-md py-sm font-semibold">
+                        Browser
+                    </th>
+
+                    <th class="px-md py-sm font-semibold">
+                        Duration
+                    </th>
+
+                    <th class="px-md py-sm font-semibold">
+                        Executed
+                    </th>
+
+                    <th class="px-md py-sm font-semibold text-right">
+                        Actions
+                    </th>
+
+                </tr>
+
+                </thead>
+
+
+                <tbody
+                        id="testRunsTableBody"
+                        class="font-body-md text-body-md
+                               divide-y divide-outline-variant/30"
+                >
+
+                <!-- REAL DATA WILL BE INSERTED HERE -->
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+
+        <!-- EMPTY STATE -->
+        <div
+                id="testRunsEmptyState"
+                class="flex flex-col items-center
+                       justify-center
+                       py-16 px-4
+                       text-center
+                       text-on-surface-variant"
+        >
+
+            <span
+                    class="material-symbols-outlined
+                           text-[42px]
+                           mb-3 opacity-60"
+            >
+                play_circle
+            </span>
+
+            <h3
+                    class="font-headline-sm text-headline-sm
+                           text-on-surface"
+            >
+                No test runs yet
+            </h3>
+
+            <p
+                    class="font-body-sm text-body-sm
+                           mt-1 max-w-md"
+            >
+                Test executions will appear here after you run a generated Playwright test.
+            </p>
+
+        </div>
+
+
+        <!-- PAGINATION — Generated Tests sayfasıyla AYNI bileşen stili (metin etiketli
+             Previous/Next + vurgulu sayfa numarası). Önceden burada sadece ok ikonlu, farklı
+             bir tasarım vardı; iki kardeş liste sayfası artık tek bir görsel dil kullanıyor. -->
+        <div
+                id="testRunsPagination"
+                class="hidden
+                       p-md
+                       border-t border-outline-variant
+                       items-center justify-between
+                       bg-surface-container-lowest/30"
+        >
+
+            <span
+                    id="testRunsPaginationInfo"
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant"
+            >
+                Showing 0 entries
+            </span>
+
+            <div class="flex gap-xs">
+
+                <button
+                        id="previousTestRunsPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               text-on-surface-variant
+                               border border-outline-variant
+                               hover:bg-surface-container-high
+                               disabled:opacity-40
+                               disabled:cursor-not-allowed"
+                        type="button"
+                >
+                    Previous
+                </button>
+
+
+                <span
+                        id="currentTestRunsPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               bg-primary-container
+                               text-on-primary-container
+                               border border-primary-container"
+                >
+                    1
+                </span>
+
+
+                <button
+                        id="nextTestRunsPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               text-on-surface-variant
+                               border border-outline-variant
+                               hover:bg-surface-container-high
+                               disabled:opacity-40
+                               disabled:cursor-not-allowed"
+                        type="button"
+                >
+                    Next
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+    <!-- TEST RUN DETAILS MODAL -->
+    <div
+            id="testRunDetailsModal"
+            class="fixed inset-0 z-[100]
+               hidden items-center justify-center
+               bg-black/60 backdrop-blur-sm
+               px-4"
+    >
+
+        <div
+                class="w-full max-w-2xl
+                   bg-surface-container
+                   border border-outline-variant
+                   rounded-xl
+                   shadow-2xl
+                   overflow-hidden"
+        >
+
+            <!-- HEADER -->
+            <div
+                    class="flex items-center justify-between
+                       px-5 py-4
+                       border-b border-outline-variant
+                       bg-surface-container-high"
+            >
+
+                <div class="flex items-center gap-3">
+
+                    <div
+                            class="w-9 h-9
+                               rounded-lg
+                               bg-primary-container/20
+                               flex items-center justify-center"
+                    >
+                    <span
+                            class="material-symbols-outlined
+                                   text-primary"
+                    >
+                        receipt_long
+                    </span>
+                    </div>
+
+                    <div>
+
+                        <h3
+                                class="font-headline-sm
+                                   text-headline-sm
+                                   text-on-surface"
+                        >
+                            Test Run Details
+                        </h3>
+
+                        <p
+                                class="text-xs
+                                   text-on-surface-variant"
+                        >
+                            Execution information
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <button
+                        id="closeTestRunDetailsModal"
+                        class="text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant
+                           p-2 rounded-lg
+                           transition-colors"
+                        type="button"
+                        aria-label="Close"
+                >
+                <span class="material-symbols-outlined">
+                    close
+                </span>
+                </button>
+
+            </div>
+
+
+            <!-- CONTENT -->
+            <div class="p-5 flex flex-col gap-5">
+
+                <!-- TEST FILE -->
+                <div>
+
+                    <div
+                            class="font-label-caps
+                               text-label-caps
+                               text-on-surface-variant
+                               mb-2"
+                    >
+                        Test File
+                    </div>
+
+                    <div
+                            id="runDetailsFile"
+                            class="bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-4 py-3
+                               font-mono text-sm
+                               text-on-surface
+                               break-all"
+                    >
+                        -
+                    </div>
+
+                </div>
+
+
+                <!-- GRID -->
+                <div
+                        class="grid grid-cols-2
+                           md:grid-cols-3
+                           gap-4"
+                >
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Status
+                        </div>
+
+                        <div
+                                id="runDetailsStatus"
+                                class="font-semibold"
+                        >
+                            -
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Browser
+                        </div>
+
+                        <div id="runDetailsBrowser">
+                            -
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Duration
+                        </div>
+
+                        <div id="runDetailsDuration">
+                            -
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Exit Code
+                        </div>
+
+                        <div id="runDetailsExitCode">
+                            -
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Executed
+                        </div>
+
+                        <div id="runDetailsExecuted">
+                            -
+                        </div>
+                    </div>
+
+
+                    <div>
+                        <div
+                                class="text-xs
+                                   text-on-surface-variant
+                                   mb-1"
+                        >
+                            Run ID
+                        </div>
+
+                        <div
+                                id="runDetailsId"
+                                class="break-all"
+                        >
+                            -
+                        </div>
+                    </div>
+
+                </div>
+
+
+                <!-- ERROR -->
+                <div
+                        id="runDetailsErrorSection"
+                        class="hidden"
+                >
+
+                    <div
+                            class="font-label-caps
+                               text-label-caps
+                               text-error
+                               mb-2"
+                    >
+                        Error
+                    </div>
+
+                    <pre
+                            id="runDetailsError"
+                            class="bg-error/5
+                               border border-error/20
+                               rounded-lg
+                               p-4
+                               text-error
+                               font-mono text-xs
+                               whitespace-pre-wrap
+                               break-words
+                               max-h-48
+                               overflow-auto"
+                    ></pre>
+
+                </div>
+
+            </div>
+
+
+            <!-- FOOTER -->
+            <div
+                    class="flex justify-end
+                       px-5 py-4
+                       border-t border-outline-variant
+                       bg-surface-container-low"
+            >
+
+                <button
+                        id="closeTestRunDetailsButton"
+                        class="bg-primary-container
+                           hover:bg-primary-container/80
+                           text-white
+                           px-5 py-2
+                           rounded-lg
+                           transition-colors"
+                        type="button"
+                >
+                    Close
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

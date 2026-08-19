@@ -1,0 +1,484 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full">
+
+    <!-- PAGE HEADER -->
+    <div class="flex justify-between items-end mb-lg gap-4 flex-wrap">
+
+        <div>
+            <h1 class="font-display-lg text-display-lg text-on-surface mb-base">
+                Generated Tests
+            </h1>
+
+            <p class="font-body-lg text-body-lg text-on-surface-variant">
+                AI-generated Playwright test files ready for review and execution.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+
+            <button
+                    id="refreshGeneratedTestsButton"
+                    class="flex items-center gap-2
+                           px-4 py-2 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-container-high
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">
+                    refresh
+                </span>
+
+                Refresh
+            </button>
+
+            <!-- Kırmızı DEĞİL, nötr çerçeveli — sadece hover'da kırmızıya döner. Yıkıcı bir
+                 işlem olduğu için Refresh'ten fazla göz alıcı olmamalı (yanlışlıkla tıklama
+                 riskini azaltmak için), ama tıklayınca zaten confirm() ile ayrıca onay isteniyor. -->
+            <button
+                    id="clearAllGeneratedTestsButton"
+                    class="flex items-center gap-2
+                           px-4 py-2 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-error
+                           hover:border-error/40
+                           hover:bg-error/10
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">
+                    delete_sweep
+                </span>
+
+                Clear All
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <!-- STATISTICS -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-gutter mb-lg">
+
+        <!-- TOTAL TESTS -->
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md"
+        >
+
+            <div class="flex items-center justify-between mb-sm">
+
+                <h3
+                        class="font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+                    Total Tests
+                </h3>
+
+                <span
+                        class="material-symbols-outlined
+                               text-on-surface-variant opacity-50"
+                >
+                    data_object
+                </span>
+
+            </div>
+
+            <div
+                    id="generatedTestsTotal"
+                    class="text-[24px] leading-tight
+                           font-headline-md font-semibold
+                           text-on-surface"
+            >
+                0
+            </div>
+
+        </div>
+
+
+        <!-- LAST GENERATED -->
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md"
+        >
+
+            <div class="flex items-center justify-between mb-sm">
+
+                <h3
+                        class="font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+                    Last Generated
+                </h3>
+
+                <span
+                        class="material-symbols-outlined
+                               text-on-surface-variant opacity-50"
+                >
+                    schedule
+                </span>
+
+            </div>
+
+            <div
+                    id="generatedTestsLastGenerated"
+                    class="text-[24px] leading-tight
+                           font-headline-md font-semibold
+                           text-on-surface"
+            >
+                —
+            </div>
+
+        </div>
+
+
+        <!-- LAST RUN STATUS -->
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md"
+        >
+
+            <div class="flex items-center justify-between mb-sm">
+
+                <h3
+                        class="font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+                    Last Run Status
+                </h3>
+
+                <span
+                        class="material-symbols-outlined
+                               text-on-surface-variant opacity-50"
+                >
+                    fact_check
+                </span>
+
+            </div>
+
+            <div
+                    id="generatedTestsLastRunStatus"
+                    class="text-[24px] leading-tight
+                           font-headline-md font-semibold
+                           text-on-surface-variant"
+            >
+                —
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- MAIN DATA CARD -->
+    <div
+            class="bg-surface-container-low/60
+                   border border-outline-variant
+                   rounded-xl
+                   flex flex-col
+                   overflow-hidden"
+    >
+
+        <!-- TOOLBAR -->
+        <div
+                class="p-md
+                       border-b border-outline-variant
+                       flex flex-wrap
+                       justify-between
+                       items-center gap-3"
+        >
+
+            <!-- SEARCH -->
+            <div class="relative flex-1 min-w-[260px] max-w-[500px]">
+
+                <span
+                        class="material-symbols-outlined
+                               absolute left-sm top-1/2
+                               -translate-y-1/2
+                               text-on-surface-variant
+                               text-[20px]"
+                >
+                    search
+                </span>
+
+                <input
+                        id="generatedTestsSearch"
+                        class="w-full
+                               bg-surface-container-lowest
+                               border border-outline-variant
+                               text-on-surface
+                               text-body-md
+                               font-body-md
+                               rounded-lg
+                               pl-[36px] pr-sm py-[8px]
+                               focus:outline-none
+                               focus:border-primary-container
+                               focus:ring-0"
+                        placeholder="Search generated test files..."
+                        aria-label="Search generated test files"
+                        type="text"
+                />
+
+            </div>
+
+
+            <!-- SORT -->
+            <div class="relative">
+
+                <select
+                        id="generatedTestsSort"
+                        class="appearance-none
+                               bg-surface-container-lowest
+                               border border-outline-variant
+                               text-on-surface
+                               text-body-md
+                               font-body-md
+                               rounded-lg
+                               pl-sm pr-10 py-[8px]
+                               focus:outline-none
+                               focus:border-primary-container
+                               cursor-pointer"
+                >
+                    <option value="newest">
+                        Newest First
+                    </option>
+
+                    <option value="oldest">
+                        Oldest First
+                    </option>
+
+                    <option value="name">
+                        File Name
+                    </option>
+                </select>
+
+                <span
+                        class="material-symbols-outlined
+                               absolute right-sm top-1/2
+                               -translate-y-1/2
+                               text-on-surface-variant
+                               pointer-events-none
+                               text-[18px]"
+                >
+                    expand_more
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <!-- TABLE -->
+        <div class="overflow-x-auto">
+
+            <table class="w-full text-left border-collapse">
+
+                <thead>
+
+                <tr
+                        class="border-b border-outline-variant
+                               bg-surface-container-lowest/50"
+                >
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider"
+                    >
+                        Test File
+                    </th>
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider"
+                    >
+                        Type
+                    </th>
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider"
+                    >
+                        Created
+                    </th>
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider
+                                   text-right"
+                    >
+                        Actions
+                    </th>
+
+                </tr>
+
+                </thead>
+
+
+                <tbody
+                        id="generatedTestsTableBody"
+                        class="font-body-md text-body-md
+                               divide-y divide-outline-variant"
+                >
+                <!-- REAL BACKEND DATA -->
+                </tbody>
+
+            </table>
+
+        </div>
+
+
+        <!-- EMPTY STATE -->
+        <div
+                id="generatedTestsEmptyState"
+                class="hidden
+                       p-12
+                       flex-col
+                       items-center
+                       justify-center
+                       text-center"
+        >
+
+            <div
+                    class="w-16 h-16
+                           rounded-full
+                           bg-surface-container-highest
+                           flex items-center justify-center
+                           mb-md
+                           border border-outline-variant"
+            >
+                <span
+                        class="material-symbols-outlined
+                               text-[32px]
+                               text-on-surface-variant"
+                >
+                    code_blocks
+                </span>
+            </div>
+
+            <h3
+                    class="font-headline-sm text-headline-sm
+                           text-on-surface mb-xs"
+            >
+                No generated tests yet
+            </h3>
+
+            <p
+                    class="font-body-md text-body-md
+                           text-on-surface-variant
+                           max-w-md mb-lg"
+            >
+                Create an AI-assisted Playwright test to see it here.
+            </p>
+
+            <button
+                    id="generatedTestsCreateButton"
+                    class="inline-flex items-center gap-xs
+                           bg-primary-container
+                           text-on-primary-container
+                           rounded-lg
+                           py-sm px-lg
+                           font-body-md text-body-md
+                           font-bold
+                           hover:bg-primary-container/90
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[20px]">
+                    add
+                </span>
+
+                Create Test
+            </button>
+
+        </div>
+
+
+        <!-- PAGINATION -->
+        <div
+                id="generatedTestsPagination"
+                class="hidden
+                       p-md
+                       border-t border-outline-variant
+                       justify-between items-center
+                       bg-surface-container-lowest/30"
+        >
+
+            <span
+                    id="generatedTestsPaginationInfo"
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant"
+            >
+                Showing 0 entries
+            </span>
+
+
+            <div class="flex gap-xs">
+
+                <button
+                        id="generatedTestsPreviousPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               text-on-surface-variant
+                               border border-outline-variant
+                               hover:bg-surface-container-high
+                               disabled:opacity-40
+                               disabled:cursor-not-allowed"
+                        type="button"
+                >
+                    Previous
+                </button>
+
+
+                <span
+                        id="generatedTestsCurrentPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               bg-primary-container
+                               text-on-primary-container
+                               border border-primary-container"
+                >
+                    1
+                </span>
+
+
+                <button
+                        id="generatedTestsNextPage"
+                        class="px-sm py-1
+                               rounded-md
+                               font-body-sm text-body-sm
+                               text-on-surface-variant
+                               border border-outline-variant
+                               hover:bg-surface-container-high
+                               disabled:opacity-40
+                               disabled:cursor-not-allowed"
+                        type="button"
+                >
+                    Next
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

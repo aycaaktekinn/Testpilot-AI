@@ -1,0 +1,160 @@
+import type { LlmCallOptions, LlmMessage, LlmProvider } from './LlmProvider.js';
+import { env } from '../../config/env.js';
+import { createLogger } from '../../config/logger.js';
+
+const log = createLogger('OpenRouterProvider');
+
+interface OpenRouterChoice {
+  message?: { content?: string; reasoning?: string; reasoning_content?: string };
+  finish_reason?: string;
+  native_finish_reason?: string;
+}
+
+interface OpenRouterResponse {
+  choices?: OpenRouterChoice[];
+  error?: { message?: string };
+}
+
+const DEFAULT_MAX_TOKENS = 1024;
+
+/**
+ * OpenRouter (https://openrouter.ai) üzerinden, OpenAI-uyumlu chat completions API'sini kullanır.
+ * Varsayılan model ücretsiz (":free" uzantılı) bir model olacak şekilde yapılandırılmıştır.
+ */
+export class OpenRouterProvider implements LlmProvider {
+  readonly name = 'openrouter';
+
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly model: string;
+
+  constructor() {
+    if (!env.OPENROUTER_API_KEY) {
+      // env.ts zaten LLM_PROVIDER="openrouter" iken bunu zorunlu kılıyor; bu sadece ek bir güvenlik ağı.
+      throw new Error('OPENROUTER_API_KEY tanımlı değil');
+    }
+    this.apiKey = env.OPENROUTER_API_KEY;
+    this.baseUrl = env.OPENROUTER_BASE_URL;
+    this.model = env.OPENROUTER_MODEL;
+  }
+
+  async complete(messages: LlmMessage[], options: LlmCallOptions = {}): Promise<string> {
+    const started = Date.now();
+    const requestedMaxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+    const data = await this.request(messages, options, requestedMaxTokens);
+    const choice = data.choices?.[0];
+    const content = choice?.message?.content;
+    const reasoning = choice?.message?.reasoning ?? choice?.message?.reasoning_content;
+    const finishReason = choice?.finish_reason ?? choice?.native_finish_reason;
+
+    // finish_reason === 'length': model, VERİLEN max_tokens bütçesi bitmeden yanıtı TAMAMLAYAMADAN
+    // kesildi. Bu İKİ farklı şekilde ortaya çıkabilir: (a) "reasoning" modelleri tüm bütçeyi
+    // görünmez "iç düşünce" metnine harcayıp content'i TAMAMEN boş bırakabilir, (b) normal bir
+    // model content ÜRETMEYE başlamış ama yarıda (ör. bir JSON dizisinin ortasında — tam olarak
+    // ScenarioSuggester'da canlı gözlemlenen "Unterminated string in JSON" hatasına yol açan durum)
+    // kesilmiş olabilir; bu durumda content BOŞ DEĞİLDİR ama kullanılamaz haldedir. ESKİDEN SADECE
+    // (a) durumu ele alınıyordu (content boşsa VE reasoning doluysa retry) — (b) durumunda content
+    // dolu olduğu için `if (content) return content` hiç finish_reason'a bakmadan DOĞRUDAN
+    // döndürüyordu, çağıranı (ör. ScenarioSuggester) kesik/bozuk JSON'u ayrıştırmaya çalışıp
+    // başarısız olmaya mahkûm ediyordu. Şimdi HER İKİ durumda da AYNI çözümü uyguluyoruz: aynı
+    // isteği daha yüksek bir max_tokens ile bir kez daha dene. Bkz. README > Sorun giderme.
+    if (finishReason === 'length' && requestedMaxTokens < 4000) {
+      const bumpedMaxTokens = Math.min(requestedMaxTokens * 3, 4000);
+      log.warn(
+        {
+          model: this.model,
+          requestedMaxTokens,
+          bumpedMaxTokens,
+          hadReasoning: Boolean(reasoning),
+          contentWasTruncated: Boolean(content),
+        },
+        'Yanıt token bütçesi yetersiz kaldı (finish_reason=length); daha yüksek max_tokens ile tekrar deneniyor',
+      );
+      const retryData = await this.request(messages, options, bumpedMaxTokens);
+      const retryContent = retryData.choices?.[0]?.message?.content;
+      if (retryContent) {
+        log.debug({ durationMs: Date.now() - started, model: this.model }, 'LLM çağrısı (bütçe artırılarak) tamamlandı');
+        return retryContent;
+      }
+    }
+
+    if (content) {
+      // Yeniden deneme hiç tetiklenmediyse (finish_reason 'length' değildi) YA DA tetiklendi ama
+      // yine sonuç alınamadıysa (retryContent boş kaldıysa): elimizdeki (muhtemelen hâlâ kesik)
+      // içeriği boş dönmektense yine de döndürüyoruz — çağıranın (ör. ScenarioSuggester'ın kendi
+      // ayrıştırma/yeniden deneme mantığının) bir şansı olsun diye.
+      log.debug({ durationMs: Date.now() - started, model: this.model }, 'LLM çağrısı tamamlandı');
+      return content;
+    }
+
+    // Teşhis için tüm ham yanıtı logla (secret/kullanıcı verisi İÇERMEZ — yalnızca modelin
+    // ürettiği metin). Böylece bir sonraki oluşumda backend loglarından kök neden görülebilir.
+    log.error({ model: this.model, finishReason, rawResponse: data }, 'OpenRouter yanıtında içerik bulunamadı');
+    const hint =
+      finishReason === 'length'
+        ? ' (model token bütçesini "reasoning" için tüketmiş olabilir; farklı bir ücretsiz model deneyin)'
+        : ' (openrouter.ai/activity üzerinden bu isteğin ham kaydını inceleyebilirsiniz)';
+    throw new Error(`OpenRouter yanıtında içerik bulunamadı${hint}`);
+  }
+
+  private async request(
+    messages: LlmMessage[],
+    options: LlmCallOptions,
+    maxTokens: number,
+  ): Promise<OpenRouterResponse> {
+    // ÖNEMLİ: çıplak fetch() süresiz bekleyebilir — OpenRouter'ın ücretsiz modelleri yoğun
+    // saatlerde kuyruğa alınıp çok yavaş (hatta hiç) yanıt verebiliyor. AbortController olmadan
+    // bu istek asla zaman aşımına uğramaz ve tüm run (dolayısıyla frontend'deki istek) süresiz
+    // "takılı" görünür. Bu yüzden burada açıkça bir zaman sınırı uyguluyoruz.
+    const controller = new AbortController();
+    const timeoutMs = env.AGENT_LLM_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+          ...(env.OPENROUTER_SITE_URL ? { 'HTTP-Referer': env.OPENROUTER_SITE_URL } : {}),
+          ...(env.OPENROUTER_APP_NAME ? { 'X-Title': env.OPENROUTER_APP_NAME } : {}),
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature: options.temperature ?? 0.1,
+          max_tokens: maxTokens,
+          // NOT: response_format:"json_object" bilerek GÖNDERİLMİYOR. OpenRouter'daki ücretsiz
+          // modellerin bir kısmı bu parametreyi desteklemiyor ve isteği tamamen reddedebiliyor.
+          // Bunun yerine JSON çıktısı, sistem prompt'undaki talimat + ResponseParser'daki
+          // (kod bloğu ayıklama + zod doğrulama + otomatik yeniden deneme) katmanlarıyla sağlanıyor.
+        }),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        log.error({ timeoutMs, model: this.model }, 'OpenRouter isteği zaman aşımına uğradı');
+        throw new Error(
+          `OpenRouter isteği ${timeoutMs}ms içinde yanıt vermedi (ücretsiz model şu anda yavaş/meşgul olabilir). Adım yeniden denenecek.`,
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      log.error({ status: response.status, text }, 'OpenRouter isteği başarısız');
+      throw new Error(`OpenRouter API hatası (${response.status}): ${text.slice(0, 300)}`);
+    }
+
+    const data = (await response.json()) as OpenRouterResponse;
+    if (data.error) {
+      throw new Error(`OpenRouter API hatası: ${data.error.message ?? 'bilinmeyen hata'}`);
+    }
+    return data;
+  }
+}

@@ -1,0 +1,135 @@
+<div class="p-gutter lg:p-margin-desktop max-w-3xl">
+
+    <div class="flex flex-col gap-gutter">
+
+        <!-- EXECUTION DEFAULTS -->
+        <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
+
+            <div class="pb-sm border-b border-outline-variant">
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">settings_applications</span>
+                    Execution Defaults
+                </h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                    Default settings that will be pre-filled when creating a new test. Changes you
+                    make here are remembered in your browser (they persist even if you refresh the page).
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-lg">
+
+                <!-- BROWSER -->
+                <div class="flex flex-col gap-3">
+                    <label class="font-body-sm text-body-sm text-on-surface-variant font-semibold">
+                        Browser Engine
+                    </label>
+
+                    <div class="flex gap-2">
+                        <label class="flex-1 cursor-pointer">
+                            <input checked class="peer sr-only" name="settingsBrowser" type="radio" value="chromium" />
+                            <div class="p-2 border border-outline-variant rounded-md text-center peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary text-on-surface-variant transition-all hover:bg-surface-variant">
+                                <span class="font-body-sm text-body-sm font-semibold">Chromium</span>
+                            </div>
+                        </label>
+
+                        <label class="flex-1 cursor-pointer">
+                            <input class="peer sr-only" name="settingsBrowser" type="radio" value="firefox" />
+                            <div class="p-2 border border-outline-variant rounded-md text-center peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary text-on-surface-variant transition-all hover:bg-surface-variant">
+                                <span class="font-body-sm text-body-sm font-semibold">Firefox</span>
+                            </div>
+                        </label>
+
+                        <label class="flex-1 cursor-pointer">
+                            <input class="peer sr-only" name="settingsBrowser" type="radio" value="webkit" />
+                            <div class="p-2 border border-outline-variant rounded-md text-center peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:text-primary text-on-surface-variant transition-all hover:bg-surface-variant">
+                                <span class="font-body-sm text-body-sm font-semibold">WebKit</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- OPTIONS -->
+                <div class="flex flex-col gap-3">
+                    <label class="font-body-sm text-body-sm text-on-surface-variant font-semibold">
+                        Artifacts &amp; Options
+                    </label>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-surface-variant rounded transition-colors">
+                            <input id="settingsHeadedMode" checked class="rounded bg-surface-container border-outline-variant text-primary" type="checkbox" />
+                            <span class="font-body-sm text-body-sm text-on-surface">Headed Mode</span>
+                        </label>
+
+                        <label class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-surface-variant rounded transition-colors">
+                            <input id="settingsScreenshotOption" checked class="rounded bg-surface-container border-outline-variant text-primary" type="checkbox" />
+                            <span class="font-body-sm text-body-sm text-on-surface">Screenshots</span>
+                        </label>
+
+                        <label class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-surface-variant rounded transition-colors">
+                            <input id="settingsVideoOption" class="rounded bg-surface-container border-outline-variant text-primary" type="checkbox" />
+                            <span class="font-body-sm text-body-sm text-on-surface">Record Video</span>
+                        </label>
+
+                        <label class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-surface-variant rounded transition-colors">
+                            <input id="settingsTraceOption" checked class="rounded bg-surface-container border-outline-variant text-primary" type="checkbox" />
+                            <span class="font-body-sm text-body-sm text-on-surface">Retain Trace</span>
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+
+            <div id="settingsSavedNotice" class="hidden font-body-sm text-body-sm text-secondary flex items-center gap-1 mt-1">
+                <span class="material-symbols-outlined text-[16px]">check_circle</span>
+                Saved
+            </div>
+
+        </div>
+
+        <!-- AI ENGINE -->
+        <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
+
+            <div class="pb-sm border-b border-outline-variant">
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">smart_toy</span>
+                    AI Engine
+                </h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                    Read-only — these values are read from <code class="font-code-md text-code-md">.env</code>
+                    and cannot be changed here.
+                </p>
+            </div>
+
+            <div id="settingsLlmInfo" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="col-span-4 font-body-sm text-body-sm text-on-surface-variant">
+                    Loading...
+                </div>
+            </div>
+
+        </div>
+
+        <!-- AGENT BEHAVIOR -->
+        <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
+
+            <div class="pb-sm border-b border-outline-variant">
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">tune</span>
+                    Agent Behavior
+                </h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                    Read-only — the agent's safety/timeout thresholds. To change them, edit the backend's
+                    <code class="font-code-md text-code-md">.env</code> file and restart the server.
+                </p>
+            </div>
+
+            <div id="settingsAgentInfo" class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div class="col-span-3 font-body-sm text-body-sm text-on-surface-variant">
+                    Loading...
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

@@ -1,0 +1,416 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full gap-lg">
+
+    <!-- PAGE HEADER -->
+    <div class="flex flex-col gap-base">
+        <h1 class="font-display-lg text-display-lg text-on-surface tracking-tight">
+            Scenario Suggestions
+        </h1>
+
+        <p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">
+            Enter a URL below. TestPilot AI will actually visit that page, scan its real elements,
+            and suggest test scenarios based on what it finds there — not a static template list.
+        </p>
+    </div>
+
+
+    <!-- SEARCH CARD -->
+    <div
+            class="bg-surface-container-low rounded-lg
+                   border border-outline-variant
+                   p-md md:p-lg
+                   flex flex-col gap-sm"
+    >
+
+        <label
+                for="suggestUrlInput"
+                class="font-body-sm text-body-sm
+                       text-on-surface-variant font-semibold"
+        >
+            Page URL
+        </label>
+
+        <div class="flex flex-col sm:flex-row gap-sm">
+
+            <!-- SEARCH-STYLE URL INPUT -->
+            <div class="relative flex-1 min-w-[200px]">
+
+                <span
+                        class="material-symbols-outlined
+                               absolute left-sm top-1/2
+                               -translate-y-1/2
+                               text-on-surface-variant
+                               text-[18px]"
+                >
+                    search
+                </span>
+
+                <input
+                        id="suggestUrlInput"
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               pl-xl pr-sm py-2.5
+                               text-body-md text-on-surface
+                               placeholder:text-on-surface-variant/50
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none"
+                        placeholder="e.g. https://example.com/login"
+                        aria-label="Page URL to analyze"
+                        type="url"
+                />
+
+            </div>
+
+            <button
+                    id="getSuggestionsButton"
+                    class="flex items-center justify-center gap-2
+                           px-5 py-2.5 rounded-lg
+                           bg-primary-container
+                           text-white
+                           hover:bg-inverse-primary
+                           transition-colors
+                           font-body-md text-body-md font-bold
+                           border border-transparent
+                           disabled:opacity-50
+                           disabled:cursor-not-allowed
+                           shrink-0"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">
+                    auto_awesome
+                </span>
+                Get Suggestions
+            </button>
+
+        </div>
+
+        <!-- OPTIONAL FOCUS/INSTRUCTION -->
+        <div class="flex flex-col gap-1">
+
+            <label
+                    for="suggestFocusInput"
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant font-semibold"
+            >
+                What are you looking for? (optional)
+            </label>
+
+            <input
+                    id="suggestFocusInput"
+                    class="w-full
+                           bg-[#0F172A]
+                           border border-[#334155]
+                           rounded-lg
+                           px-sm py-2
+                           text-body-sm text-on-surface
+                           placeholder:text-on-surface-variant/50
+                           focus:border-primary-container
+                           focus:ring-2
+                           focus:ring-primary-container/20
+                           transition-all
+                           outline-none"
+                    placeholder="e.g. focus on the login flow, or the checkout process"
+                    aria-label="Optional: tell the AI what to focus on"
+                    maxlength="300"
+                    type="text"
+            />
+
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-sm mt-1">
+
+            <label
+                    class="flex items-center gap-2
+                           cursor-pointer
+                           font-body-sm text-body-sm
+                           text-on-surface-variant"
+            >
+                <input
+                        id="suggestHeadedMode"
+                        checked
+                        class="rounded
+                               bg-surface-container
+                               border-outline-variant
+                               text-primary"
+                        type="checkbox"
+                />
+                Headed mode (recommended — some sites block headless browsers)
+            </label>
+
+            <p class="font-body-sm text-[12px] text-on-surface-variant max-w-md">
+                Tip: point this at a login page and you'll get login/auth-related scenarios — the
+                suggestions come from the page's real form fields and buttons, not a fixed template.
+            </p>
+
+        </div>
+
+    </div>
+
+
+    <!-- MANUAL SCENARIO ADD -->
+    <div
+            class="bg-surface-container-low rounded-lg
+                   border border-outline-variant
+                   p-md md:p-lg
+                   flex flex-col gap-sm"
+    >
+
+        <button
+                id="toggleManualAddButton"
+                type="button"
+                class="flex items-center gap-1.5 self-start
+                       px-3 py-1.5 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-container-high
+                       transition-colors
+                       font-body-sm text-body-sm"
+        >
+            <span class="material-symbols-outlined text-[16px]">add_circle</span>
+            Add Your Own Scenario
+        </button>
+
+        <p class="font-body-sm text-[12px] text-on-surface-variant">
+            Not limited to the AI suggestions above — add as many of your own scenarios as you like.
+        </p>
+
+        <div id="manualAddForm" class="hidden flex flex-col gap-sm">
+
+            <div class="flex flex-col gap-1">
+                <label
+                        for="manualScenarioTitle"
+                        class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                >
+                    Title
+                </label>
+                <input
+                        id="manualScenarioTitle"
+                        type="text"
+                        maxlength="60"
+                        placeholder="e.g. Checkout with Coupon Code"
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-2
+                               text-body-md text-on-surface
+                               placeholder:text-on-surface-variant/50
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none"
+                />
+            </div>
+
+            <div class="flex flex-col gap-1">
+                <label
+                        for="manualScenarioText"
+                        class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                >
+                    Scenario
+                </label>
+                <textarea
+                        id="manualScenarioText"
+                        rows="3"
+                        placeholder="Describe the steps in plain language..."
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-2
+                               text-body-md text-on-surface
+                               placeholder:text-on-surface-variant/50
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none
+                               resize-y"
+                ></textarea>
+            </div>
+
+            <div class="flex gap-2">
+                <button
+                        id="submitManualScenarioButton"
+                        type="button"
+                        class="px-4 py-1.5 rounded-lg
+                               bg-primary-container
+                               text-white
+                               hover:bg-inverse-primary
+                               transition-colors
+                               font-body-sm text-body-sm font-bold"
+                >
+                    Add Scenario
+                </button>
+                <button
+                        id="cancelManualScenarioButton"
+                        type="button"
+                        class="px-4 py-1.5 rounded-lg
+                               border border-outline-variant
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-container-high
+                               transition-colors
+                               font-body-sm text-body-sm"
+                >
+                    Cancel
+                </button>
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- RESULTS -->
+    <div class="flex flex-col gap-md">
+
+        <!-- EMPTY STATE (before any search) -->
+        <div
+                id="suggestionsEmptyState"
+                class="bg-surface-container-low rounded-lg
+                       border border-dashed border-outline-variant
+                       p-xl flex flex-col items-center justify-center
+                       gap-md text-center"
+        >
+
+            <span class="material-symbols-outlined text-[40px] text-on-surface-variant">
+                lightbulb
+            </span>
+
+            <div class="flex flex-col gap-1 max-w-md">
+                <p class="font-body-md text-body-md text-on-surface">
+                    No suggestions yet — enter a URL above to get started.
+                </p>
+                <p class="font-body-sm text-body-sm text-on-surface-variant">
+                    Depending on what the page actually contains, you'll typically get scenarios like:
+                </p>
+            </div>
+
+            <div class="flex flex-wrap justify-center gap-2">
+                <span class="px-3 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[12px]">
+                    Login / Authentication
+                </span>
+                <span class="px-3 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[12px]">
+                    Search &amp; Filter
+                </span>
+                <span class="px-3 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[12px]">
+                    Cart / Checkout
+                </span>
+                <span class="px-3 py-1 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[12px]">
+                    Form Validation
+                </span>
+            </div>
+
+        </div>
+
+
+        <!-- LOADING STATE -->
+        <div
+                id="suggestionsLoadingState"
+                class="hidden bg-surface-container-low rounded-lg
+                       border border-outline-variant
+                       p-xl flex flex-col items-center justify-center gap-3"
+        >
+            <span class="spinner"></span>
+            <span class="font-body-sm text-body-sm text-on-surface-variant">
+                Visiting the page and analyzing it, this may take a moment...
+            </span>
+        </div>
+
+
+        <!-- ERROR STATE -->
+        <div
+                id="suggestionsErrorState"
+                class="hidden bg-surface-container-low rounded-lg
+                       border border-error/40
+                       p-xl flex flex-col items-center justify-center gap-3 text-center"
+        >
+            <span class="material-symbols-outlined text-error text-[32px]">
+                error
+            </span>
+            <span id="suggestionsErrorMessage" class="font-body-sm text-body-sm text-on-surface max-w-md">
+            </span>
+            <button
+                    id="retrySuggestionsButton"
+                    class="px-4 py-1.5 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-container-high
+                           transition-colors
+                           font-body-sm text-body-sm"
+                    type="button"
+            >
+                Try Again
+            </button>
+        </div>
+
+
+        <!-- RESULTS HEADER + GRID -->
+        <div id="suggestionsResultsWrap" class="hidden flex flex-col gap-sm">
+
+            <div class="flex items-center justify-between gap-sm flex-wrap">
+                <p id="suggestionsResultsSummary" class="font-body-sm text-body-sm text-on-surface-variant">
+                </p>
+
+                <div class="flex items-center gap-2 flex-wrap">
+
+                    <button
+                            id="moreSuggestionsButton"
+                            class="flex items-center gap-1.5
+                                   px-3 py-1.5 rounded-lg
+                                   border border-outline-variant
+                                   text-on-surface-variant
+                                   hover:text-on-surface
+                                   hover:bg-surface-container-high
+                                   transition-colors
+                                   font-body-sm text-body-sm
+                                   disabled:opacity-50
+                                   disabled:cursor-not-allowed"
+                            type="button"
+                    >
+                        <span class="material-symbols-outlined text-[16px]">
+                            auto_awesome
+                        </span>
+                        <span id="moreSuggestionsButtonLabel">Get More Suggestions</span>
+                    </button>
+
+                    <button
+                            id="copyAllSuggestionsButton"
+                            class="flex items-center gap-1.5
+                                   px-3 py-1.5 rounded-lg
+                                   border border-outline-variant
+                                   text-on-surface-variant
+                                   hover:text-on-surface
+                                   hover:bg-surface-container-high
+                                   transition-colors
+                                   font-body-sm text-body-sm"
+                            type="button"
+                    >
+                        <span class="material-symbols-outlined text-[16px]">
+                            content_copy
+                        </span>
+                        Copy All
+                    </button>
+
+                </div>
+            </div>
+
+            <div
+                    id="suggestionsResultsGrid"
+                    class="grid grid-cols-1 md:grid-cols-2 gap-md"
+            >
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

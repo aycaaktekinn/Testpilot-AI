@@ -1,0 +1,490 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full">
+
+    <!-- PAGE HEADER -->
+    <div class="flex justify-between items-end mb-lg gap-4 flex-wrap">
+
+        <div>
+            <h1 class="font-display-lg text-display-lg mb-2 text-on-surface">
+                Reports
+            </h1>
+
+            <p class="font-body-md text-body-md text-on-surface-variant">
+                Detailed test execution statistics and Allure analytics.
+            </p>
+        </div>
+
+        <button
+                id="refreshReportsButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-container-high
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">
+                refresh
+            </span>
+
+            Refresh
+        </button>
+
+    </div>
+
+
+    <!-- TOP METRICS -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-gutter mb-lg">
+
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md
+                       flex flex-col justify-between"
+        >
+            <div
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant mb-4"
+            >
+                Total Runs
+            </div>
+
+            <div
+                    id="reportTotalRuns"
+                    class="font-headline-md text-headline-md
+                           text-on-surface"
+            >
+                0
+            </div>
+        </div>
+
+
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md
+                       flex flex-col justify-between"
+        >
+            <div
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant mb-4"
+            >
+                Passed
+            </div>
+
+            <div
+                    id="reportPassed"
+                    class="font-headline-md text-headline-md
+                           text-secondary"
+            >
+                0
+            </div>
+        </div>
+
+
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md
+                       flex flex-col justify-between"
+        >
+            <div
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant mb-4"
+            >
+                Failed
+            </div>
+
+            <div
+                    id="reportFailed"
+                    class="font-headline-md text-headline-md
+                           text-error"
+            >
+                0
+            </div>
+        </div>
+
+
+        <div
+                class="bg-surface-container-low
+                       border border-outline-variant
+                       rounded-lg p-md
+                       flex flex-col justify-between"
+        >
+            <div
+                    class="font-body-sm text-body-sm
+                           text-on-surface-variant mb-4"
+            >
+                Success Rate
+            </div>
+
+            <div
+                    id="reportSuccessRate"
+                    class="font-headline-md text-headline-md
+                           text-on-surface"
+            >
+                0%
+            </div>
+        </div>
+
+    </div>
+
+
+    <!-- BROWSER DISTRIBUTION -->
+    <div
+            class="bg-surface-container-low
+                   border border-outline-variant
+                   rounded-lg p-md mb-lg"
+    >
+
+        <h3
+                class="font-headline-sm text-headline-sm
+                       border-b border-outline-variant
+                       pb-xs mb-md"
+        >
+            Browser Distribution
+        </h3>
+
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-lg">
+
+            <!-- CHROMIUM -->
+            <div>
+
+                <div
+                        class="flex justify-between
+                               font-body-md text-body-md
+                               mb-2"
+                >
+                    <span class="text-on-surface-variant">
+                        Chromium
+                    </span>
+
+                    <span id="reportChromiumPercentage">
+                        0%
+                    </span>
+                </div>
+
+                <div
+                        class="w-full bg-surface-variant
+                               h-2 rounded-full overflow-hidden"
+                >
+                    <div
+                            id="reportChromiumBar"
+                            class="bg-primary-container
+                                   h-full rounded-full
+                                   transition-all duration-300"
+                            style="width: 0%"
+                    ></div>
+                </div>
+
+                <div
+                        id="reportChromium"
+                        class="font-code-md text-code-md
+                               text-on-surface-variant mt-2"
+                >
+                    0 runs
+                </div>
+
+            </div>
+
+
+            <!-- FIREFOX -->
+            <div>
+
+                <div
+                        class="flex justify-between
+                               font-body-md text-body-md
+                               mb-2"
+                >
+                    <span class="text-on-surface-variant">
+                        Firefox
+                    </span>
+
+                    <span id="reportFirefoxPercentage">
+                        0%
+                    </span>
+                </div>
+
+                <div
+                        class="w-full bg-surface-variant
+                               h-2 rounded-full overflow-hidden"
+                >
+                    <div
+                            id="reportFirefoxBar"
+                            class="bg-[#F97316]
+                                   h-full rounded-full
+                                   transition-all duration-300"
+                            style="width: 0%"
+                    ></div>
+                </div>
+
+                <div
+                        id="reportFirefox"
+                        class="font-code-md text-code-md
+                               text-on-surface-variant mt-2"
+                >
+                    0 runs
+                </div>
+
+            </div>
+
+
+            <!-- WEBKIT -->
+            <div>
+
+                <div
+                        class="flex justify-between
+                               font-body-md text-body-md
+                               mb-2"
+                >
+                    <span class="text-on-surface-variant">
+                        WebKit
+                    </span>
+
+                    <span id="reportWebkitPercentage">
+                        0%
+                    </span>
+                </div>
+
+                <div
+                        class="w-full bg-surface-variant
+                               h-2 rounded-full overflow-hidden"
+                >
+                    <div
+                            id="reportWebkitBar"
+                            class="bg-[#0EA5E9]
+                                   h-full rounded-full
+                                   transition-all duration-300"
+                            style="width: 0%"
+                    ></div>
+                </div>
+
+                <div
+                        id="reportWebkit"
+                        class="font-code-md text-code-md
+                               text-on-surface-variant mt-2"
+                >
+                    0 runs
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- MAIN GRID -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-gutter">
+
+        <!-- LEFT -->
+        <div class="lg:col-span-2 space-y-lg">
+
+            <!-- ALLURE -->
+            <div
+                    class="bg-surface-container-low
+                           border border-outline-variant
+                           rounded-lg p-lg
+                           relative overflow-hidden"
+            >
+
+                <div
+                        class="absolute right-0 top-0
+                               opacity-10 pointer-events-none"
+                >
+                    <span
+                            class="material-symbols-outlined
+                                   text-[120px]"
+                    >
+                        analytics
+                    </span>
+                </div>
+
+
+                <div class="relative z-10">
+
+                    <h3
+                            class="font-headline-sm text-headline-sm
+                                   mb-2"
+                    >
+                        Allure Report Integration
+                    </h3>
+
+                    <p
+                            class="font-body-md text-body-md
+                                   text-on-surface-variant
+                                   mb-6 max-w-lg"
+                    >
+                        Generate and open detailed Playwright test reports with Allure for comprehensive execution insights.
+                    </p>
+
+
+                    <div class="flex gap-4 flex-wrap">
+
+                        <button
+                                id="generateAllureButton"
+                                class="px-6 py-2
+                                       bg-primary-container
+                                       text-white
+                                       rounded-lg
+                                       hover:bg-inverse-primary
+                                       transition-colors
+                                       font-body-md text-body-md
+                                       font-bold
+                                       border border-transparent
+                                       disabled:opacity-50
+                                       disabled:cursor-not-allowed
+                                       disabled:hover:bg-primary-container"
+                                type="button"
+                        >
+                            Generate Report
+                        </button>
+
+
+                        <!-- Sayfa yüklenirken (henüz /api/allure/status yanıtı gelmeden) yanlışlıkla
+                             tıklanıp 404'lük bir sekme açmaması için varsayılan olarak disabled;
+                             app.js refreshAllureButtonsState() gerçek durumu öğrenince günceller. -->
+                        <button
+                                id="openAllureButton"
+                                class="px-6 py-2
+                                       bg-transparent
+                                       border border-outline-variant
+                                       text-on-surface
+                                       rounded-lg
+                                       hover:bg-surface-container-high
+                                       transition-colors
+                                       font-body-md text-body-md
+                                       disabled:opacity-40
+                                       disabled:cursor-not-allowed
+                                       disabled:hover:bg-transparent"
+                                type="button"
+                                disabled
+                        >
+                            Open Last Report
+                        </button>
+
+                    </div>
+
+
+                    <div
+                            id="allureReportStatus"
+                            class="font-body-sm text-body-sm
+                                   text-on-surface-variant
+                                   mt-4"
+                    >
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <!-- HISTORICAL PERFORMANCE -->
+            <div
+                    class="bg-surface-container-low
+                           border border-outline-variant
+                           rounded-lg"
+            >
+
+                <div
+                        class="p-md
+                               border-b border-outline-variant"
+                >
+                    <h3
+                            class="font-headline-sm
+                                   text-headline-sm"
+                    >
+                        Historical Performance (7 Days)
+                    </h3>
+                </div>
+
+
+                <div class="p-md">
+
+                    <div
+                            id="historicalPerformanceChart"
+                            class="flex items-end
+                                   justify-between
+                                   h-40 gap-3"
+                    >
+                        <!-- REAL 7 DAY DATA -->
+                    </div>
+
+
+                    <div
+                            id="historicalPerformanceLabels"
+                            class="flex justify-between
+                                   text-xs
+                                   text-on-surface-variant
+                                   mt-3"
+                    >
+                    </div>
+
+
+                    <div
+                            id="historicalPerformanceEmpty"
+                            class="hidden
+                                   py-10
+                                   text-center
+                                   text-on-surface-variant"
+                    >
+                        No test execution data is available for the last 7 days.
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- RIGHT -->
+        <div class="lg:col-span-1">
+
+            <!-- RECENT ACTIVITY -->
+            <div
+                    class="bg-surface-container-low
+                           border border-outline-variant
+                           rounded-lg h-full
+                           flex flex-col"
+            >
+
+                <div
+                        class="p-md
+                               border-b border-outline-variant"
+                >
+                    <h3
+                            class="font-headline-sm
+                                   text-headline-sm"
+                    >
+                        Recent Activity
+                    </h3>
+                </div>
+
+
+                <div
+                        id="recentActivityList"
+                        class="overflow-y-auto flex-grow"
+                >
+                    <!-- REAL RUN DATA -->
+                </div>
+
+
+                <div
+                        id="recentActivityEmpty"
+                        class="hidden
+                               p-lg text-center
+                               text-on-surface-variant"
+                >
+                    No recent test activity.
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

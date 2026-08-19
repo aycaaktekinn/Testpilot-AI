@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+
+    <meta
+            content="width=device-width, initial-scale=1.0"
+            name="viewport"
+    />
+
+    <title>TestPilot AI</title>
+
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+
+    <link
+            href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+            rel="stylesheet"
+    />
+
+    <link
+            href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+    />
+
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+
+            theme: {
+                extend: {
+
+                    colors: {
+                        "surface-container-lowest": "#060e20",
+                        "on-surface-variant": "#c7c4d8",
+                        "on-surface": "#dae2fd",
+                        "on-primary-fixed": "#0f0069",
+                        "on-error-container": "#ffdad6",
+                        "tertiary-container": "#bf0f3c",
+                        "surface-variant": "#2d3449",
+                        "tertiary-fixed-dim": "#ffb2b7",
+                        "inverse-surface": "#dae2fd",
+                        "background": "#0b1326",
+                        "surface-container-highest": "#2d3449",
+                        "surface-container": "#171f33",
+                        "surface": "#0b1326",
+                        "on-tertiary-fixed-variant": "#92002a",
+                        "surface-container-high": "#222a3d",
+                        "on-secondary-container": "#00311f",
+                        "surface-dim": "#0b1326",
+                        "secondary-fixed-dim": "#4edea3",
+                        "outline-variant": "#464555",
+                        "surface-container-low": "#131b2e",
+                        "on-primary": "#1d00a5",
+                        "on-tertiary-fixed": "#40000d",
+                        "on-background": "#dae2fd",
+                        "secondary-container": "#00a572",
+                        "on-primary-container": "#dad7ff",
+                        "inverse-primary": "#4d44e3",
+                        "primary-fixed-dim": "#c3c0ff",
+                        "tertiary-fixed": "#ffdadb",
+                        "on-secondary-fixed-variant": "#005236",
+                        "on-secondary-fixed": "#002113",
+                        "primary-container": "#4f46e5",
+                        "surface-bright": "#31394d",
+                        "on-tertiary-container": "#ffd0d2",
+                        "on-primary-fixed-variant": "#3323cc",
+                        "primary-fixed": "#e2dfff",
+                        "surface-tint": "#c3c0ff",
+                        "inverse-on-surface": "#283044",
+                        "outline": "#918fa1",
+                        "on-secondary": "#003824",
+                        "error": "#ffb4ab",
+                        "primary": "#c3c0ff",
+                        "secondary": "#4edea3",
+                        "error-container": "#93000a",
+                        "secondary-fixed": "#6ffbbe",
+                        "on-error": "#690005",
+                        "tertiary": "#ffb2b7",
+                        "on-tertiary": "#67001b"
+                    },
+
+                    borderRadius: {
+                        DEFAULT: "0.25rem",
+                        lg: "0.5rem",
+                        xl: "0.75rem",
+                        full: "9999px"
+                    },
+
+                    spacing: {
+                        xl: "32px",
+                        base: "4px",
+                        sm: "12px",
+                        "margin-desktop": "32px",
+                        gutter: "20px",
+                        "2xl": "48px",
+                        xs: "8px",
+                        "margin-mobile": "16px",
+                        lg: "24px",
+                        md: "16px"
+                    },
+
+                    // NOT: Her aileye yedek (fallback) font eklendi — önceden sadece tek bir isim
+                    // (ör. sadece "Geist") vardı, o font herhangi bir sebeple (ağ, engelleme,
+                    // Google Fonts katalog sorunu vb.) yüklenemezse tarayıcı BAŞKA HİÇBİR
+                    // seçenek olmadığı için kendi ham varsayılan fontuna (genelde serif, ör.
+                    // Times New Roman) düşüyordu — başlıkların aniden "eski/serif" görünmesinin
+                    // sebebi buydu. Artık Geist yüklenemese bile Inter'e, o da olmazsa sistemin
+                    // sans-serif fontuna düşüyor; hiçbir zaman çıplak tarayıcı varsayılanına
+                    // düşmüyor.
+                    fontFamily: {
+                        "headline-sm": ["Geist", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "headline-md": ["Geist", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "code-md": ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
+                        "display-lg": ["Geist", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "label-caps": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "body-md": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "body-lg": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+                        "body-sm": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"]
+                    },
+
+                    fontSize: {
+
+                        "headline-sm": [
+                            "18px",
+                            {
+                                lineHeight: "24px",
+                                fontWeight: "600"
+                            }
+                        ],
+
+                        "headline-md": [
+                            "24px",
+                            {
+                                lineHeight: "32px",
+                                letterSpacing: "-0.01em",
+                                fontWeight: "600"
+                            }
+                        ],
+
+                        "code-md": [
+                            "13px",
+                            {
+                                lineHeight: "20px",
+                                fontWeight: "450"
+                            }
+                        ],
+
+                        "display-lg": [
+                            "48px",
+                            {
+                                lineHeight: "56px",
+                                letterSpacing: "-0.02em",
+                                fontWeight: "700"
+                            }
+                        ],
+
+                        "label-caps": [
+                            "11px",
+                            {
+                                lineHeight: "16px",
+                                letterSpacing: "0.05em",
+                                fontWeight: "600"
+                            }
+                        ],
+
+                        "body-md": [
+                            "14px",
+                            {
+                                lineHeight: "20px",
+                                fontWeight: "400"
+                            }
+                        ],
+
+                        "body-lg": [
+                            "16px",
+                            {
+                                lineHeight: "24px",
+                                fontWeight: "400"
+                            }
+                        ],
+
+                        "body-sm": [
+                            "12px",
+                            {
+                                lineHeight: "16px",
+                                fontWeight: "400"
+                            }
+                        ]
+                    }
+                }
+            }
+        };
+    </script>
+
+
+    <style>
+
+        body {
+            background-color: #0F172A;
+        }
+
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid #334155;
+        }
+
+
+        .card-surface {
+            background-color: #1E293B;
+            border: 1px solid #334155;
+        }
+
+
+        .input-well {
+            background-color: #0F172A;
+            border: 1px solid #334155;
+        }
+
+
+        .input-well:focus-within {
+            border-color: #4F46E5;
+            box-shadow:
+                    0 0 0 2px
+                    rgba(79, 70, 229, 0.2);
+        }
+
+
+        .active-glow {
+            box-shadow:
+                    0 0 8px 2px
+                    rgba(79, 70, 229, 0.2);
+        }
+
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #464555;
+        }
+
+
+        .spinner {
+            border:
+                    2px solid
+                    rgba(255, 255, 255, 0.3);
+
+            border-radius: 50%;
+
+            border-top:
+                    2px solid #fff;
+
+            width: 16px;
+            height: 16px;
+
+            animation:
+                    spin 1s linear infinite;
+        }
+
+
+        @keyframes spin {
+
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+
+        }
+
+    </style>
+</head>
+
+
+<body
+        class="text-on-background
+               min-h-screen
+               flex overflow-hidden
+               selection:bg-primary-container
+               selection:text-white"
+>
+
+
+<!-- ======================================================
+     SIDEBAR
+     ------------------------------------------------------
+     MOBİL: md breakpoint'in (768px) altında bu artık `hidden` DEĞİL — her zaman flex, ama
+     `-translate-x-full` ile ekran dışına kaydırılmış duruyor (bkz. app.js MOBILE NAVIGATION
+     bölümü, sidebarNav.classList.toggle('-translate-x-full', ...)). Öncesinde `hidden md:flex`
+     kullanılıyordu; bu, md altında navigasyonu TAMAMEN kayboluyordu (hiçbir yedek yoktu) —
+     artık hamburger menüyle açılıp kapanan bir "drawer" (kayar panel) oluyor. md ve üzerinde
+     `md:translate-x-0` ile eskisi gibi her zaman sabit görünür.
+======================================================= -->
+
+<nav
+        id="sidebarNav"
+        class="fixed left-0 top-0 h-full
+               flex flex-col
+               p-md gap-xs
+               bg-surface-container-low
+               w-[260px]
+               border-r border-outline-variant
+               z-40
+               -translate-x-full md:translate-x-0
+               transition-transform duration-200 ease-in-out"
+>
+
+    <div
+            class="px-md py-lg mb-4
+                   border-b border-outline-variant/50
+                   flex items-center justify-between"
+    >
+
+        <h2
+                class="font-headline-sm
+                       text-headline-sm
+                       text-primary
+                       flex items-center gap-2"
+        >
+
+            <span
+                    class="material-symbols-outlined"
+                    style="
+                        font-variation-settings:
+                        'FILL' 1;
+                    "
+            >
+                terminal
+            </span>
+
+            Automation Engine
+
+        </h2>
+
+
+        <!-- Sadece mobilde görünür — masaüstünde sidebar zaten hep açık olduğu için kapatma
+             butonuna gerek yok (md:translate-x-0 ile hep sabit duruyor). -->
+        <button
+                id="closeSidebarButton"
+                class="md:hidden
+                       p-1.5
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-variant/50
+                       rounded-full
+                       transition-colors
+                       active:scale-95"
+                type="button"
+                aria-label="Close navigation menu"
+        >
+            <span class="material-symbols-outlined text-[20px]">
+                close
+            </span>
+        </button>
+
+    </div>
+
+
+    <ul
+            class="flex flex-col gap-1
+                   w-full flex-grow"
+    >
+
+
+        <!-- DASHBOARD -->
+        <li>
+
+            <a
+                    id="dashboardMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    dashboard
+                </span>
+
+                Dashboard
+
+            </a>
+
+        </li>
+
+
+        <!-- CREATE TEST -->
+        <li>
+
+            <a
+                    id="createTestMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    add_circle
+                </span>
+
+                Create Test
+
+            </a>
+
+        </li>
+
+
+        <!-- SCENARIO SUGGESTIONS -->
+        <li>
+
+            <a
+                    id="suggestionsMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    lightbulb
+                </span>
+
+                Suggestions
+
+            </a>
+
+        </li>
+
+
+        <!-- GENERATED TESTS -->
+        <li>
+
+            <a
+                    id="generatedTestsMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    auto_fix_high
+                </span>
+
+                Generated Tests
+
+            </a>
+
+        </li>
+
+
+        <!-- TEST RUNS -->
+        <li>
+
+            <a
+                    id="testRunsMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    play_circle
+                </span>
+
+                Test Runs
+
+            </a>
+
+        </li>
+
+
+        <!-- REPORTS -->
+        <li>
+
+            <a
+                    id="reportsMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    assessment
+                </span>
+
+                Reports
+
+            </a>
+
+        </li>
+
+    </ul>
+
+
+    <!-- SETTINGS -->
+    <div
+            class="mt-auto
+                   pt-4
+                   border-t
+                   border-outline-variant/50"
+    >
+
+        <a
+                id="settingsMenu"
+                class="flex items-center
+                       gap-3
+                       px-md py-sm
+                       rounded-lg
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-variant/50
+                       transition-all
+                       font-body-md
+                       text-body-md
+                       w-full"
+                href="#"
+        >
+
+            <span
+                    class="material-symbols-outlined"
+            >
+                settings
+            </span>
+
+            Settings
+
+        </a>
+
+
+        <!-- USER CARD -->
+        <div
+                class="mt-4
+                       px-md py-3
+                       flex items-center gap-3
+                       bg-surface-container
+                       rounded-lg
+                       border
+                       border-outline-variant/30"
+        >
+
+            <div
+                    class="w-8 h-8
+                           rounded-full
+                           bg-primary/20
+                           flex items-center
+                           justify-center
+                           text-primary
+                           font-bold"
+            >
+                QA
+            </div>
+
+
+            <div
+                    class="flex flex-col"
+            >
+
+                <span
+                        class="font-body-sm
+                               text-body-sm
+                               text-on-surface
+                               font-semibold"
+                >
+                    Dev User
+                </span>
+
+                <span
+                        class="font-label-caps
+                               text-label-caps
+                               text-on-surface-variant"
+                >
+                    QA Engineer
+                </span>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</nav>
+
+
+<!-- Sidebar açıkken arkasını karartan, tıklanınca kapatan katman — SADECE mobilde anlamlı
+     olduğu için md:hidden; JS bunu (id="sidebarBackdrop") sidebar açılıp kapanırken
+     `hidden` class'ını toggle ederek gösterir/gizler (bkz. app.js openMobileSidebar/
+     closeMobileSidebar). -->
+<div
+        id="sidebarBackdrop"
+        class="hidden md:hidden
+               fixed inset-0
+               bg-black/60
+               z-30"
+></div>
+
+
+<!-- ======================================================
+     MAIN
+======================================================= -->
+
+<main
+        class="ml-0
+               md:ml-[260px]
+               flex-1
+               flex flex-col
+               h-screen
+               max-w-[1440px]
+               mx-auto
+               w-full
+               relative
+               min-w-0"
+>
+
+
+    <!-- ==================================================
+         MOBILE TOP BAR
+         --------------------------------------------------
+         md ve üzerinde gizli (masaüstü header'ı zaten var); altında ise navigasyonun TEK
+         girişi bu — hamburger butonu sidebar'ı (drawer) açar. Engine durumu için kompakt bir
+         nokta gösterir (metin yok, yer kısıtlı); app.js'teki refreshHeaderEngineStatus() hem
+         bunu hem masaüstü rozetini birlikte günceller.
+    =================================================== -->
+
+    <header
+            class="flex md:hidden
+                   justify-between
+                   items-center
+                   w-full
+                   px-md
+                   h-14
+                   sticky top-0
+                   z-20
+                   bg-surface-container
+                   border-b
+                   border-outline-variant"
+    >
+
+        <div class="flex items-center gap-2">
+
+            <button
+                    id="mobileMenuButton"
+                    class="p-2 -ml-2
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           rounded-full
+                           transition-colors
+                           active:scale-95"
+                    type="button"
+                    aria-label="Open navigation menu"
+                    aria-expanded="false"
+                    aria-controls="sidebarNav"
+            >
+                <span class="material-symbols-outlined">
+                    menu
+                </span>
+            </button>
+
+            <h1
+                    class="font-headline-sm
+                           text-headline-sm
+                           font-bold
+                           text-primary
+                           tracking-tight"
+            >
+                TestPilot AI
+            </h1>
+
+        </div>
+
+
+        <span
+                id="mobileEngineStatusDot"
+                class="w-2 h-2
+                       rounded-full
+                       bg-outline
+                       shrink-0"
+                title="Engine status"
+        ></span>
+
+    </header>
+
+
+    <!-- ==================================================
+         DESKTOP TOP BAR
+    =================================================== -->
+
+    <header
+            class="flex
+                   justify-between
+                   items-center
+                   w-full
+                   px-margin-desktop
+                   h-16
+                   sticky top-0
+                   z-50
+                   bg-surface-container
+                   border-b
+                   border-outline-variant
+                   hidden md:flex"
+    >
+
+
+        <div
+                class="flex items-center gap-4"
+        >
+
+            <div
+                    class="flex flex-col"
+            >
+
+                <h1
+                        class="font-headline-md
+                               text-headline-md
+                               font-bold
+                               text-primary
+                               tracking-tight"
+                >
+                    TestPilot AI
+                </h1>
+
+
+                <span
+                        id="pageSubtitle"
+                        class="font-body-sm
+                               text-body-sm
+                               text-on-surface-variant"
+                >
+                    AI Test Automation Platform
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <div
+                class="flex items-center gap-4"
+        >
+
+
+            <!-- HELP -->
+            <button
+                    id="helpButton"
+                    class="p-2
+                           text-on-surface-variant
+                           hover:bg-surface-variant
+                           transition-colors
+                           rounded-full
+                           cursor-pointer
+                           active:scale-95"
+                    type="button"
+                    aria-label="Help"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    help
+                </span>
+
+            </button>
+
+
+            <!-- ENGINE STATUS — gerçek /api/health kontrolüne bağlı (bkz. app.js
+                 refreshHeaderEngineStatus()). Bu rozet TÜM sayfalarda sabit göründüğü için
+                 (Dashboard'daki 4 detaylı kutunun aksine) periyodik olarak kendini tazeler. -->
+            <div
+                    class="flex items-center
+                           gap-2
+                           bg-surface-container-high
+                           px-3 py-1.5
+                           rounded-full
+                           border
+                           border-outline-variant/50"
+            >
+
+                <span
+                        id="headerEngineStatusDot"
+                        class="w-2 h-2
+                               rounded-full
+                               bg-outline"
+                >
+                </span>
+
+
+                <span
+                        id="headerEngineStatusText"
+                        class="font-body-sm
+                               text-body-sm
+                               text-on-surface"
+                >
+                    Checking...
+                </span>
+
+            </div>
+
+        </div>
+
+    </header>
+
+
+    <!-- ==================================================
+         DYNAMIC PAGE CONTENT
+    =================================================== -->
+
+    <div
+            id="pageContent"
+            class="flex-1
+                   overflow-y-auto
+                   min-w-0"
+    >
+
+        <div
+                class="p-gutter
+                       lg:p-margin-desktop
+                       text-on-surface-variant
+                       font-body-md
+                       text-body-md"
+        >
+            Loading TestPilot AI...
+        </div>
+
+    </div>
+
+</main>
+
+
+<!-- ======================================================
+     TOAST NOTIFICATIONS
+     ------------------------------------------------------
+     Sayfayı bloke eden native alert() yerine kullanılan, kendiliğinden kaybolan bildirimler
+     için ortak konteyner — bkz. app.js showToast(). fixed konumlandığı için MAIN'in dışında,
+     hangi sayfa açık olursa olsun aynı yerde (sağ alt) kalır.
+======================================================= -->
+
+<div
+        id="toastContainer"
+        class="fixed bottom-6 right-6 z-[200]
+               flex flex-col gap-2 items-end
+               pointer-events-none"
+></div>
+
+
+<!-- ======================================================
+     APP SCRIPT
+======================================================= -->
+
+<script src="./app.js"></script>
+
+
+</body>
+</html>

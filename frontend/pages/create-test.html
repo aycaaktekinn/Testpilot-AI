@@ -1,0 +1,1092 @@
+<div class="p-gutter lg:p-margin-desktop">
+
+    <div
+            class="grid grid-cols-1 lg:grid-cols-12
+                   gap-gutter lg:gap-margin-desktop items-start"
+    >
+
+        <!-- LEFT COLUMN -->
+        <div
+                class="lg:col-span-7 min-w-0
+                       flex flex-col gap-gutter"
+        >
+
+            <!-- SCENARIO CARD -->
+            <div
+                    class="card-surface rounded-lg p-lg shadow-sm
+                           flex flex-col gap-md"
+            >
+
+                <div
+                        class="flex justify-between items-center
+                               pb-sm border-b border-outline-variant"
+                >
+
+                    <h3
+                            class="font-headline-sm text-headline-sm
+                                   text-on-surface flex items-center gap-2"
+                    >
+                        <span
+                                class="material-symbols-outlined text-primary"
+                        >
+                            description
+                        </span>
+
+                        Scenario Definition
+                    </h3>
+
+                </div>
+
+                <div class="flex flex-col gap-4">
+
+                    <!-- TARGET URL -->
+                    <div class="flex flex-col gap-1">
+
+                        <div class="flex justify-between items-center">
+
+                            <label
+                                    for="targetUrl"
+                                    class="font-body-sm text-body-sm
+                                           text-on-surface-variant font-semibold"
+                            >
+                                Target Application URL
+                            </label>
+
+                            <button
+                                    id="suggestScenariosButton"
+                                    class="text-primary
+                                           hover:text-primary-container
+                                           font-body-sm text-body-sm
+                                           transition-colors
+                                           flex items-center gap-1"
+                                    type="button"
+                            >
+                                <span
+                                        class="material-symbols-outlined text-[16px]"
+                                >
+                                    auto_awesome
+                                </span>
+                                Suggest Scenario
+                            </button>
+
+                        </div>
+
+                        <div
+                                class="flex items-center input-well
+                                       rounded-md overflow-hidden
+                                       transition-colors"
+                        >
+
+                            <span
+                                    class="px-3 text-on-surface-variant
+                                           bg-surface-container-high
+                                           border-r border-outline-variant/50
+                                           h-full flex items-center"
+                            >
+                                <span
+                                        class="material-symbols-outlined text-sm"
+                                >
+                                    link
+                                </span>
+                            </span>
+
+                            <input
+                                    id="targetUrl"
+                                    class="w-full bg-transparent border-none
+                                           text-on-surface font-body-md
+                                           text-body-md p-2.5 focus:ring-0
+                                           placeholder-outline-variant"
+                                    placeholder="https://example.com"
+                                    type="url"
+                            />
+
+                        </div>
+
+                    </div>
+
+                    <!-- SCENARIO -->
+                    <div class="flex flex-col gap-1">
+
+                        <div class="flex justify-between mb-1">
+
+                            <label
+                                    for="testScenario"
+                                    class="font-body-sm text-body-sm
+                                           text-on-surface-variant
+                                           font-semibold"
+                            >
+                                Test Scenario Instructions
+                            </label>
+
+                            <span
+                                    class="font-label-caps text-label-caps
+                                           text-primary bg-primary/10
+                                           px-2 py-0.5 rounded text-[10px]"
+                            >
+                                AI ASSISTED
+                            </span>
+
+                        </div>
+
+                        <div
+                                class="input-well rounded-md p-1
+                                       transition-colors relative"
+                        >
+
+                            <textarea
+                                    id="testScenario"
+                                    class="w-full h-40 bg-transparent
+                                           border-none text-on-surface
+                                           font-body-md text-body-md p-3
+                                           focus:ring-0 resize-none
+                                           placeholder-outline-variant
+                                           leading-relaxed"
+                                    placeholder="Describe the test flow in plain English..."
+                            ></textarea>
+
+                        </div>
+
+                        <div
+                                class="font-body-sm text-[12px]
+                                       text-on-surface-variant/70
+                                       italic mt-1"
+                        >
+                            Example: Navigate to login, enter credentials,
+                            and verify dashboard loads
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- EXECUTION SETTINGS -->
+            <div
+                    class="card-surface rounded-lg p-lg shadow-sm
+                           flex flex-col gap-md"
+            >
+
+                <div
+                        class="pb-sm border-b border-outline-variant"
+                >
+
+                    <h3
+                            class="font-headline-sm text-headline-sm
+                                   text-on-surface flex items-center gap-2"
+                    >
+                        <span
+                                class="material-symbols-outlined text-primary"
+                        >
+                            settings_applications
+                        </span>
+
+                        Execution Engine Settings
+                    </h3>
+
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-lg">
+
+                    <!-- BROWSER -->
+                    <div class="flex flex-col gap-3">
+
+                        <label
+                                class="font-body-sm text-body-sm
+                                       text-on-surface-variant font-semibold"
+                        >
+                            Browser Engine
+                        </label>
+
+                        <div class="flex gap-2">
+
+                            <label class="flex-1 cursor-pointer">
+                                <input
+                                        checked
+                                        class="peer sr-only"
+                                        name="browser"
+                                        type="radio"
+                                        value="chromium"
+                                />
+
+                                <div
+                                        class="p-2 border border-outline-variant
+                                               rounded-md text-center
+                                               peer-checked:border-primary
+                                               peer-checked:bg-primary/10
+                                               peer-checked:text-primary
+                                               text-on-surface-variant
+                                               transition-all
+                                               hover:bg-surface-variant"
+                                >
+                                    <span
+                                            class="font-body-sm text-body-sm
+                                                   font-semibold"
+                                    >
+                                        Chromium
+                                    </span>
+                                </div>
+                            </label>
+
+                            <label class="flex-1 cursor-pointer">
+                                <input
+                                        class="peer sr-only"
+                                        name="browser"
+                                        type="radio"
+                                        value="firefox"
+                                />
+
+                                <div
+                                        class="p-2 border border-outline-variant
+                                               rounded-md text-center
+                                               peer-checked:border-primary
+                                               peer-checked:bg-primary/10
+                                               peer-checked:text-primary
+                                               text-on-surface-variant
+                                               transition-all
+                                               hover:bg-surface-variant"
+                                >
+                                    <span
+                                            class="font-body-sm text-body-sm
+                                                   font-semibold"
+                                    >
+                                        Firefox
+                                    </span>
+                                </div>
+                            </label>
+
+                            <label class="flex-1 cursor-pointer">
+                                <input
+                                        class="peer sr-only"
+                                        name="browser"
+                                        type="radio"
+                                        value="webkit"
+                                />
+
+                                <div
+                                        class="p-2 border border-outline-variant
+                                               rounded-md text-center
+                                               peer-checked:border-primary
+                                               peer-checked:bg-primary/10
+                                               peer-checked:text-primary
+                                               text-on-surface-variant
+                                               transition-all
+                                               hover:bg-surface-variant"
+                                >
+                                    <span
+                                            class="font-body-sm text-body-sm
+                                                   font-semibold"
+                                    >
+                                        WebKit
+                                    </span>
+                                </div>
+                            </label>
+
+                        </div>
+
+                    </div>
+
+                    <!-- OPTIONS -->
+                    <div class="flex flex-col gap-3">
+
+                        <label
+                                class="font-body-sm text-body-sm
+                                       text-on-surface-variant font-semibold"
+                        >
+                            Artifacts &amp; Options
+                        </label>
+
+                        <div class="grid grid-cols-2 gap-2">
+
+                            <label
+                                    class="flex items-center gap-2
+                                           cursor-pointer p-1.5
+                                           hover:bg-surface-variant
+                                           rounded transition-colors"
+                            >
+                                <input
+                                        id="headedMode"
+                                        checked
+                                        class="rounded
+                                               bg-surface-container
+                                               border-outline-variant
+                                               text-primary"
+                                        type="checkbox"
+                                />
+
+                                <span
+                                        class="font-body-sm text-body-sm
+                                               text-on-surface"
+                                >
+                                    Headed Mode
+                                </span>
+                            </label>
+
+                            <label
+                                    class="flex items-center gap-2
+                                           cursor-pointer p-1.5
+                                           hover:bg-surface-variant
+                                           rounded transition-colors"
+                            >
+                                <input
+                                        id="screenshotOption"
+                                        checked
+                                        class="rounded
+                                               bg-surface-container
+                                               border-outline-variant
+                                               text-primary"
+                                        type="checkbox"
+                                />
+
+                                <span
+                                        class="font-body-sm text-body-sm
+                                               text-on-surface"
+                                >
+                                    Screenshots
+                                </span>
+                            </label>
+
+                            <label
+                                    class="flex items-center gap-2
+                                           cursor-pointer p-1.5
+                                           hover:bg-surface-variant
+                                           rounded transition-colors"
+                            >
+                                <input
+                                        id="videoOption"
+                                        class="rounded
+                                               bg-surface-container
+                                               border-outline-variant
+                                               text-primary"
+                                        type="checkbox"
+                                />
+
+                                <span
+                                        class="font-body-sm text-body-sm
+                                               text-on-surface"
+                                >
+                                    Record Video
+                                </span>
+                            </label>
+
+                            <label
+                                    class="flex items-center gap-2
+                                           cursor-pointer p-1.5
+                                           hover:bg-surface-variant
+                                           rounded transition-colors"
+                            >
+                                <input
+                                        id="traceOption"
+                                        checked
+                                        class="rounded
+                                               bg-surface-container
+                                               border-outline-variant
+                                               text-primary"
+                                        type="checkbox"
+                                />
+
+                                <span
+                                        class="font-body-sm text-body-sm
+                                               text-on-surface"
+                                >
+                                    Retain Trace
+                                </span>
+                            </label>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- VARIABLES -->
+            <!-- VARIABLES & SECRETS -->
+            <div
+                    class="card-surface rounded-lg p-lg shadow-sm
+               flex flex-col gap-md"
+            >
+
+                <!-- HEADER -->
+                <div
+                        class="flex justify-between items-center
+                   pb-sm border-b border-outline-variant"
+                >
+
+                    <h3
+                            class="font-headline-sm text-headline-sm
+                       text-on-surface flex items-center gap-2"
+                    >
+            <span
+                    class="material-symbols-outlined text-primary"
+            >
+                key
+            </span>
+
+                        Variables &amp; Secrets
+                    </h3>
+
+
+                    <button
+                            id="addVariableButton"
+                            class="text-primary
+                       hover:text-primary-container
+                       font-body-sm text-body-sm
+                       flex items-center gap-1"
+                            type="button"
+                    >
+            <span
+                    class="material-symbols-outlined text-[16px]"
+            >
+                add
+            </span>
+
+                        Add Variable
+                    </button>
+
+                </div>
+
+
+                <!-- VARIABLES CONTAINER -->
+                <div
+                        id="variablesContainer"
+                        class="flex flex-col gap-2"
+                >
+
+                    <!-- TABLE HEADER -->
+                    <div
+                            class="grid grid-cols-12 gap-2
+                       mb-1 px-1"
+                    >
+
+                        <div
+                                class="col-span-3
+                           font-label-caps text-label-caps
+                           text-on-surface-variant"
+                        >
+                            Key
+                        </div>
+
+
+                        <div
+                                class="col-span-2
+                           font-label-caps text-label-caps
+                           text-on-surface-variant"
+                        >
+                            Type
+                        </div>
+
+
+                        <div
+                                class="col-span-6
+                           font-label-caps text-label-caps
+                           text-on-surface-variant"
+                        >
+                            Value
+                        </div>
+
+
+                        <div class="col-span-1"></div>
+
+                    </div>
+
+                    <!--
+                        Variable rows are added dynamically
+                        by createVariableRow() in app.js.
+                    -->
+
+                </div>
+
+            </div>
+
+
+            <!-- ACTION AREA -->
+            <div
+                    class="flex justify-end mt-2 gap-4 flex-wrap"
+            >
+
+                <button
+                        id="stopTestButton"
+                        disabled
+                        class="bg-transparent
+                               border border-error/50
+                               hover:bg-error/10 text-error
+                               font-headline-sm text-headline-sm
+                               py-3 px-6 rounded-[12px]
+                               flex items-center gap-2
+                               transition-all
+                               active:scale-[0.98]
+                               disabled:opacity-40
+                               disabled:cursor-not-allowed"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined">
+                        stop_circle
+                    </span>
+
+                    Stop Test
+                </button>
+
+                <button
+                        id="generateRunButton"
+                        class="bg-[#4F46E5]
+                               hover:bg-primary-container
+                               text-white
+                               font-headline-sm text-headline-sm
+                               py-3 px-6 rounded-[12px]
+                               flex items-center gap-2
+                               shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]
+                               transition-all
+                               active:scale-[0.98]
+                               hover:shadow-[0_0_15px_rgba(79,70,229,0.4)]"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined">
+                        smart_toy
+                    </span>
+
+                    Generate &amp; Run Test
+                </button>
+
+            </div>
+
+        </div>
+
+        <!-- RIGHT COLUMN -->
+        <div
+                class="lg:col-span-5 min-w-0
+                       flex flex-col gap-gutter
+                       h-[calc(100vh-140px)]"
+        >
+
+            <!-- TABS -->
+            <div
+                    class="flex gap-1 border-b border-[#334155]
+                           px-2 pt-2 overflow-x-auto shrink-0"
+            >
+
+                <button
+                        id="generatedCodeTab"
+                        class="px-4 py-2 font-body-sm font-semibold
+                               text-primary border-b-2 border-primary
+                               bg-surface-variant/30 rounded-t-lg
+                               flex items-center gap-2
+                               transition-colors whitespace-nowrap"
+                        type="button"
+                >
+                    <span
+                            class="material-symbols-outlined text-[16px]"
+                    >
+                        code
+                    </span>
+
+                    Generated Code
+                </button>
+
+                <button
+                        id="executionLogTab"
+                        class="px-4 py-2 font-body-sm
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant/20
+                               border-b-2 border-transparent
+                               rounded-t-lg flex items-center gap-2"
+                        type="button"
+                >
+                    <span
+                            class="material-symbols-outlined text-[16px]"
+                    >
+                        terminal
+                    </span>
+
+                    Execution Log
+                </button>
+
+                <button
+                        id="testResultTab"
+                        class="px-4 py-2 font-body-sm
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant/20
+                               border-b-2 border-transparent
+                               rounded-t-lg flex items-center gap-2"
+                        type="button"
+                >
+                    <span
+                            class="material-symbols-outlined text-[16px]"
+                    >
+                        analytics
+                    </span>
+
+                    Test Result
+                </button>
+
+            </div>
+
+            <!-- GENERATED CODE -->
+            <div
+                    id="generatedCodePanel"
+                    class="card-surface
+                           rounded-b-lg rounded-tr-lg
+                           flex flex-col flex-1 min-h-0
+                           shadow-sm overflow-hidden
+                           border border-[#334155] border-t-0"
+            >
+
+                <div
+                        class="bg-surface-container-high
+                               px-md py-sm
+                               border-b border-[#334155]
+                               flex justify-between items-center
+                               gap-2 shrink-0"
+                >
+
+                    <div
+                            class="flex items-center gap-2 min-w-0"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-secondary text-[16px]"
+                        >
+                            description
+                        </span>
+
+                        <input
+                                id="generatedFileName"
+                                class="bg-transparent border-none
+                                       text-on-surface font-code-md
+                                       text-code-md p-1
+                                       focus:ring-1 focus:ring-primary
+                                       rounded min-w-0 w-48"
+                                type="text"
+                                value="generated-test.spec.ts"
+                                readonly
+                        />
+                    </div>
+
+                    <div class="flex gap-1 shrink-0">
+
+                        <button
+                                id="copyCodeButton"
+                                class="text-on-surface-variant
+                                       hover:text-on-surface
+                                       hover:bg-surface-variant
+                                       p-1.5 rounded
+                                       flex items-center gap-1
+                                       font-body-sm"
+                                type="button"
+                        >
+                            <span
+                                    class="material-symbols-outlined
+                                           text-[16px]"
+                            >
+                                content_copy
+                            </span>
+                            Copy
+                        </button>
+
+                        <button
+                                id="saveCodeButton"
+                                class="text-on-surface-variant
+                                       hover:text-on-surface
+                                       hover:bg-surface-variant
+                                       p-1.5 rounded
+                                       flex items-center gap-1
+                                       font-body-sm"
+                                type="button"
+                        >
+                            <span
+                                    class="material-symbols-outlined
+                                           text-[16px]"
+                            >
+                                save
+                            </span>
+                            Save
+                        </button>
+
+                        <button
+                                id="downloadCodeButton"
+                                class="text-on-surface-variant
+                                       hover:text-on-surface
+                                       hover:bg-surface-variant
+                                       p-1.5 rounded
+                                       flex items-center gap-1
+                                       font-body-sm"
+                                type="button"
+                        >
+                            <span
+                                    class="material-symbols-outlined
+                                           text-[16px]"
+                            >
+                                download
+                            </span>
+                            Download
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <div
+                        class="flex-1 min-h-0
+                               bg-[#0F172A]
+                               p-sm overflow-auto
+                               relative"
+                >
+
+                    <pre
+                            id="generatedCodeOutput"
+                            class="text-[#c7c4d8]
+                                   whitespace-pre-wrap
+                                   break-words
+                                   ffont-mono text-sm leading-7"
+                    >No test generated yet.</pre>
+
+                    <div
+                            class="absolute bottom-2 right-4
+                                   text-[#464555]
+                                   font-label-caps text-label-caps
+                                   flex items-center gap-1"
+                    >
+                        <span
+                                class="w-2 h-2 rounded-full
+                                       bg-secondary animate-pulse"
+                        ></span>
+
+                        READY
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- EXECUTION LOG -->
+            <div
+                    id="executionLogPanel"
+                    class="card-surface rounded-lg
+                           hidden flex-col flex-1 min-h-0
+                           shadow-sm overflow-hidden
+                           border border-[#334155]"
+            >
+
+                <div
+                        class="bg-surface-container-high
+                               px-md py-sm
+                               border-b border-[#334155]"
+                >
+                    <h3
+                            class="font-body-sm text-body-sm
+                                   text-on-surface font-semibold
+                                   flex items-center gap-2"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-[16px]"
+                        >
+                            terminal
+                        </span>
+
+                        Execution Log
+                    </h3>
+                </div>
+
+                <pre
+                        id="executionLogOutput"
+                        class="flex-1 min-h-0
+                               bg-[#0F172A] p-4
+                               overflow-auto
+                               text-[#c7c4d8]
+                               font-code-md text-code-md
+                               whitespace-pre-wrap"
+                >No test has been run yet.</pre>
+
+            </div>
+
+            <!-- TEST RESULT -->
+            <div
+                    id="testResultPanel"
+                    class="card-surface rounded-lg
+                           hidden flex-col flex-1 min-h-0
+                           shadow-sm overflow-hidden
+                           border border-[#334155]"
+            >
+
+                <div
+                        class="bg-surface-container-high
+                               px-md py-sm
+                               border-b border-[#334155]
+                               flex justify-between items-center"
+                >
+
+                    <h3
+                            class="font-body-sm text-body-sm
+                                   text-on-surface font-semibold
+                                   flex items-center gap-2"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-secondary text-[16px]"
+                        >
+                            analytics
+                        </span>
+
+                        Test Summary
+                    </h3>
+
+                    <span
+                            id="testStatusBadge"
+                            class="text-[#c7c4d8]
+                                   font-body-sm text-body-sm
+                                   bg-surface-variant
+                                   px-2 py-0.5 rounded"
+                    >
+                        Waiting
+                    </span>
+
+                </div>
+
+                <div class="p-md flex flex-col gap-4">
+
+                    <div
+                            class="grid grid-cols-2
+                                   md:grid-cols-5 gap-4"
+                    >
+
+                        <div>
+                            <span
+                                    class="font-label-caps
+                                           text-on-surface-variant"
+                            >
+                                Status
+                            </span>
+                            <div id="testStatus">-</div>
+                        </div>
+
+                        <div>
+                            <span
+                                    class="font-label-caps
+                                           text-on-surface-variant"
+                            >
+                                Duration
+                            </span>
+                            <div id="testDuration">-</div>
+                        </div>
+
+                        <div>
+                            <span
+                                    class="font-label-caps
+                                           text-on-surface-variant"
+                            >
+                                Browser
+                            </span>
+                            <div id="testBrowser">-</div>
+                        </div>
+
+                        <div>
+                            <span
+                                    class="font-label-caps
+                                           text-on-surface-variant"
+                            >
+                                Exit Code
+                            </span>
+                            <div id="testExitCode">-</div>
+                        </div>
+
+                        <div>
+                            <span
+                                    class="font-label-caps
+                                           text-on-surface-variant"
+                            >
+                                Test File
+                            </span>
+                            <div
+                                    id="testFileResult"
+                                    class="break-all"
+                            >
+                                -
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div
+                            class="border-t border-[#334155]
+                                   pt-4 flex gap-4 flex-wrap"
+                    >
+
+                        <div class="flex items-center gap-1">
+                            <button
+                                    id="screenshotArtifactButton"
+                                    class="flex items-center gap-2
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[20px]"
+                                >
+                                    image
+                                </span>
+                                Screenshots
+                            </button>
+                            <button
+                                    id="screenshotDownloadButton"
+                                    class="flex items-center
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                                    aria-label="Download screenshot"
+                                    title="Download"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[18px]"
+                                >
+                                    download
+                                </span>
+                            </button>
+                        </div>
+
+                        <div class="flex items-center gap-1">
+                            <button
+                                    id="videoArtifactButton"
+                                    class="flex items-center gap-2
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[20px]"
+                                >
+                                    movie
+                                </span>
+                                Video
+                            </button>
+                            <button
+                                    id="videoDownloadButton"
+                                    class="flex items-center
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                                    aria-label="Download video"
+                                    title="Download"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[18px]"
+                                >
+                                    download
+                                </span>
+                            </button>
+                        </div>
+
+                        <div class="flex items-center gap-1">
+                            <button
+                                    id="traceArtifactButton"
+                                    class="flex items-center gap-2
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[20px]"
+                                >
+                                    timeline
+                                </span>
+                                Trace
+                            </button>
+                            <button
+                                    id="traceDownloadButton"
+                                    class="flex items-center
+                                           text-on-surface-variant
+                                           hover:text-primary"
+                                    type="button"
+                                    aria-label="Download trace"
+                                    title="Download"
+                            >
+                                <span
+                                        class="material-symbols-outlined
+                                               text-[18px]"
+                                >
+                                    download
+                                </span>
+                            </button>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- AI SENARYO ÖNERİLERİ MODAL (varsayılan gizli — "Senaryo Öner" tıklanınca açılır)
+         Not: inline/kart-altı gösterim yerine modal kullanılıyor çünkü öneriler URL alanının
+         hemen altında sayfayı aşağı itip (reflow) dikkat dağıtıyordu; modal hem sayfa
+         düzenini bozmuyor hem de "seç ve kapat" akışını netleştiriyor. -->
+    <div
+            id="scenarioSuggestionsModal"
+            class="hidden fixed inset-0 z-50
+                   items-center justify-center
+                   bg-black/60 backdrop-blur-sm p-4"
+    >
+
+        <div
+                id="scenarioSuggestionsModalPanel"
+                class="card-surface rounded-lg shadow-xl
+                       w-full max-w-lg max-h-[80vh]
+                       flex flex-col overflow-hidden"
+        >
+
+            <div
+                    class="flex justify-between items-center
+                           px-lg py-md border-b border-outline-variant
+                           shrink-0"
+            >
+
+                <h3
+                        class="font-headline-sm text-headline-sm
+                               text-on-surface flex items-center gap-2"
+                >
+                    <span
+                            class="material-symbols-outlined text-primary"
+                    >
+                        auto_awesome
+                    </span>
+                    AI Scenario Suggestions
+                </h3>
+
+                <button
+                        id="closeScenarioSuggestionsModal"
+                        class="text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant
+                               p-1 rounded transition-colors"
+                        type="button"
+                        aria-label="Close"
+                >
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+
+            </div>
+
+            <div
+                    id="scenarioSuggestionsModalBody"
+                    class="flex-1 overflow-y-auto p-lg
+                           flex flex-col gap-2"
+            >
+                <!-- JS tarafından doldurulur: yükleniyor / öneri listesi / hata durumu -->
+            </div>
+
+        </div>
+
+    </div>
+
+</div>

@@ -1,0 +1,472 @@
+<div class="p-gutter lg:p-margin-desktop">
+
+    <div
+            class="max-w-[1440px]
+                   mx-auto space-y-lg"
+    >
+
+        <!-- WELCOME -->
+        <!-- NOT: Burada eskiden ayrı, statik/sahte bir "Automation Engine Online" banner'ı da
+             vardı — hem sayfanın üstündeki header rozetiyle hem aşağıdaki 4 gerçek durum
+             kutusuyla birebir çakışıyordu (üç yerde aynı bilgi, ikisi sahte). Kaldırıldı;
+             gerçek durum artık sadece header'da (sitewide) ve aşağıdaki detaylı kutularda. -->
+        <section>
+
+            <h2
+                    class="font-display-lg text-display-lg
+                           text-on-surface font-bold"
+            >
+                Dashboard
+            </h2>
+
+            <p
+                    class="font-body-lg text-body-lg
+                           text-on-surface-variant mt-base"
+            >
+                Test automation workspace overview
+            </p>
+
+        </section>
+
+        <!-- MAIN GRID -->
+        <div
+                class="grid grid-cols-1
+                       md:grid-cols-12 gap-gutter"
+        >
+
+            <!-- QUICK ACTIONS -->
+            <!-- NOT: Eskiden burada sidebar'daki HER menü öğesini (Create Test, Generated
+                 Tests, Test Runs, Reports) birebir tekrar eden 5 buton vardı — sidebar zaten
+                 her sayfada sabit durduğu için bu tamamen gereksiz bir tekrardı. Üstelik "Run
+                 Existing Test" ve "View Generated Tests" ikisi de aynı sayfaya (Generated
+                 Tests) gidiyordu — farklı görünen iki buton, aynı hedef. Artık sadece gerçekten
+                 birer AKSİYON olan (salt navigasyon değil) 2 buton kaldı. Diğer sayfalara
+                 erişim zaten sidebar'dan tek tıkla mümkün. -->
+            <section
+                    class="md:col-span-4
+                           grid grid-cols-2 gap-sm"
+            >
+
+                <button
+                        id="dashboardCreateTestButton"
+                        class="bg-primary-container
+                               text-white rounded-xl p-md
+                               flex flex-col items-center
+                               justify-center gap-sm
+                               border border-primary-container
+                               hover:opacity-90
+                               transition-all active:scale-95"
+                        type="button"
+                >
+                    <span
+                            class="material-symbols-outlined
+                                   text-[32px]"
+                    >
+                        add_circle
+                    </span>
+
+                    <span
+                            class="font-label-caps
+                                   text-label-caps text-center"
+                    >
+                        Create New Test
+                    </span>
+                </button>
+
+                <button
+                        id="dashboardRunExistingButton"
+                        class="bg-surface-container
+                               text-on-surface rounded-xl p-md
+                               flex flex-col items-center
+                               justify-center gap-sm
+                               border border-outline-variant
+                               hover:bg-surface-variant
+                               transition-all active:scale-95"
+                        type="button"
+                >
+                    <span
+                            class="material-symbols-outlined
+                                   text-[32px] text-primary"
+                    >
+                        play_circle
+                    </span>
+
+                    <span
+                            class="font-label-caps
+                                   text-label-caps text-center"
+                    >
+                        Run Existing Test
+                    </span>
+                </button>
+
+            </section>
+
+            <!-- STATUS -->
+            <section
+                    class="md:col-span-8
+                           grid grid-cols-2 md:grid-cols-4 gap-sm"
+            >
+
+                <!-- NOT: Bu 4 kutu ARTIK sabit/sahte değil — app.js'teki checkSystemStatus()
+                     tarafından gerçek /api/health, /api/settings ve /api/tests/current-run-id
+                     yanıtlarına göre dinamik olarak güncelleniyor. Playwright kutusu istisna:
+                     backend zaten ayakta olduğuna göre Playwright kurulu demektir, bu yüzden
+                     ayrı bir "sağlık kontrolü" YOKTUR — nötr, sabit bir etiket olarak kalır. -->
+                <div
+                        class="bg-surface-container
+                               rounded-xl p-sm
+                               border border-outline-variant"
+                >
+                    <span
+                            class="font-label-caps
+                                   text-on-surface-variant"
+                    >
+                        Playwright
+                    </span>
+
+                    <div
+                            class="flex items-center
+                                   gap-xs mt-2"
+                    >
+                        <span
+                                class="w-1.5 h-1.5
+                                       rounded-full bg-on-surface-variant"
+                        ></span>
+
+                        <span
+                                class="font-body-sm
+                                       text-body-sm"
+                        >
+                            Bundled
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                        class="bg-surface-container
+                               rounded-xl p-sm
+                               border border-outline-variant"
+                >
+                    <span
+                            class="font-label-caps
+                                   text-on-surface-variant"
+                    >
+                        Backend API
+                    </span>
+
+                    <div
+                            class="flex items-center
+                                   gap-xs mt-2"
+                    >
+                        <span
+                                id="statusBackendDot"
+                                class="w-1.5 h-1.5
+                                       rounded-full bg-outline"
+                        ></span>
+
+                        <span
+                                id="statusBackendText"
+                                class="font-body-sm
+                                       text-body-sm"
+                        >
+                            Checking...
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                        class="bg-surface-container
+                               rounded-xl p-sm
+                               border border-outline-variant"
+                >
+                    <span
+                            class="font-label-caps
+                                   text-on-surface-variant"
+                    >
+                        AI Provider
+                    </span>
+
+                    <div
+                            class="flex items-center
+                                   gap-xs mt-2"
+                    >
+                        <span
+                                id="statusProviderDot"
+                                class="w-1.5 h-1.5
+                                       rounded-full bg-outline"
+                        ></span>
+
+                        <span
+                                id="statusProviderText"
+                                class="font-body-sm
+                                       text-body-sm"
+                        >
+                            Checking...
+                        </span>
+                    </div>
+                </div>
+
+                <div
+                        class="bg-surface-container
+                               rounded-xl p-sm
+                               border border-outline-variant"
+                >
+                    <span
+                            class="font-label-caps
+                                   text-on-surface-variant"
+                    >
+                        Test Runner
+                    </span>
+
+                    <div
+                            class="flex items-center
+                                   gap-xs mt-2"
+                    >
+                        <span
+                                id="statusRunnerDot"
+                                class="w-1.5 h-1.5
+                                       rounded-full bg-outline"
+                        ></span>
+
+                        <span
+                                id="statusRunnerText"
+                                class="font-body-sm
+                                       text-body-sm"
+                        >
+                            Checking...
+                        </span>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- RECENT ACTIVITY — Quick Actions'tan boşalan alana eklendi: sidebar'ın
+                 tekrarı olmak yerine, sidebar'da HİÇ görünmeyen gerçekten yeni bir bilgi
+                 sunuyor (son birkaç koşumun geç/kaldı özeti, tek tek Test Runs sayfasına
+                 gitmeden). app.js'teki loadDashboardRecentActivity() ile dolduruluyor. -->
+            <section
+                    class="md:col-span-12
+                           bg-surface-container
+                           border border-outline-variant
+                           rounded-xl
+                           overflow-hidden"
+            >
+
+                <div
+                        class="px-md py-sm
+                               border-b border-outline-variant
+                               flex items-center justify-between"
+                >
+                    <h3
+                            class="font-headline-sm text-headline-sm
+                                   text-on-surface"
+                    >
+                        Recent Activity
+                    </h3>
+
+                    <a
+                            id="dashboardViewAllRunsLink"
+                            class="font-body-sm text-body-sm
+                                   text-primary hover:underline
+                                   cursor-pointer"
+                    >
+                        View all runs
+                    </a>
+                </div>
+
+                <div id="dashboardRecentActivityList">
+                    <!-- app.js tarafından doldurulur -->
+                </div>
+
+                <div
+                        id="dashboardRecentActivityEmpty"
+                        class="p-lg text-center
+                               text-on-surface-variant
+                               font-body-sm text-body-sm"
+                >
+                    No recent test activity yet — run a test to see it here.
+                </div>
+
+            </section>
+
+            <!-- LAST RUN -->
+            <section
+                    class="md:col-span-6
+                           bg-surface-container
+                           border border-outline-variant
+                           rounded-xl p-lg
+                           flex flex-col justify-between
+                           hover:border-primary/50
+                           transition-colors"
+            >
+
+                <div
+                        class="flex justify-between
+                               items-start
+                               border-b border-outline-variant
+                               pb-md mb-md"
+                >
+
+                    <div>
+
+                        <h3
+                                class="font-headline-sm
+                                       text-headline-sm
+                                       text-on-surface mb-xs"
+                        >
+                            Last Test Run
+                        </h3>
+
+                        <p
+                                id="dashboardLastRunFile"
+                                class="font-code-md text-code-md
+                                       text-primary bg-surface
+                                       p-xs rounded
+                                       border border-outline-variant
+                                       inline-block"
+                        >
+                            No test run yet.
+                        </p>
+
+                    </div>
+
+                    <span
+                            id="dashboardLastRunStatus"
+                            class="bg-surface-variant
+                                   text-on-surface-variant
+                                   font-label-caps text-label-caps
+                                   px-sm py-xs rounded-full"
+                    >
+                        Waiting
+                    </span>
+
+                </div>
+
+                <div
+                        class="flex justify-between
+                               items-end mt-auto"
+                >
+
+                    <div
+                            id="dashboardLastRunMeta"
+                            class="font-body-sm text-body-sm
+                                   text-on-surface-variant"
+                    >
+                        -
+                    </div>
+
+                    <button
+                            id="dashboardViewResultButton"
+                            class="bg-transparent
+                                   border border-outline-variant
+                                   text-on-surface
+                                   px-md py-sm rounded-lg
+                                   hover:bg-surface-variant
+                                   transition-colors"
+                            type="button"
+                    >
+                        View Result
+                    </button>
+
+                </div>
+
+            </section>
+
+            <!-- LAST GENERATED -->
+            <section
+                    class="md:col-span-6
+                           bg-surface-container
+                           border border-outline-variant
+                           rounded-xl p-lg
+                           flex flex-col justify-between
+                           hover:border-primary/50
+                           transition-colors"
+            >
+
+                <div
+                        class="flex justify-between
+                               items-start
+                               border-b border-outline-variant
+                               pb-md mb-md"
+                >
+
+                    <div>
+
+                        <h3
+                                class="font-headline-sm
+                                       text-headline-sm
+                                       text-on-surface mb-xs"
+                        >
+                            Last Generated Test
+                        </h3>
+
+                        <p
+                                id="dashboardLastGeneratedFile"
+                                class="font-code-md text-code-md
+                                       text-primary bg-surface
+                                       p-xs rounded
+                                       border border-outline-variant
+                                       inline-block"
+                        >
+                            No generated test yet.
+                        </p>
+
+                    </div>
+
+                    <span
+                            class="bg-primary/10
+                                   text-primary
+                                   font-label-caps text-label-caps
+                                   px-sm py-xs rounded-full
+                                   border border-primary/20"
+                    >
+                        Playwright
+                    </span>
+
+                </div>
+
+                <div
+                        class="flex justify-end
+                               items-end gap-sm mt-auto"
+                >
+
+                    <button
+                            id="dashboardViewCodeButton"
+                            class="bg-transparent
+                                   border border-outline-variant
+                                   text-on-surface
+                                   px-md py-sm rounded-lg
+                                   hover:bg-surface-variant
+                                   transition-colors"
+                            type="button"
+                    >
+                        View Code
+                    </button>
+
+                    <button
+                            id="dashboardRunLastGeneratedButton"
+                            class="bg-primary-container
+                                   text-white px-md py-sm
+                                   rounded-lg
+                                   hover:opacity-90"
+                            type="button"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-[16px]"
+                        >
+                            play_arrow
+                        </span>
+
+                        Run
+                    </button>
+
+                </div>
+
+            </section>
+
+        </div>
+
+    </div>
+
+</div>

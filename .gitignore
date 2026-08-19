@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+
+# Environment / API Keys
+.env
+*.env
+backend/.env
+
+# Build
+dist/
+backend/dist/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+
+# Local AI / Playwright tooling
+.ai/
+.playwright-mcp/
+
+# Playwright outputs
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+
+# Generated tests
+generated-tests/
+backend/generated-tests/
+
+# Runtime files
+backend/runs/*
+!backend/runs/.gitkeep
+backend/artifacts/
+
+# Allure reports
+backend/allure-report/
+backend/allure-results/
+
+# Logs
+*.log
