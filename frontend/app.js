@@ -7880,10 +7880,17 @@ async function initSettingsPage() {
             await response.json();
 
 
+        // v2.3 — Ollama yerelde çalışır, bir API anahtarı KAVRAMI yoktur (bkz. settings.ts dosya
+        // başı NOT) — bu yüzden "API Key" satırı yerine "yapılandırılmış mı" (model tanımlı mı)
+        // durumunu, maskelenmiş bir anahtar göstermeden ayrı bir metinle bildiriyoruz.
         const apiKeyStatus =
-            data.llm.apiKeyConfigured
-                ? `<span class="text-secondary">✓ Configured</span> (${data.llm.apiKeyMasked})`
-                : '<span class="text-error">✗ Not configured</span>';
+            data.llm.provider === 'ollama'
+                ? data.llm.apiKeyConfigured
+                    ? '<span class="text-secondary">✓ Local (no key needed)</span>'
+                    : '<span class="text-error">✗ OLLAMA_MODEL not configured</span>'
+                : data.llm.apiKeyConfigured
+                    ? `<span class="text-secondary">✓ Configured</span> (${data.llm.apiKeyMasked})`
+                    : '<span class="text-error">✗ Not configured</span>';
 
         settingsLlmInfo.innerHTML =
             infoTile('Provider', data.llm.provider) +
@@ -8452,14 +8459,23 @@ async function checkSystemStatus() {
         const providerLabel =
             data.llm.provider === 'openrouter'
                 ? 'OpenRouter'
-                : 'Gemini';
+                : data.llm.provider === 'gemini'
+                    ? 'Gemini'
+                    : 'Ollama';
+
+        // v2.3 — Ollama'da eksik olan şey bir "API anahtarı" değil, OLLAMA_MODEL (bkz.
+        // settingsLlmInfo bölümündeki AYNI ayrım) — durum etiketini ona göre yazıyoruz.
+        const notConfiguredSuffix =
+            data.llm.provider === 'ollama'
+                ? ' (Not configured)'
+                : ' (No API Key)';
 
         setStatusTile(
             'statusProviderDot',
             'statusProviderText',
             data.llm.apiKeyConfigured
                 ? providerLabel
-                : `${providerLabel} (No API Key)`,
+                : `${providerLabel}${notConfiguredSuffix}`,
             data.llm.apiKeyConfigured ? 'bg-secondary' : 'bg-error',
         );
 

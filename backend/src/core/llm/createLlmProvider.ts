@@ -1,6 +1,7 @@
 import type { LlmProvider } from './LlmProvider.js';
 import { OpenRouterProvider } from './OpenRouterProvider.js';
 import { GeminiProvider } from './GeminiProvider.js';
+import { OllamaProvider } from './OllamaProvider.js';
 import { env } from '../../config/env.js';
 
 /**
@@ -14,6 +15,8 @@ export function createLlmProvider(): LlmProvider {
       return new OpenRouterProvider();
     case 'gemini':
       return new GeminiProvider();
+    case 'ollama':
+      return new OllamaProvider();
     default:
       throw new Error(`Bilinmeyen LLM_PROVIDER: ${env.LLM_PROVIDER as string}`);
   }

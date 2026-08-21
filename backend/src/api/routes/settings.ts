@@ -14,15 +14,32 @@ export const settingsRouter = Router();
  * ve maskelenmiş bir önizleme (ör. "sk-o...a3f2") döner.
  */
 settingsRouter.get('/settings', (_req, res) => {
-  const apiKey = env.LLM_PROVIDER === 'openrouter' ? env.OPENROUTER_API_KEY : env.GEMINI_API_KEY;
-  const model = env.LLM_PROVIDER === 'openrouter' ? env.OPENROUTER_MODEL : env.GEMINI_MODEL;
+  // v2.3 — LLM_PROVIDER="ollama" eklendi: OpenRouter/Gemini'nin AKSİNE yerelde çalışır, bir API
+  // anahtarı KAVRAMI yoktur (bkz. OllamaProvider dosya başı açıklaması) — bu yüzden "configured"
+  // burada "OLLAMA_MODEL tanımlı mı" anlamına gelir, "API anahtarı var mı" değil; frontend bunu
+  // ayrıca ele alır (bkz. app.js).
+  const apiKey =
+    env.LLM_PROVIDER === 'openrouter'
+      ? env.OPENROUTER_API_KEY
+      : env.LLM_PROVIDER === 'gemini'
+        ? env.GEMINI_API_KEY
+        : undefined;
+  const model =
+    env.LLM_PROVIDER === 'openrouter'
+      ? env.OPENROUTER_MODEL
+      : env.LLM_PROVIDER === 'gemini'
+        ? env.GEMINI_MODEL
+        : env.OLLAMA_MODEL;
 
   res.status(200).json({
     llm: {
       provider: env.LLM_PROVIDER,
       model: model ?? null,
-      apiKeyConfigured: Boolean(apiKey),
-      apiKeyMasked: maskApiKey(apiKey),
+      // Ollama'da "API anahtarı" diye bir şey yok — "yapılandırılmış" burada onun yerine model
+      // adının tanımlı olup olmadığını yansıtır (env.ts zaten LLM_PROVIDER="ollama" iken bunu
+      // zorunlu kılıyor, ama defensif kalmak için burada da Boolean(model) ile kontrol ediyoruz).
+      apiKeyConfigured: env.LLM_PROVIDER === 'ollama' ? Boolean(env.OLLAMA_MODEL) : Boolean(apiKey),
+      apiKeyMasked: env.LLM_PROVIDER === 'ollama' ? null : maskApiKey(apiKey),
     },
     agent: {
       maxSteps: defaultRunOptions.maxSteps,

@@ -6,7 +6,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.string().default('info'),
 
-  LLM_PROVIDER: z.enum(['openrouter', 'gemini']).default('openrouter'),
+  LLM_PROVIDER: z.enum(['openrouter', 'gemini', 'ollama']).default('openrouter'),
 
   // OpenRouter yalnızca LLM_PROVIDER="openrouter" iken zorunludur (aşağıdaki .superRefine'a bakın).
   OPENROUTER_API_KEY: z.string().optional(),
@@ -105,8 +105,18 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
 
   // Ollama'nın yerelde dinlediği adres (bkz. docker-compose.milvus.yml dosya başı NOT — Ollama bu
-  // compose'un DIŞINDA, kullanıcının kendi makinesinde `ollama serve` ile ayrıca çalışır).
+  // compose'un DIŞINDA, kullanıcının kendi makinesinde `ollama serve` ile ayrıca çalışır). Bu adres
+  // İKİ AYRI amaçla paylaşılır: vector cache'in embedding tarafı (OLLAMA_EMBEDDING_MODEL) VE
+  // LLM_PROVIDER="ollama" iken asıl karar verici AI (OLLAMA_MODEL, bkz. aşağı) — ikisi de AYNI
+  // sunucuya, ama FARKLI modellerle konuşur.
   OLLAMA_URL: z.string().url().default('http://localhost:11434'),
+
+  // v2.3 — LLM_PROVIDER="ollama" iken zorunludur (bkz. aşağıdaki .superRefine). GEMINI_MODEL'deki
+  // AYNI prensip: kodda sabit bir model adı TUTULMUYOR — hangi "chat/instruct" modelini
+  // (`ollama pull <model-adı>`) indirdiğiniz tamamen size bağlıdır (ör. "llama3.1",
+  // "qwen2.5:7b-instruct"). OLLAMA_EMBEDDING_MODEL'DEN FARKLIDIR: o embedding (vektör) üretimi
+  // içindir, bu ise gerçek metin/karar üretimi içindir — aynı modeli ikisi için de kullanamazsınız.
+  OLLAMA_MODEL: z.string().optional(),
 
   // ÖNEMLİ: GEMINI_MODEL'deki AYNI prensip burada da geçerli — kodda sabit bir model adı TUTULMUYOR.
   // Ollama'nın embedding model kütüphanesi zaman içinde değişebiliyor (tag adları/versiyonlar).
@@ -171,6 +181,15 @@ const envSchema = z.object({
       message:
         'LLM_PROVIDER="gemini" iken GEMINI_MODEL gerekli (varsayılanı yok — güncel model adını ' +
         'https://aistudio.google.com/ üzerinden doğrulayıp .env dosyanıza yazın)',
+    });
+  }
+  if (data.LLM_PROVIDER === 'ollama' && !data.OLLAMA_MODEL) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['OLLAMA_MODEL'],
+      message:
+        'LLM_PROVIDER="ollama" iken OLLAMA_MODEL gerekli (varsayılanı yok — önce `ollama pull ' +
+        '<model-adı>` ile indirdiğiniz modelin adını .env dosyanıza yazın)',
     });
   }
   if (data.VECTOR_CACHE_ENABLED && !data.OLLAMA_EMBEDDING_MODEL) {
