@@ -2,6 +2,7 @@ import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { RunArtifacts, RunOptions, RunReport } from '../../domain/types.js';
 import type {
+  BatchRunStartResult,
   LegacyGenerateAndRunInput,
   LegacyGeneratedTestMeta,
   LegacyRunExistingOverrides,
@@ -12,6 +13,7 @@ import { AgentLoop } from '../agent/AgentLoop.js';
 import type { LlmProvider } from '../llm/LlmProvider.js';
 import { defaultRunOptions } from '../../config/env.js';
 import { synthesizeTestCode } from './codeSynthesizer.js';
+import { buildBddSteps } from './buildBddSteps.js';
 import { TestRunStore } from './TestRunStore.js';
 import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore.js';
 import { AllureReportService } from './AllureReportService.js';
@@ -54,6 +56,7 @@ export class LegacyTestService {
       captureScreenshot: input.screenshot,
       captureVideo: input.video,
       captureTrace: input.trace,
+      useSeleniumGrid: input.useSeleniumGrid,
     };
 
     // Run'ı, WS aboneleri için görünür kılmak amacıyla runManager'a kaydediyoruz (bkz.
@@ -149,6 +152,7 @@ export class LegacyTestService {
       screenshot: overrides.screenshot ?? meta.screenshot,
       video: overrides.video ?? meta.video,
       trace: overrides.trace ?? meta.trace,
+      useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
     });
   }
 
@@ -178,6 +182,7 @@ export class LegacyTestService {
       captureScreenshot: overrides.screenshot ?? meta.screenshot,
       captureVideo: overrides.video ?? meta.video,
       captureTrace: overrides.trace ?? meta.trace,
+      useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
     };
 
     runManager.registerExternalRun(runId, meta.url, meta.scenario);
@@ -202,6 +207,81 @@ export class LegacyTestService {
     }
 
     return this.finalizeResult(report, options, (Date.now() - startedAtMs) / 1000, meta.variables);
+  }
+
+  /**
+   * v2.0 — checkbox ile seçilen birden fazla generated test'i GERÇEKTEN paralel olarak başlatır.
+   * `generateAndRun`/`runGeneratedTest`/`replayGeneratedTest`'in aksine `activeLoop`/`activeRunId`
+   * ("tek aktif run") bookkeeping'ini KULLANMAZ — bunun yerine doğrudan `runManager.startRun()`'a
+   * gider, çünkü RunManager zaten her run için ayrı bir AgentLoop örneğiyle, bellekte
+   * `Map<runId, ...>` olarak çoklu-run'ı native destekliyor (bkz. runManager.ts dosya başı NOT).
+   *
+   * Bloklamaz: her run için hemen bir runId döner, çağıran taraf ilerlemeyi `/ws/runs/:runId`
+   * üzerinden ayrı ayrı takip eder. `runManager` KENDİSİ run bittiğinde Test Runs/Generated Tests
+   * geçmişine YAZMAZ (bu sadece LegacyTestService'in bilinçli bir sorumluluğudur) — bu yüzden her
+   * run için `run_finished` olayını dinleyip aynı `finalizeResult()`'ı burada da (arka planda)
+   * çağırarak köprülüyoruz; aksi halde bu run'lar Reports/Test Runs sayfalarında hiç görünmezdi.
+   */
+  async runGeneratedTestsBatch(fileNames: string[]): Promise<BatchRunStartResult[]> {
+    const results: BatchRunStartResult[] = [];
+
+    for (const fileName of fileNames) {
+      try {
+        const meta = await this.generatedTestStore.getMeta(fileName);
+
+        const options: RunOptions = {
+          ...defaultRunOptions,
+          headless: !meta.headed,
+          browserEngine: meta.browser,
+          captureScreenshot: meta.screenshot,
+          captureVideo: meta.video,
+          captureTrace: meta.trace,
+          useSeleniumGrid: meta.useSeleniumGrid ?? false,
+        };
+
+        // "Mümkünse Replay (No AI), yoksa Run" — bkz. TestRunRequest.replaySteps dosya başı NOT.
+        const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
+
+        const summary = runManager.startRun({
+          url: meta.url,
+          scenario: meta.scenario,
+          variables: meta.variables,
+          options,
+          replaySteps: hasReplay ? meta.replaySteps : undefined,
+        });
+
+        this.persistBatchRunWhenFinished(summary.runId, meta, options);
+
+        results.push({ fileName, runId: summary.runId, mode: hasReplay ? 'replay' : 'run' });
+      } catch (err) {
+        results.push({ fileName, error: errorMessage(err, 'Test başlatılamadı.') });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * runGeneratedTestsBatch() için yardımcı — bir run bittiğinde (PASS/FAIL) sonucu Test Runs/
+   * Generated Tests geçmişine kalıcı hale getirir. Sadece run_finished'te çalışır: run_error
+   * (beklenmeyen çökme) durumunda elde bir RunReport olmadığından kaydedilecek bir şey yoktur —
+   * bu, runManager'ın kendisinin de run_error'da rapor ÜRETMEMESİYLE tutarlıdır.
+   */
+  private persistBatchRunWhenFinished(runId: string, meta: LegacyGeneratedTestMeta, options: RunOptions): void {
+    const startedAtMs = Date.now();
+    const unsubscribe = runManager.subscribe(runId, (event) => {
+      if (event.type !== 'run_finished' && event.type !== 'run_error') return;
+      unsubscribe();
+
+      if (event.type === 'run_error') {
+        log.warn({ runId, message: event.message }, 'Toplu çalıştırmadaki bir run beklenmeyen şekilde çöktü, geçmişe kaydedilemiyor');
+        return;
+      }
+
+      void this.finalizeResult(event.report, options, (Date.now() - startedAtMs) / 1000, meta.variables).catch((err) => {
+        log.error({ err, runId }, 'Toplu çalıştırma sonucu geçmişe kaydedilemedi');
+      });
+    });
   }
 
   private async finalizeResult(
@@ -230,10 +310,14 @@ export class LegacyTestService {
           screenshot: options.captureScreenshot,
           video: options.captureVideo,
           trace: options.captureTrace,
+          useSeleniumGrid: options.useSeleniumGrid,
           // SADECE report.status === 'passed' iken doludur (bkz. RunReport.replaySteps) — bu
           // sayede "Replay (No AI)" butonu sadece güvenilir şekilde tekrar oynatılabilecek
           // testler için etkinleşir.
           replaySteps: report.replaySteps,
+          // BDD/step bazlı görüntüleme için — replaySteps'in aksine PASS/FAIL fark etmeksizin
+          // doldurulur (bkz. BddStepView, buildBddSteps.ts dosya başı açıklaması).
+          steps: buildBddSteps(report),
         },
         code,
       );
@@ -309,6 +393,10 @@ function buildOutputLog(report: RunReport, browserEngine: string): string {
 
 function buildErrorOutput(report: RunReport): string {
   return report.failureReason ?? 'Bilinmeyen hata';
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
 }
 
 function toArtifactUrls(runId: string, artifacts?: RunArtifacts): { screenshot?: string; video?: string; trace?: string } {

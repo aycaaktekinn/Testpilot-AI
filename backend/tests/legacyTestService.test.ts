@@ -36,8 +36,20 @@ vi.mock('../src/core/agent/AgentLoop.js', () => ({
 
 const registerExternalRunMock = vi.fn();
 const publishExternalEventMock = vi.fn();
+// runGeneratedTestsBatch() (bkz. dosya sonundaki "toplu/paralel çalıştırma" describe bloğu)
+// runManager.startRun()/subscribe()'a DOĞRUDAN gider (AgentLoop mock'unu KULLANMAZ) — bu yüzden
+// bunları da burada sahteliyoruz. `batchListeners`, subscribe() ile kaydedilen (runId -> listener)
+// eşleşmesini tutar; testler bunu kullanarak sahte bir run_finished/run_error olayı "fırlatabilir".
+const startRunMock = vi.fn();
+const subscribeMock = vi.fn();
+const batchListeners = new Map<string, (event: unknown) => void>();
 vi.mock('../src/api/runManager.js', () => ({
-  runManager: { registerExternalRun: registerExternalRunMock, publishExternalEvent: publishExternalEventMock },
+  runManager: {
+    registerExternalRun: registerExternalRunMock,
+    publishExternalEvent: publishExternalEventMock,
+    startRun: startRunMock,
+    subscribe: subscribeMock,
+  },
 }));
 
 const { LegacyTestService } = await import('../src/core/legacy/LegacyTestService.js');
@@ -78,16 +90,40 @@ function fakeInput(overrides: Partial<LegacyGenerateAndRunInput> = {}): LegacyGe
     screenshot: false,
     video: false,
     trace: false,
+    useSeleniumGrid: false,
     variables: {},
     ...overrides,
   };
 }
+
+let batchRunCounter = 0;
 
 beforeEach(async () => {
   runMock.mockReset();
   cancelMock.mockReset();
   registerExternalRunMock.mockReset();
   publishExternalEventMock.mockReset();
+
+  batchListeners.clear();
+  batchRunCounter = 0;
+  startRunMock.mockReset();
+  startRunMock.mockImplementation((request: { url: string; scenario: string }) => {
+    batchRunCounter += 1;
+    return {
+      runId: `batch-run-${batchRunCounter}`,
+      status: 'running',
+      url: request.url,
+      scenario: request.scenario,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      currentStep: 0,
+    };
+  });
+  subscribeMock.mockReset();
+  subscribeMock.mockImplementation((runId: string, listener: (event: unknown) => void) => {
+    batchListeners.set(runId, listener);
+    return () => batchListeners.delete(runId);
+  });
+
   // TestRunStore.clear() ARTIK var (bkz. dosya sonundaki "koşum geçmişi yönetimi" describe bloğu)
   // ama burada BİLEREK kullanılmıyor: bu dosyadaki testler zaten benzersiz runId kullanıp `.find()`
   // ile sadece kendi kaydını arıyor, bu yüzden testler arası paylaşılan bir store'u her seferinde
@@ -116,6 +152,20 @@ describe('LegacyTestService.generateAndRun', () => {
     expect(record).toBeDefined();
     expect(record?.status).toBe('passed');
     expect(record?.exitCode).toBe(0);
+  });
+
+  it('BDD/step bazlı görüntüleme için steps alanını doldurur (bkz. buildBddSteps)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-bdd-steps' }));
+    const service = new LegacyTestService(fakeProvider);
+
+    const result = await service.generateAndRun(fakeInput());
+
+    const listed = await service.listGeneratedTests();
+    const meta = listed.tests.find((t) => t.fileName === result.testFile);
+
+    expect(meta?.steps).toEqual([
+      { index: 0, action: 'finish_success', description: 'Tamamlandı', ok: true },
+    ]);
   });
 
   it('FAIL sonucu için de kayıt oluşturur ve errorOutput doldurur', async () => {
@@ -237,6 +287,149 @@ describe('LegacyTestService — üretilmiş test yönetimi', () => {
     const lastCallArgs = runMock.mock.calls.at(-1)?.[0];
     expect(lastCallArgs.url).toBe('https://example.com/original');
     expect(lastCallArgs.options.headless).toBe(true); // override headed:false -> headless:true
+  });
+
+  it('generateAndRun(): useSeleniumGrid input\'tan options\'a aynen geçer VE üretilen test kaydına kalıcı hale gelir (v2.0)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-grid-1' }));
+    const service = new LegacyTestService(fakeProvider);
+
+    await service.generateAndRun(fakeInput({ useSeleniumGrid: true, browser: 'chromium' }));
+
+    const lastCallArgs = runMock.mock.calls.at(-1)?.[0];
+    expect(lastCallArgs.options.useSeleniumGrid).toBe(true);
+
+    const { tests } = await service.listGeneratedTests();
+    expect(tests[0]?.useSeleniumGrid).toBe(true);
+  });
+
+  it('runGeneratedTest(): useSeleniumGrid override edilmezse kayıtlı testin kendi değeri KULLANILIR (v2.0)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-grid-seed', url: 'https://example.com/grid' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(
+      fakeInput({ useSeleniumGrid: true, url: 'https://example.com/grid' }),
+    );
+
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-grid-rerun' }));
+    await service.runGeneratedTest(testFile, {}); // override yok -> meta.useSeleniumGrid (true) kullanılmalı
+
+    const lastCallArgs = runMock.mock.calls.at(-1)?.[0];
+    expect(lastCallArgs.options.useSeleniumGrid).toBe(true);
+  });
+
+  it('runGeneratedTest(): useSeleniumGrid override VERİLİRSE kayıtlı değeri değil override\'ı kullanır (v2.0)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-grid-seed-2', url: 'https://example.com/grid2' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(
+      fakeInput({ useSeleniumGrid: true, url: 'https://example.com/grid2' }),
+    );
+
+    runMock.mockResolvedValue(fakeReport({ runId: 'run-grid-rerun-2' }));
+    await service.runGeneratedTest(testFile, { useSeleniumGrid: false });
+
+    const lastCallArgs = runMock.mock.calls.at(-1)?.[0];
+    expect(lastCallArgs.options.useSeleniumGrid).toBe(false);
+  });
+});
+
+describe('LegacyTestService.runGeneratedTestsBatch (v2.0 — toplu/paralel çalıştırma)', () => {
+  /** persistBatchRunWhenFinished() fire-and-forget'tir (bkz. dosya başı NOT) — ateşlenen event'in
+   * finalizeResult() zincirini (disk I/O dahil) bitirmesini beklemek için küçük bir tik veriyoruz. */
+  async function flush(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  it('seçilen HER dosya için runManager.startRun() ile AYRI bir runId başlatır (gerçek paralel — tek bir "aktif run" kısıtlaması YOK)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-1', url: 'https://a.example.com' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile: file1 } = await service.generateAndRun(fakeInput({ url: 'https://a.example.com' }));
+
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-2', url: 'https://b.example.com' }));
+    const { testFile: file2 } = await service.generateAndRun(fakeInput({ url: 'https://b.example.com' }));
+
+    const results = await service.runGeneratedTestsBatch([file1, file2]);
+
+    expect(startRunMock).toHaveBeenCalledTimes(2);
+    expect(results).toHaveLength(2);
+    expect(new Set(results.map((r) => r.runId))).toEqual(new Set(['batch-run-1', 'batch-run-2']));
+    expect(results.every((r) => r.mode === 'run')).toBe(true); // replaySteps yok → normal (AI'lı) Run
+  });
+
+  it('kayıtlı testin useSeleniumGrid değerini startRun\'a geçirilen options\'a aynen taşır (v2.0)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-grid', url: 'https://grid.example.com' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(
+      fakeInput({ useSeleniumGrid: true, url: 'https://grid.example.com' }),
+    );
+
+    await service.runGeneratedTestsBatch([testFile]);
+
+    expect(startRunMock.mock.calls[0]?.[0].options.useSeleniumGrid).toBe(true);
+  });
+
+  it('replaySteps kayıtlıysa mode:\'replay\' ile başlatır ve startRun\'a replaySteps geçirir; yoksa mode:\'run\' ve replaySteps geçirilmez', async () => {
+    const fakeReplaySteps = [{ action: 'click' as const, targetRef: 'e1' }];
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-replay', replaySteps: fakeReplaySteps }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile: replayable } = await service.generateAndRun(fakeInput());
+
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-norm', replaySteps: undefined }));
+    const { testFile: normal } = await service.generateAndRun(fakeInput());
+
+    const results = await service.runGeneratedTestsBatch([replayable, normal]);
+
+    const replayResult = results.find((r) => r.fileName === replayable);
+    const normalResult = results.find((r) => r.fileName === normal);
+    expect(replayResult?.mode).toBe('replay');
+    expect(normalResult?.mode).toBe('run');
+
+    expect(startRunMock.mock.calls[0]?.[0].replaySteps).toEqual(fakeReplaySteps);
+    expect(startRunMock.mock.calls[1]?.[0].replaySteps).toBeUndefined();
+  });
+
+  it('var olmayan bir dosya için sonuç listesinde error alanı dolu döner, DİĞER geçerli dosyaları engellemez', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-valid' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(fakeInput());
+
+    const results = await service.runGeneratedTestsBatch([testFile, 'bilinmeyen-dosya.spec.ts']);
+
+    expect(results.find((r) => r.fileName === testFile)?.runId).toBeDefined();
+    expect(results.find((r) => r.fileName === 'bilinmeyen-dosya.spec.ts')?.error).toBeTruthy();
+    expect(startRunMock).toHaveBeenCalledTimes(1); // bilinmeyen dosya için startRun hiç çağrılmadı
+  });
+
+  it('bir run run_finished ile bittiğinde, sonucunu Test Runs geçmişine (arka planda) kalıcı hale getirir', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-persist' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(fakeInput());
+
+    const [{ runId }] = await service.runGeneratedTestsBatch([testFile]);
+    const listener = batchListeners.get(runId!);
+    expect(listener).toBeDefined();
+
+    const finishedReport = fakeReport({ runId: 'seed-persist-finished', status: 'passed' });
+    listener!({ type: 'run_finished', runId, status: 'passed', report: finishedReport });
+    await flush();
+
+    const runs = await service.listTestRuns();
+    expect(runs.runs.some((r) => r.id === 'seed-persist-finished')).toBe(true);
+  });
+
+  it('bir run run_error ile bittiğinde geçmişe HİÇBİR ŞEY kaydetmez (elde RunReport yok)', async () => {
+    runMock.mockResolvedValue(fakeReport({ runId: 'seed-crash' }));
+    const service = new LegacyTestService(fakeProvider);
+    const { testFile } = await service.generateAndRun(fakeInput());
+
+    const beforeCount = (await service.listTestRuns()).runs.length;
+
+    const [{ runId }] = await service.runGeneratedTestsBatch([testFile]);
+    const listener = batchListeners.get(runId!);
+
+    listener!({ type: 'run_error', runId, message: 'beklenmeyen çökme' });
+    await flush();
+
+    const afterCount = (await service.listTestRuns()).runs.length;
+    expect(afterCount).toBe(beforeCount);
   });
 });
 

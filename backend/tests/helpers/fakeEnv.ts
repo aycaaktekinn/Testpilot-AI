@@ -36,6 +36,22 @@ export function baseEnv(overrides: Record<string, unknown> = {}) {
     ALLURE_RESULTS_DIR: './allure-results',
     ALLURE_REPORT_DIR: './allure-report',
     LEGACY_DEFAULT_BROWSER: 'chromium',
+    // v2.0 — Selenium Grid hub adresi (bkz. SeleniumGridClient dosya başı açıklaması).
+    // Testlerde varsayılan olarak TANIMSIZ: Grid'in "yapılandırılmamış" davranışı (net bir
+    // SeleniumGridError) varsayılan test ortamıdır; Grid'e özgü testler kendi override'ını verir.
+    SELENIUM_GRID_URL: undefined,
+    // v2.0 — Vector cache (bkz. VectorCacheStore dosya başı açıklaması). Testlerde varsayılan
+    // olarak KAPALI: `vectorCacheInstance.ts` bu durumda `null` üretir, Milvus'a hiçbir bağlantı
+    // denemesi yapılmaz. Vector cache'e özgü testler kendi override'ını verir.
+    VECTOR_CACHE_ENABLED: false,
+    OLLAMA_URL: 'http://localhost:11434',
+    OLLAMA_EMBEDDING_MODEL: undefined,
+    MILVUS_URL: 'http://localhost:19530',
+    // v2.0 Faz 2 — okuma tarafı (bkz. AgentLoop.tryVectorCacheHit). Testlerde varsayılan olarak
+    // KAPALI: LLM çağrısını atlama davranışına özgü testler kendi override'ını verir.
+    VECTOR_CACHE_READ_ENABLED: false,
+    VECTOR_CACHE_MIN_SIMILARITY: 0.92,
+    VECTOR_CACHE_TOP_K: 5,
     FRONTEND_DIR: '../frontend',
     ...overrides,
   };
@@ -63,6 +79,7 @@ export function baseDefaultRunOptions(overrides: Record<string, unknown> = {}) {
     captureScreenshot: false,
     captureVideo: false,
     captureTrace: false,
+    useSeleniumGrid: false,
     ...overrides,
   };
 }

@@ -36,6 +36,25 @@ settingsRouter.get('/settings', (_req, res) => {
       navigationTimeoutMs: defaultRunOptions.navigationTimeoutMs,
       defaultActionTimeoutMs: defaultRunOptions.defaultActionTimeoutMs,
     },
+    // v2.0 — frontend'in "Selenium Grid üzerinden çalıştır" checkbox'ını, hub yapılandırılmamışken
+    // devre dışı bırakabilmesi için (bkz. RunOptions.useSeleniumGrid / BrowserManager dosya başı
+    // açıklamaları). Hub adresinin KENDİSİ BİLEREK dönülmez — bu sadece "yapılandırılmış mı"
+    // bilgisidir, herhangi bir sırrı ifşa etmez ama yine de dahili altyapı adresidir.
+    seleniumGrid: {
+      configured: Boolean(env.SELENIUM_GRID_URL),
+    },
+    // v2.0 Faz 3 — vector cache (locator cache / Milvus+Ollama) yapılandırma durumu (bkz.
+    // VectorCacheStore ve AgentLoop.tryVectorCacheHit dosya başı açıklamaları). Selenium Grid ile
+    // AYNI prensip: sadece "yapılandırılmış mı" bilgisi + hassas OLMAYAN eşik/model bilgileri
+    // döner — Milvus/Ollama adresleri (MILVUS_URL/OLLAMA_URL) BİLEREK dönülmez, tıpkı hub
+    // adresinin dönülmediği gibi (bunlar dahili altyapı adresleridir, sır DEĞİLDİR ama yine de
+    // API'nin dışarı sızdırması gereken bir bilgi değildir).
+    vectorCache: {
+      writeEnabled: env.VECTOR_CACHE_ENABLED,
+      readEnabled: env.VECTOR_CACHE_READ_ENABLED,
+      embeddingModel: env.OLLAMA_EMBEDDING_MODEL ?? null,
+      minSimilarity: env.VECTOR_CACHE_MIN_SIMILARITY,
+    },
   });
 });
 

@@ -15,6 +15,13 @@ export interface TestRunRequest {
   secrets?: Record<string, string>;
   /** Çalıştırma seçenekleri. */
   options?: Partial<RunOptions>;
+  /**
+   * Doluysa, AgentLoop LLM'e HİÇ danışmadan bu adımları aynen tekrar oynatır ("Replay (No AI)" —
+   * bkz. AgentLoopInput.replaySteps dosya başı açıklaması). v2.0'daki toplu/paralel çalıştırma
+   * özelliği, önceden PASS ile bitmiş (replaySteps'i olan) testler için bunu kullanarak gereksiz
+   * AI çağrısından kaçınır; yoksa bu alan boş bırakılıp normal (AI'lı) bir run başlatılır.
+   */
+  replaySteps?: ReplayStep[];
 }
 
 export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
@@ -37,6 +44,14 @@ export interface RunOptions {
   captureVideo: boolean;
   /** Run boyunca Playwright trace (screenshots+snapshots) toplanıp .zip olarak kaydedilsin mi. */
   captureTrace: boolean;
+  /**
+   * v2.0 — true ise BrowserManager yerel bir tarayıcı başlatmak yerine SELENIUM_GRID_URL'deki
+   * hub'da bir WebDriver session açıp Playwright'ı o session'ın CDP adresine bağlar (bkz.
+   * SeleniumGridClient dosya başı açıklaması). SADECE browserEngine "chromium" iken geçerlidir —
+   * Firefox/WebKit ile birlikte true gönderilirse BrowserManager.launch() net bir hata fırlatır
+   * (sessizce yerelde çalıştırmaz, kullanıcıyı yanıltmamak için).
+   */
+  useSeleniumGrid: boolean;
 }
 
 /** Bir run sonunda üretilen (varsa) dosya tabanlı kanıtlar. Değerler mutlak dosya sistemi yoludur. */
@@ -104,6 +119,17 @@ export interface AgentDecision {
   value?: string;
   /** Senaryonun tamamlandığını veya başarısız olduğunu düşünüyorsa kısa özet. */
   summary?: string;
+  /**
+   * v2.0 — bu kararın NEREDEN geldiğini (JSON çıktısında programatik olarak, `reasoning` metnini
+   * ayrıştırmaya gerek kalmadan) gösterir. LLM'İN ÜRETTİĞİ JSON'DA BU ALAN YOKTUR — sadece
+   * AgentLoop tarafından, kararın kaynağı kesinleşince (LLM yanıtı ayrıştırıldıktan / vector cache
+   * eşleşmesi bulunduktan / replay adımı okunduktan hemen sonra) atanır. Üç değer mümkündür:
+   *   - 'llm': normal AI akışı, gerçek bir model çağrısıyla üretildi.
+   *   - 'vector_cache': "Replay (No AI)" DEĞİL — bkz. VectorCacheStore/AgentLoop.tryVectorCacheHit;
+   *     LLM'e hiç danışılmadan, geçmiş benzer bir karardan yeniden kullanıldı.
+   *   - 'replay': kullanıcının "Replay (No AI)" ile yeniden oynattığı, önceden kaydedilmiş bir adım.
+   */
+  decisionSource?: 'llm' | 'vector_cache' | 'replay';
 }
 
 /** DOM analizinde keşfedilen tek bir etkileşilebilir element. */
@@ -224,6 +250,13 @@ export interface RunReport {
    * bilinçli olarak sadece PASSED run'larda üretilir.
    */
   replaySteps?: ReplayStep[];
+  /**
+   * v2.2 — SADECE Selenium Grid kullanan VE env.SELENIUM_GRID_NODE_VNC_MAP'te bu node için bir
+   * eşleme olan run'larda doludur (bkz. AgentEvent 'grid_live_view' dosya başı açıklaması). Run
+   * bittikten SONRA bu linke gitmenin bir anlamı yoktur (Grid session'ı zaten kapatılmıştır) — burada
+   * SADECE run'ın Grid ile mi çalıştığının/hangi node'a düştüğünün kaydı olarak tutulur.
+   */
+  seleniumGridLiveViewUrl?: string;
 }
 
 /** Çalışma zamanında runId -> canlı durum için kullanılan hafif özet. */
@@ -235,4 +268,6 @@ export interface RunSummary {
   startedAt: string;
   finishedAt?: string;
   currentStep: number;
+  /** v2.2 — bkz. RunReport.seleniumGridLiveViewUrl dosya başı açıklaması. Run SÜRERKEN asıl değerini kazanır. */
+  seleniumGridLiveViewUrl?: string;
 }

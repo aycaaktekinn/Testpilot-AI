@@ -66,6 +66,9 @@ class RunManager {
         variables: request.variables,
         secrets: request.secrets,
         options,
+        // Doluysa AgentLoop bunu bir "Replay (No AI)" olarak çalıştırır (bkz. TestRunRequest.replaySteps
+        // dosya başı açıklaması) — v2.0 toplu/paralel çalıştırma özelliği bunu bu şekilde kullanır.
+        replaySteps: request.replaySteps,
       })
       .then((report) => {
         record.report = report;
@@ -158,6 +161,14 @@ class RunManager {
     if (event.type === 'run_error') {
       record.summary.status = 'error';
       record.summary.finishedAt = new Date().toISOString();
+    }
+
+    // v2.2 — bkz. RunSummary.seleniumGridLiveViewUrl dosya başı açıklaması. Burada da (sadece
+    // WS event'i ile değil) summary'ye yazılması, GEÇ bağlanan bir WS istemcisinin (run_snapshot
+    // ile) veya WS hiç kullanmayıp sadece GET ile durumu okuyan bir çağıranın da bunu görebilmesi
+    // içindir.
+    if (event.type === 'grid_live_view') {
+      record.summary.seleniumGridLiveViewUrl = event.url;
     }
 
     for (const listener of record.listeners) {

@@ -47,3 +47,17 @@ export class LlmConfigurationError extends Error {
     this.name = 'LlmConfigurationError';
   }
 }
+
+/**
+ * v2.0 — Selenium Grid hub'ıyla ilgili bir sorun olduğunda fırlatılır: hub yapılandırılmamış
+ * (SELENIUM_GRID_URL boş), hub'a ulaşılamıyor, desteklenmeyen bir tarayıcı motoruyla (Firefox/
+ * WebKit) Grid istenmiş, ya da hub session açmayı reddetti/CDP adresi dönmedi. LlmConfigurationError
+ * ile aynı desen: bu bir SİTE/SENARYO hatası DEĞİL, bir ALTYAPI/YAPILANDIRMA hatasıdır — bkz.
+ * AgentLoop.run()'daki 'grid_error:' önekli işleme.
+ */
+export class SeleniumGridError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SeleniumGridError';
+  }
+}

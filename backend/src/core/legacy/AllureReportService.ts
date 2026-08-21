@@ -1,9 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, writeFile, readdir, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, stat, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { BrowserEngine, RunReport, RunStatus, StepLogEntry } from '../../domain/types.js';
+import type { BrowserEngine, RunArtifacts, RunReport, RunStatus, StepLogEntry } from '../../domain/types.js';
 import { env } from '../../config/env.js';
 import { createLogger } from '../../config/logger.js';
 
@@ -11,6 +11,13 @@ const log = createLogger('AllureReportService');
 const execFileAsync = promisify(execFile);
 
 const GENERATE_TIMEOUT_MS = 60_000;
+
+/** Allure'ın result JSON şemasındaki tek bir "attachment" girdisi — bkz. buildAttachments(). */
+interface AllureAttachmentEntry {
+  name: string;
+  type: string;
+  source: string;
+}
 
 /**
  * RunReport (bu projenin kendi PASS/FAIL/hata modeli) ile Allure'ın beklediği `*-result.json`
@@ -44,13 +51,56 @@ export class AllureReportService {
       await mkdir(this.resultsDir, { recursive: true });
 
       const uuid = randomUUID();
-      const payload = this.buildResult(report, browserEngine, uuid);
+      const attachments = await this.buildAttachments(report.artifacts);
+      const payload = this.buildResult(report, browserEngine, uuid, attachments);
       const filePath = path.join(this.resultsDir, `${uuid}-result.json`);
 
       await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf-8');
     } catch (err) {
       log.warn({ err, runId: report.runId }, 'Allure sonuç dosyası yazılamadı (yanıt yine de döndürülüyor)');
     }
+  }
+
+  /**
+   * report.artifacts'teki (screenshot/trace/video) dosyaları Allure'ın resultsDir İÇİNE
+   * KOPYALAR — Allure, attachment kaynağını her zaman kendi results klasörü içinde arar, orijinal
+   * (ARTIFACTS_DIR altındaki) konuma referans veremez. Her attachment best-effort'tur: bir dosya
+   * artık diskte yoksa (silinmiş/taşınmış) veya kopyalama başarısız olursa sadece o attachment
+   * atlanır — raporun geri kalanını (adımlar, PASS/FAIL) ASLA bozmaz.
+   */
+  private async buildAttachments(artifacts: RunArtifacts | undefined): Promise<AllureAttachmentEntry[]> {
+    if (!artifacts) return [];
+
+    const candidates: Array<{ name: string; sourcePath?: string; type: string; fallbackExt: string }> = [
+      { name: 'Screenshot', sourcePath: artifacts.screenshotPath, type: 'image/png', fallbackExt: '.png' },
+      { name: 'Trace', sourcePath: artifacts.tracePath, type: 'application/zip', fallbackExt: '.zip' },
+      // Playwright videoları her zaman .webm üretir, ama gerçek dosya uzantısını (path.extname)
+      // kullanmak, ileride farklı bir formata geçilirse sessizce yanlış MIME type yazmaktan
+      // koruyacak küçük bir güvenlik payı sağlıyor.
+      { name: 'Video', sourcePath: artifacts.videoPath, type: 'video/webm', fallbackExt: '.webm' },
+    ];
+
+    const attachments: AllureAttachmentEntry[] = [];
+
+    for (const candidate of candidates) {
+      if (!candidate.sourcePath) continue;
+
+      try {
+        const extension = path.extname(candidate.sourcePath) || candidate.fallbackExt;
+        const attachmentFileName = `${randomUUID()}-attachment${extension}`;
+
+        await copyFile(candidate.sourcePath, path.join(this.resultsDir, attachmentFileName));
+
+        attachments.push({ name: candidate.name, type: candidate.type, source: attachmentFileName });
+      } catch (err) {
+        log.warn(
+          { err, path: candidate.sourcePath },
+          `${candidate.name} attachment'ı Allure sonuçlarına kopyalanamadı (atlandı)`,
+        );
+      }
+    }
+
+    return attachments;
   }
 
   /**
@@ -104,7 +154,12 @@ export class AllureReportService {
     }
   }
 
-  private buildResult(report: RunReport, browserEngine: BrowserEngine, uuid: string) {
+  private buildResult(
+    report: RunReport,
+    browserEngine: BrowserEngine,
+    uuid: string,
+    attachments: AllureAttachmentEntry[],
+  ) {
     const startMs = parseTimestamp(report.startedAt);
     const stopMs = report.finishedAt ? parseTimestamp(report.finishedAt) : startMs;
 
@@ -119,7 +174,7 @@ export class AllureReportService {
       statusDetails: buildStatusDetails(report),
       stage: 'finished',
       steps: report.steps.map(buildAllureStep),
-      attachments: [],
+      attachments,
       parameters: [
         { name: 'URL', value: report.url },
         { name: 'Browser', value: browserEngine },

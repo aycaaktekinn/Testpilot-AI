@@ -32,6 +32,10 @@ vi.mock('../src/core/browser/BrowserManager.js', () => ({
     launch: launchMock,
     getPage: vi.fn(() => currentFakePage),
     adoptNewestPageIfOpened: adoptNewestMock,
+    // v2.2 — bkz. BrowserManager.getGridLiveViewUrl dosya başı açıklaması. Bu test dosyasındaki
+    // senaryoların hiçbiri Selenium Grid kullanmıyor — bu yüzden sabit `null` yeterli (AgentLoop
+    // bunu `?? undefined`'a çevirip sadece doluysa loglar/olay yayınlar).
+    getGridLiveViewUrl: vi.fn().mockReturnValue(null),
     captureScreenshot: vi.fn().mockResolvedValue(false),
     stopTracing: vi.fn().mockResolvedValue(false),
     close: closeMock,
@@ -69,6 +73,7 @@ function fakeOptions(overrides: Partial<RunOptions> = {}): RunOptions {
     captureScreenshot: false,
     captureVideo: false,
     captureTrace: false,
+    useSeleniumGrid: false,
     ...overrides,
   };
 }
@@ -129,6 +134,8 @@ describe('AgentLoop — terminal aksiyonlar', () => {
     expect(report.status).toBe('passed');
     expect(report.totalSteps).toBe(1);
     expect(executeMock).not.toHaveBeenCalled();
+    // v2.0 — normal AI akışından gelen bir karar 'llm' olarak damgalanmalı (bkz. AgentDecision.decisionSource).
+    expect(report.steps[0]?.decision.decisionSource).toBe('llm');
   });
 
   it('finish_failure: run "failed" ile biter, failureReason özet metnini içerir', async () => {
@@ -343,6 +350,8 @@ describe('AgentLoop — Replay (No AI) modu', () => {
     expect(completeMock).not.toHaveBeenCalled();
     expect(validateConfigMock).not.toHaveBeenCalled();
     expect(executeMock).toHaveBeenCalledTimes(1);
+    // v2.0 — replay'den gelen bir karar 'replay' olarak damgalanmalı (bkz. AgentDecision.decisionSource).
+    expect(report.steps[0]?.decision.decisionSource).toBe('replay');
   });
 
   it('kayıtlı hedef elementin kimliği (tag/role/accessibleName) o anki sayfadakiyle UYUŞMUYORSA, aksiyonu hiç denemeden güvenli şekilde durur ("replay_mismatch")', async () => {

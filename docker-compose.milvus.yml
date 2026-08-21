@@ -1,0 +1,100 @@
+# v2.0 — Vector DB (Milvus) tabanlı "locator cache" için gerekli servisler (bkz. backend/.env.example
+# VECTOR_CACHE_ENABLED açıklaması). Bu compose dosyası Milvus'un resmi standalone kurulum şablonuna
+# dayanır (etcd + minio, Milvus'un kendi bağımlılıklarıdır — meta veri ve nesne depolama için). Attu,
+# Milvus'un koleksiyonlarını tarayıcıdan görsel olarak incelemek için resmi bir GUI'dir.
+#
+# NOT: Ollama BU COMPOSE'UN DIŞINDADIR — kasıtlı olarak. Ollama'yı kendi makinenizde `ollama serve`
+# ile (Docker container'ı OLARAK DEĞİL) çalıştırmanız önerilir, çünkü Apple Silicon Mac'lerde Ollama
+# yerelde GPU (Metal) hızlandırmasını kullanabilirken, Docker Desktop for Mac içindeki bir container
+# bu erişime sahip DEĞİLDİR — konteynerde çalıştırmak embedding üretimini gereksiz yere yavaşlatır.
+#
+# KULLANIM:
+#   docker compose -f docker-compose.milvus.yml up -d      # başlat
+#   docker compose -f docker-compose.milvus.yml down       # durdur (veriler volumes/ altında kalır)
+#   Attu arayüzü: http://localhost:8000 — "Milvus Address" alanına "localhost:19530" DEĞİL,
+#     "standalone:19530" yazın. NEDEN: tarayıcınız Milvus'a DOĞRUDAN bağlanmaz — bağlantıyı asıl
+#     Attu CONTAINER'I kurar (siz sadece Attu'nun arayüzüne tarayıcıdan bakıyorsunuz), ve "localhost"
+#     Attu container'ının İÇİNDEN çözüldüğünde container'ın KENDİSİNE işaret eder, standalone'a değil
+#     (canlıda doğrulandı: "localhost:19530" ile "Error: 14 UNAVAILABLE" hatası alınır). "standalone"
+#     ise bu compose'daki Milvus servisinin adı — aynı Docker ağında (testpilot-milvus) Attu bu adla
+#     standalone'ı bulabilir. Buna karşılık backend'iniz (bu compose'un DIŞINDA, kendi makinenizde
+#     çalışır, bir Docker container'ı DEĞİLDİR) gerçekten "localhost:19530" kullanır (bkz. .env
+#     MILVUS_URL) — çünkü o, Docker ağının değil, doğrudan makinenizin ağının bir parçasıdır.
+#
+# Sürüm etiketleri bu dosyanın yazıldığı tarihteki (2026) Milvus dokümantasyonundaki standart
+# standalone şablonuna dayanır — https://milvus.io/docs/install_standalone-docker-compose.md
+# üzerinden güncel/kararlı etiketleri doğrulamanızı öneririz (GEMINI_MODEL/OLLAMA_EMBEDDING_MODEL'de
+# olduğu gibi, dış bir servisin sürüm adları zamanla değişebilir).
+
+services:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ./volumes/milvus-etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ['CMD', 'etcdctl', 'endpoint', 'health']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ./volumes/milvus-minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.5
+    command: ['milvus', 'run', 'standalone']
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ./volumes/milvus-standalone:/var/lib/milvus
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9091/healthz']
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      # Backend'in (VectorCacheStore, bkz. MILVUS_URL) bağlandığı asıl port budur.
+      - '19530:19530'
+      - '9091:9091'
+    depends_on:
+      - etcd
+      - minio
+
+  attu:
+    container_name: milvus-attu
+    image: zilliz/attu:v2.4
+    environment:
+      MILVUS_URL: standalone:19530
+    ports:
+      # Görsel yönetim arayüzü — bkz. dosya başı KULLANIM notu.
+      - '8000:3000'
+    depends_on:
+      - standalone
+
+networks:
+  default:
+    name: testpilot-milvus

@@ -108,6 +108,53 @@
 
         </div>
 
+        <!-- SELENIUM GRID (v2.0) -->
+        <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
+
+            <div class="pb-sm border-b border-outline-variant">
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">hub</span>
+                    Selenium Grid
+                </h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                    Read-only — set <code class="font-code-md text-code-md">SELENIUM_GRID_URL</code> in the
+                    backend's <code class="font-code-md text-code-md">.env</code> file and restart the server
+                    to enable this. Only supported with the Chromium engine.
+                </p>
+            </div>
+
+            <div id="settingsSeleniumGridInfo" class="grid grid-cols-1 gap-4">
+                <div class="font-body-sm text-body-sm text-on-surface-variant">
+                    Loading...
+                </div>
+            </div>
+
+        </div>
+
+        <!-- VECTOR CACHE / LOCATOR CACHE (v2.0 Faz 1-3) -->
+        <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
+
+            <div class="pb-sm border-b border-outline-variant">
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">storage</span>
+                    Vector Cache (Locator Cache)
+                </h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
+                    Read-only — set <code class="font-code-md text-code-md">VECTOR_CACHE_ENABLED</code> and
+                    <code class="font-code-md text-code-md">VECTOR_CACHE_READ_ENABLED</code> in the backend's
+                    <code class="font-code-md text-code-md">.env</code> file and restart the server to enable
+                    this. Requires a local Ollama + Milvus setup.
+                </p>
+            </div>
+
+            <div id="settingsVectorCacheInfo" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="col-span-2 font-body-sm text-body-sm text-on-surface-variant">
+                    Loading...
+                </div>
+            </div>
+
+        </div>
+
         <!-- AGENT BEHAVIOR -->
         <div class="card-surface rounded-lg p-lg shadow-sm flex flex-col gap-md">
 

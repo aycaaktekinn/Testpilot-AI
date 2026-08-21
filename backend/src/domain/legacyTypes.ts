@@ -1,4 +1,4 @@
-import type { BrowserEngine, ReplayStep } from './types.js';
+import type { ActionType, BrowserEngine, ReplayStep } from './types.js';
 
 /**
  * Bu dosya, mevcut (korunan) frontend'in beklediği eski API sözleşmesine ait tipleri içerir.
@@ -40,6 +40,21 @@ export interface LegacyRunRecord {
   exitCode: number;
 }
 
+/**
+ * BDD-stil (Given/When/Then benzeri) gösterim için, bir run'ın TEK bir adımının insan-okunur
+ * özeti — bkz. buildBddSteps.ts. `replaySteps`'ten (ReplayStep) BİLEREK ayrıdır: replaySteps
+ * yürütme amaçlı minimal bir veridir (sadece PASSED run'larda dolar), bu ise SADECE görüntüleme
+ * amaçlıdır ve PASS/FAIL fark etmeksizin her run için üretilir (kullanıcı, başarısız bir
+ * senaryonun da hangi adımda nerede durduğunu görebilsin diye).
+ */
+export interface BddStepView {
+  index: number;
+  action: ActionType;
+  /** AI'nın bu adım için verdiği doğal dil gerekçesi (ör. "Arama kutusuna 'kablosuz kulaklık' yazıldı"). */
+  description: string;
+  ok: boolean;
+}
+
 /** GET /api/generated-tests listesindeki + index.json'da saklanan tek bir kayıt. */
 export interface LegacyGeneratedTestMeta {
   fileName: string;
@@ -53,11 +68,41 @@ export interface LegacyGeneratedTestMeta {
   video: boolean;
   trace: boolean;
   /**
+   * v2.0 — bu testin Selenium Grid üzerinden mi (true) yoksa yerel bir tarayıcıyla mı (false/
+   * tanımsız) çalıştırıldığı/çalıştırılacağı (bkz. RunOptions.useSeleniumGrid dosya başı
+   * açıklaması). OPSİYONEL: bu alan eklenmeden ÖNCE üretilmiş eski kayıtlarda bulunmaz — bu
+   * durumda `false` (yerel) varsayılır (bkz. LegacyTestService'teki `?? false` kullanımı).
+   */
+  useSeleniumGrid?: boolean;
+  /**
    * SADECE bu testi üreten run PASSED ile bittiyse doldurulur — "Replay (No AI)" ile bu testin
    * LLM'e hiç danışılmadan tekrar oynatılabilmesini sağlar (bkz. ReplayStep, AgentLoop.replaySteps).
    * Secret DEĞERİ İÇERMEZ (bkz. ReplayStep dosya başı açıklaması) — diske yazılması güvenlidir.
    */
   replaySteps?: ReplayStep[];
+  /**
+   * BDD/step bazlı görüntüleme için (bkz. BddStepView) — PASS/FAIL fark etmeksizin doldurulur.
+   * Eski (bu alan eklenmeden ÖNCE üretilmiş) kayıtlarda bulunmaz; frontend bu durumda step
+   * listesini/genişletme okunu göstermemelidir (bkz. generated-tests.html render mantığı).
+   */
+  steps?: BddStepView[];
+}
+
+/**
+ * POST /api/generated-tests/run-batch yanıtındaki TEK bir öğe. Diğer legacy endpoint'lerin aksine
+ * (bkz. dosya başı NOT — "her zaman HTTP 200 + status:'failed'" sözleşmesi) bu endpoint YENİ bir
+ * yüzeydir ve eski frontend'in beklediği bir sözleşmeye bağlı değildir: her run RunManager
+ * üzerinden ASENKRON (bloklamadan) başlatılır, bu yüzden yanıt sonucu değil sadece "başlatıldı mı"
+ * bilgisini taşır — asıl PASS/FAIL sonucu `runId` ile `/ws/runs/:runId` üzerinden takip edilir.
+ */
+export interface BatchRunStartResult {
+  fileName: string;
+  /** Başarıyla başlatıldıysa dolu — canlı takip için `/ws/runs/:runId`'ye bağlanılabilir. */
+  runId?: string;
+  /** Bu test için kayıtlı replaySteps varsa 'replay' (AI'sız, token harcamaz), yoksa 'run' (AI'lı). */
+  mode?: 'replay' | 'run';
+  /** Başlatılamadıysa (ör. dosya artık mevcut değil) dolu, `runId`/`mode` bu durumda yoktur. */
+  error?: string;
 }
 
 export interface LegacyGenerateAndRunInput {
@@ -68,6 +113,8 @@ export interface LegacyGenerateAndRunInput {
   screenshot: boolean;
   video: boolean;
   trace: boolean;
+  /** v2.0 — bkz. RunOptions.useSeleniumGrid dosya başı açıklaması (SADECE browser "chromium" iken geçerli). */
+  useSeleniumGrid: boolean;
   variables: Record<string, string>;
   /**
    * Hassas değerler (şifre, token vb.). `variables`'tan BİLEREK ayrı tutulur: AgentLoop/SecretsVault
@@ -85,4 +132,6 @@ export interface LegacyRunExistingOverrides {
   screenshot?: boolean;
   video?: boolean;
   trace?: boolean;
+  /** v2.0 — bkz. RunOptions.useSeleniumGrid dosya başı açıklaması. */
+  useSeleniumGrid?: boolean;
 }

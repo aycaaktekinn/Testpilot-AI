@@ -15,6 +15,8 @@ export const runOptionsInputSchema = z
     captureScreenshot: z.boolean().optional(),
     captureVideo: z.boolean().optional(),
     captureTrace: z.boolean().optional(),
+    // v2.0 — bkz. RunOptions.useSeleniumGrid dosya başı açıklaması (SADECE chromium ile geçerli).
+    useSeleniumGrid: z.boolean().optional(),
   })
   .optional();
 

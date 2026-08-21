@@ -277,6 +277,55 @@
         </div>
 
 
+        <!-- v2.0: SEÇİM ÇUBUĞU — sadece 1+ satır seçiliyken görünür (bkz. app.js
+             updateGeneratedTestsSelectionBar). "Tümünü Seç" gibi bu da mevcut filtreye uyan TÜM
+             testleri (sadece bu sayfayı değil) kapsar. -->
+        <div
+                id="generatedTestsSelectionBar"
+                class="hidden items-center justify-between gap-3
+                       px-md py-sm
+                       border-b border-outline-variant
+                       bg-primary-container/10"
+        >
+            <span
+                    id="generatedTestsSelectionCount"
+                    class="font-body-sm text-body-sm text-on-surface"
+            >
+                0 selected
+            </span>
+
+            <div class="flex items-center gap-3">
+                <button
+                        id="clearGeneratedTestsSelectionButton"
+                        class="font-body-sm text-body-sm
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               underline"
+                        type="button"
+                >
+                    Clear selection
+                </button>
+
+                <button
+                        id="runSelectedGeneratedTestsButton"
+                        class="inline-flex items-center gap-xs
+                               bg-primary-container
+                               text-on-primary-container
+                               rounded-lg
+                               py-[6px] px-sm
+                               font-bold"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined text-[16px]">
+                        play_arrow
+                    </span>
+
+                    Run Selected
+                </button>
+            </div>
+        </div>
+
+
         <!-- TABLE -->
         <div class="overflow-x-auto">
 
@@ -288,6 +337,17 @@
                         class="border-b border-outline-variant
                                bg-surface-container-lowest/50"
                 >
+
+                    <!-- v2.0: "Tümünü Seç" — toplu çalıştırma için (bkz. app.js
+                         initGeneratedTestsPage seçim state'i / updateSelectAllGeneratedTestsCheckbox). -->
+                    <th class="py-sm pl-md pr-xs w-[36px]">
+                        <input
+                                id="selectAllGeneratedTestsCheckbox"
+                                class="w-[16px] h-[16px] rounded border-outline-variant cursor-pointer"
+                                type="checkbox"
+                                aria-label="Select all generated tests"
+                        />
+                    </th>
 
                     <th
                             class="py-sm px-md

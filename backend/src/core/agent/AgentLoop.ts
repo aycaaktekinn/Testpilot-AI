@@ -1,6 +1,17 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import type { AgentDecision, ReplayStep, RunArtifacts, RunOptions, RunReport, StepLogEntry } from '../../domain/types.js';
+import { ACTION_TYPES } from '../../domain/types.js';
+import type {
+  AgentDecision,
+  ActionType,
+  DiscoveredElement,
+  PageSnapshot,
+  ReplayStep,
+  RunArtifacts,
+  RunOptions,
+  RunReport,
+  StepLogEntry,
+} from '../../domain/types.js';
 import { BrowserManager } from '../browser/BrowserManager.js';
 import { dismissConsentBanners } from '../browser/ConsentBannerHandler.js';
 import { DomAnalyzer } from '../dom/DomAnalyzer.js';
@@ -14,12 +25,28 @@ import { parseAgentDecision } from '../llm/ResponseParser.js';
 import { env } from '../../config/env.js';
 import { createLogger } from '../../config/logger.js';
 import type { AgentEventListener } from './types.js';
-import { LlmConfigurationError } from '../../domain/errors.js';
+import { LlmConfigurationError, SeleniumGridError } from '../../domain/errors.js';
+import { vectorCacheStore } from '../vectorcache/vectorCacheInstance.js';
+import type { CachedCandidate } from '../vectorcache/VectorCacheStore.js';
+import { buildSituationText, safeHostname } from '../vectorcache/situationText.js';
 
 const log = createLogger('AgentLoop');
 
 const TERMINAL_ACTIONS = new Set(['finish_success', 'finish_failure', 'ask_clarification']);
 const MAX_LLM_RETRIES_PER_STEP = 2;
+
+/**
+ * v2.0 Faz 2 — vector cache OKUMA tarafı SADECE bu aksiyonlar için bir kararı LLM'siz kabul eder.
+ * BİLİNÇLİ OLARAK dar tutulur: bu aksiyonların `value` alanı YOKTUR ya da senaryodan BAĞIMSIZDIR
+ * ("bu elemente tıkla" gibi SAF bir yapısal/lokasyon kararıdır). fill/type/select_option/navigate/
+ * assert_text/assert_url gibi aksiyonlar İSE `value` alanında SENARYOYA ÖZGÜ veri taşır (ör. bir
+ * arama kutusuna yazılan metin) — geçmiş bir run'ın bu değerini KÖRÜ KÖRÜNE farklı bir senaryoda
+ * tekrar kullanmak YANLIŞ olurdu (embedding benzerliği sayfa YAPISINI yakalar ama senaryonun
+ * TAM OLARAK aynı veriyi istediğini garanti ETMEZ). Bu yüzden bu aksiyonlar için her zaman LLM'e
+ * danışılır — "yanlış veri girmektense LLM'e danışmak her zaman daha güvenlidir" (bkz. AgentLoop'un
+ * genel güvenlik felsefesi).
+ */
+const CACHE_HIT_SAFE_ACTIONS = new Set<ActionType>(['click', 'dblclick', 'check', 'uncheck', 'hover', 'scroll_into_view']);
 
 export interface AgentLoopInput {
   runId: string;
@@ -70,6 +97,12 @@ export class AgentLoop {
     const isReplay = Boolean(input.replaySteps && input.replaySteps.length > 0);
     const collectedReplaySteps: ReplayStep[] = [];
 
+    // v2.2 — SADECE Selenium Grid kullanan VE bir noVNC eşlemesi olan run'larda dolar (bkz.
+    // BrowserManager.getGridLiveViewUrl / AgentEvent 'grid_live_view' dosya başı açıklamaları).
+    // `finishRun` bunu KAPANIŞ (closure) ile yakalar — henüz `undefined` olsa bile, `finishRun`
+    // GERÇEKTEN çağrıldığında (browserManager.launch() döndükten SONRA) güncel değeri görür.
+    let gridLiveViewUrl: string | undefined;
+
     // Tüm çıkış yolları (PASS/FAIL/ERROR/CANCELLED) buradan geçer, böylece 'run_finished'
     // olayının her koşulda tam olarak bir kez yayınlanması garanti edilir.
     const finishRun = async (status: RunReport['status'], failureReason?: string): Promise<RunReport> => {
@@ -77,7 +110,7 @@ export class AgentLoop {
       // açıklaması) — replay modundaysak zaten kullandığımız diziyi olduğu gibi geri taşırız (bu
       // sayede bir replay'in kendisi de PASSED biterse, TEKRAR replay edilebilir kalır).
       const replayStepsForReport = status === 'passed' ? (isReplay ? input.replaySteps : collectedReplaySteps) : undefined;
-      const report = await runLogger.finalize(status, llmCallCount, failureReason, replayStepsForReport);
+      const report = await runLogger.finalize(status, llmCallCount, failureReason, replayStepsForReport, gridLiveViewUrl);
       this.emit({ type: 'run_finished', runId, status, report });
       return report;
     };
@@ -110,6 +143,16 @@ export class AgentLoop {
       // `let`: bir click aksiyonu YENİ bir sekme açarsa (bkz. BrowserManager.adoptNewestPageIfOpened
       // dosya başındaki NOT), aktif sayfa referansı bu döngü boyunca değişebilir.
       let page = await browserManager.launch(options, videoDir);
+
+      // v2.2 — Grid session'ı gerçekten açıldıktan HEMEN SONRA (bkz. gridLiveViewUrl dosya başı
+      // NOT'u) — burada `undefined` kalması NORMALDİR (Grid kullanılmıyorsa ya da noVNC eşlemesi
+      // yoksa), bu durumda ne loglanır ne de olay yayınlanır; run'ı hiçbir şekilde etkilemez.
+      gridLiveViewUrl = browserManager.getGridLiveViewUrl() ?? undefined;
+      if (gridLiveViewUrl) {
+        log.info({ runId, liveViewUrl: gridLiveViewUrl }, 'Selenium Grid canlı izleme adresi hazır');
+        this.emit({ type: 'grid_live_view', runId, url: gridLiveViewUrl });
+      }
+
       await page.goto(url, { timeout: options.navigationTimeoutMs, waitUntil: 'domcontentloaded' });
       // İlk yüklemeden hemen sonra görünen çerez/onay banner'larını temizle (bkz. dosya başındaki NOT).
       await dismissConsentBanners(page);
@@ -147,68 +190,83 @@ export class AgentLoop {
             value: recorded.value,
             confidence: 1,
             reasoning: 'Kayıtlı adım yeniden oynatılıyor (AI çağrısı yapılmadı)',
+            decisionSource: 'replay',
           };
         } else {
-          let lastParseError = '';
+          // v2.0 Faz 2 — vector cache OKUMA tarafı: LLM'e sormadan ÖNCE, benzer bir geçmiş karar
+          // var mı diye bakılır (bkz. tryVectorCacheHit dosya başı açıklaması). BEST-EFFORT'tur —
+          // `env.VECTOR_CACHE_READ_ENABLED=false` iken (varsayılan) veya herhangi bir Milvus/Ollama
+          // sorununda `null` döner ve aşağıdaki normal LLM akışına sorunsuzca düşülür.
+          const cachedDecision = await this.tryVectorCacheHit(scenario, snapshot, stepIndex);
 
-          for (let attempt = 0; attempt <= MAX_LLM_RETRIES_PER_STEP; attempt++) {
-            const messages = [
-              buildSystemMessage(),
-              buildUserMessage({
-                scenario,
-                startUrl: url,
-                snapshot,
-                history,
-                vault,
-                stepIndex,
-                maxSteps: options.maxSteps,
-              }),
-            ];
-            if (attempt > 0) {
-              messages.push({
-                role: 'user',
-                content: `Önceki yanıtın geçersizdi: ${lastParseError}. Lütfen SADECE geçerli JSON döndür.`,
-              });
-            }
+          if (cachedDecision) {
+            decision = cachedDecision;
+          } else {
+            let lastParseError = '';
 
-            llmCallCount++;
-            let raw: string;
-            try {
-              raw = await this.llm.complete(messages);
-            } catch (err) {
-              if (err instanceof LlmConfigurationError) {
-                // Yapılandırma hataları (örn. model artık kullanılamıyor) RETRY EDİLEMEZ — aynı
-                // isteği tekrar göndermek aynı sonucu üretir. 3 kez denemek yerine hemen dışarı
-                // fırlat; dış try/catch bloğu bunu 'configuration_error:' öneki ile işleyip run'ı
-                // anında 'error' durumunda sonlandırır.
-                throw err;
+            for (let attempt = 0; attempt <= MAX_LLM_RETRIES_PER_STEP; attempt++) {
+              const messages = [
+                buildSystemMessage(),
+                buildUserMessage({
+                  scenario,
+                  startUrl: url,
+                  snapshot,
+                  history,
+                  vault,
+                  stepIndex,
+                  maxSteps: options.maxSteps,
+                }),
+              ];
+              if (attempt > 0) {
+                messages.push({
+                  role: 'user',
+                  content: `Önceki yanıtın geçersizdi: ${lastParseError}. Lütfen SADECE geçerli JSON döndür.`,
+                });
               }
-              // Ağ hatası / zaman aşımı: JSON-doğrulama hatalarıyla aynı yeniden deneme yoluna
-              // düşür — tek bir yavaş/başarısız istek yüzünden tüm run'ı hemen "error" ile bitirme.
-              lastParseError = err instanceof Error ? err.message : String(err);
-              log.warn({ runId, stepIndex, attempt, error: lastParseError }, 'LLM çağrısı başarısız, tekrar deneniyor');
-              continue;
+
+              llmCallCount++;
+              let raw: string;
+              try {
+                raw = await this.llm.complete(messages);
+              } catch (err) {
+                if (err instanceof LlmConfigurationError) {
+                  // Yapılandırma hataları (örn. model artık kullanılamıyor) RETRY EDİLEMEZ — aynı
+                  // isteği tekrar göndermek aynı sonucu üretir. 3 kez denemek yerine hemen dışarı
+                  // fırlat; dış try/catch bloğu bunu 'configuration_error:' öneki ile işleyip run'ı
+                  // anında 'error' durumunda sonlandırır.
+                  throw err;
+                }
+                // Ağ hatası / zaman aşımı: JSON-doğrulama hatalarıyla aynı yeniden deneme yoluna
+                // düşür — tek bir yavaş/başarısız istek yüzünden tüm run'ı hemen "error" ile bitirme.
+                lastParseError = err instanceof Error ? err.message : String(err);
+                log.warn({ runId, stepIndex, attempt, error: lastParseError }, 'LLM çağrısı başarısız, tekrar deneniyor');
+                continue;
+              }
+
+              const parsed = parseAgentDecision(raw);
+
+              if (parsed.ok) {
+                decision = parsed.decision;
+                // LLM'in ürettiği ham JSON'da bu alan yoktur (bkz. AgentDecision.decisionSource
+                // dosya başı açıklaması) — kararın gerçekten bir model çağrısından geldiğini burada
+                // AÇIKÇA damgalıyoruz, JSON çıktısında `reasoning` metnini ayrıştırmaya gerek kalmasın.
+                decision.decisionSource = 'llm';
+                break;
+              }
+              lastParseError = parsed.error;
+              // NOT: modelin ürettiği ham metni loglamak GÜVENLİDİR — secret DEĞERLERİ hiçbir zaman
+              // LLM'e gönderilmiyor (sadece "{{secret.AD}}" gibi placeholder adları), dolayısıyla
+              // model çıktısında da gerçek bir secret değeri asla olamaz. Bu, "neden geçersiz JSON
+              // üretti" sorusunu tahmin etmek yerine loglardan doğrudan görebilmek için ekli.
+              log.warn(
+                { runId, stepIndex, attempt, error: parsed.error, rawResponsePreview: raw.slice(0, 800) },
+                'LLM yanıtı doğrulanamadı, tekrar deneniyor',
+              );
             }
 
-            const parsed = parseAgentDecision(raw);
-
-            if (parsed.ok) {
-              decision = parsed.decision;
-              break;
+            if (!decision) {
+              return await finishRun('error', `LLM geçerli bir karar üretemedi: ${lastParseError}`);
             }
-            lastParseError = parsed.error;
-            // NOT: modelin ürettiği ham metni loglamak GÜVENLİDİR — secret DEĞERLERİ hiçbir zaman
-            // LLM'e gönderilmiyor (sadece "{{secret.AD}}" gibi placeholder adları), dolayısıyla
-            // model çıktısında da gerçek bir secret değeri asla olamaz. Bu, "neden geçersiz JSON
-            // üretti" sorusunu tahmin etmek yerine loglardan doğrudan görebilmek için ekli.
-            log.warn(
-              { runId, stepIndex, attempt, error: parsed.error, rawResponsePreview: raw.slice(0, 800) },
-              'LLM yanıtı doğrulanamadı, tekrar deneniyor',
-            );
-          }
-
-          if (!decision) {
-            return await finishRun('error', `LLM geçerli bir karar üretemedi: ${lastParseError}`);
           }
         }
 
@@ -254,8 +312,11 @@ export class AgentLoop {
         // (terminal kararlar dahil) burada toplanır. Run PASSED ile biterse (bkz. finishRun), bu
         // dizi RunReport.replaySteps olarak dışarı taşınır — run FAILED/ERROR ile biterse hiç
         // kullanılmaz (finishRun zaten status !== 'passed' olduğunda bu diziyi rapora eklemez).
+        // NOT: `targetEl` bilerek bu bloğun DIŞINDA (üstte) tanımlı — aşağıda, aksiyon gerçekten
+        // yürütüldükten SONRA vector cache yazma tarafında da (bkz. "Güvenlik kapısı 4"nden sonrası)
+        // AYNI element referansı tekrar kullanılır, ikinci bir arama yapmaya gerek yoktur.
+        const targetEl = decision.targetRef ? snapshot.elements.find((e) => e.ref === decision.targetRef) : undefined;
         if (!isReplay) {
-          const targetEl = decision.targetRef ? snapshot.elements.find((e) => e.ref === decision.targetRef) : undefined;
           collectedReplaySteps.push({
             action: decision.action,
             targetRef: decision.targetRef,
@@ -332,6 +393,17 @@ export class AgentLoop {
           options.stepTimeoutMs,
         );
 
+        // v2.0 — Vector cache YAZMA tarafı (Faz 1, bkz. VectorCacheStore dosya başı açıklaması):
+        // SADECE AI modunda (replay'de zaten öğrenecek yeni bir şey yok), gerçek bir hedef elementi
+        // olan (targetRef+targetEl dolu — "locator cache" adının işaret ettiği tam olarak budur) ve
+        // BAŞARIYLA yürütülmüş kararlar kaydedilir. BEST-EFFORT + FIRE-AND-FORGET: `void` ile
+        // çağrılır (await YOK) — bu satır run'ın akışını hiç BEKLETMEZ, ve recordDecisionInCache
+        // kendi içinde TÜM hataları yakalayıp sadece loglar; bir Milvus/Ollama sorunu run'ın
+        // PASS/FAIL sonucunu ASLA etkilemez.
+        if (!isReplay && vectorCacheStore && decision.targetRef && targetEl && actionResult.ok) {
+          void this.recordDecisionInCache(runId, scenario, snapshot, stepIndex, decision, targetEl);
+        }
+
         // Replay modunda bir aksiyon başarısız olursa devam ETMEYİZ: normal AI modunda LLM bir
         // sonraki adımda bunu görüp farklı bir yol deneyebilir, ama replay'de sabit bir senaryoyu
         // körü körüne oynatıyoruz — bir adım beklenmedik şekilde başarısız olduysa (sayfa
@@ -405,8 +477,14 @@ export class AgentLoop {
       const message = err instanceof Error ? err.message : String(err);
       // LlmConfigurationError'lar 'configuration_error:' öneki ile işaretlenir — böylece hem
       // loglarda hem de frontend'e dönen sonuçta bunun bir SİTE/SENARYO hatası değil, .env
-      // yapılandırma hatası olduğu bariz olur.
-      const prefixedMessage = err instanceof LlmConfigurationError ? `configuration_error: ${message}` : message;
+      // yapılandırma hatası olduğu bariz olur. SeleniumGridError'lar da aynı mantıkla
+      // 'grid_error:' önekini alır (bkz. SeleniumGridError dosya başı açıklaması).
+      const prefixedMessage =
+        err instanceof LlmConfigurationError
+          ? `configuration_error: ${message}`
+          : err instanceof SeleniumGridError
+            ? `grid_error: ${message}`
+            : message;
       log.error({ err, runId }, 'AgentLoop beklenmeyen hata ile durdu');
       this.emit({ type: 'run_error', runId, message: prefixedMessage });
       return await finishRun('error', prefixedMessage);
@@ -465,6 +543,102 @@ export class AgentLoop {
       },
       durationMs,
     };
+  }
+
+  /**
+   * v2.0 Faz 2 — vector cache OKUMA tarafı. `env.VECTOR_CACHE_READ_ENABLED=false` iken (varsayılan)
+   * ya da herhangi bir adım/altyapı sorununda `null` döner — bu metod ASLA fırlatmaz, çağıran taraf
+   * (yukarısı, `await` ile ama try/catch OLMADAN çağırır) bunu normal LLM akışına düşme sinyali
+   * olarak kullanır.
+   *
+   * GÜVENLİK KAPILARI (bir adayın kabul edilmesi için HEPSİ sağlanmalı):
+   *   1) `findSimilar()`'ın döndürdüğü benzerlik skoru >= `env.VECTOR_CACHE_MIN_SIMILARITY`.
+   *   2) Adayın aksiyonu `CACHE_HIT_SAFE_ACTIONS` içinde (SADECE veri taşımayan, saf yapısal
+   *      aksiyonlar — bkz. o sabitin dosya başı açıklaması).
+   *   3) Adayın (tag, role, accessibleName) üçlüsü, GÜNCEL sayfadaki GERÇEK bir elementle birebir
+   *      eşleşiyor — eşleşmiyorsa sayfa yapısı değişmiş demektir, aday KULLANILMAZ.
+   * Adaylar benzerlikten azalan sırada denenir; İLK üç kapıyı da geçen aday kullanılır. Hiçbiri
+   * geçemezse (ya da hiç aday yoksa) `null` döner — normal AI akışına düşülür, bu HER ZAMAN
+   * güvenli bir sonuçtur (LLM'e danışmak, körü körüne yanlış bir aksiyon uygulamaktan iyidir).
+   */
+  private async tryVectorCacheHit(scenario: string, snapshot: PageSnapshot, stepIndex: number): Promise<AgentDecision | null> {
+    if (!vectorCacheStore || !env.VECTOR_CACHE_READ_ENABLED) {
+      return null;
+    }
+
+    let candidates: CachedCandidate[];
+    try {
+      candidates = await vectorCacheStore.findSimilar({ scenario, snapshot, stepIndex }, env.VECTOR_CACHE_TOP_K);
+    } catch (err) {
+      log.warn({ err, stepIndex }, 'Vector cache araması başarısız (yok sayıldı, normal AI akışına düşülüyor)');
+      return null;
+    }
+
+    for (const candidate of candidates) {
+      if (candidate.similarity < env.VECTOR_CACHE_MIN_SIMILARITY) {
+        // Adaylar benzerlikten azalana sıralı geldiği için bundan sonrakiler de eşiği geçemez.
+        break;
+      }
+      if (!ACTION_TYPES.includes(candidate.action as ActionType) || !CACHE_HIT_SAFE_ACTIONS.has(candidate.action as ActionType)) {
+        continue;
+      }
+      const matchedEl = snapshot.elements.find(
+        (el) =>
+          el.tag === candidate.targetTag &&
+          (el.role ?? '') === candidate.targetRole &&
+          (el.accessibleName ?? '') === candidate.targetAccessibleName,
+      );
+      if (!matchedEl) {
+        continue;
+      }
+
+      log.info(
+        { stepIndex, similarity: candidate.similarity, action: candidate.action, sourceRunId: candidate.sourceRunId },
+        'Vector cache eşleşmesi bulundu, LLM çağrısı atlanıyor',
+      );
+
+      return {
+        action: candidate.action as ActionType,
+        targetRef: matchedEl.ref,
+        value: candidate.value,
+        confidence: 1,
+        reasoning: `Vector cache eşleşmesi kullanıldı (benzerlik: ${candidate.similarity.toFixed(2)}, AI çağrısı yapılmadı)`,
+        decisionSource: 'vector_cache',
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Bkz. çağrı noktasındaki dosya başı NOT (vector cache YAZMA tarafı, Faz 1). BEST-EFFORT: bu
+   * metod ASLA fırlatmaz — çağıran taraf (yukarısı) bilinçli olarak bu Promise'i `void` ile
+   * bekletmeden çağırır, dolayısıyla burada yakalanmayan bir hata "unhandled rejection" olurdu.
+   */
+  private async recordDecisionInCache(
+    runId: string,
+    scenario: string,
+    snapshot: PageSnapshot,
+    stepIndex: number,
+    decision: AgentDecision,
+    targetEl: DiscoveredElement,
+  ): Promise<void> {
+    try {
+      await vectorCacheStore!.recordDecision(
+        { scenario, snapshot, stepIndex },
+        {
+          action: decision.action,
+          targetTag: targetEl.tag,
+          targetRole: targetEl.role ?? '',
+          targetAccessibleName: targetEl.accessibleName ?? '',
+          value: decision.value,
+          domain: safeHostname(snapshot.url),
+          sourceRunId: runId,
+        },
+      );
+    } catch (err) {
+      log.warn({ err, runId, stepIndex }, "Karar vector cache'e yazılamadı (yok sayıldı, run etkilenmez)");
+    }
   }
 
   private async withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

@@ -17,6 +17,7 @@ const { BrowserManager } = await import('../src/core/browser/BrowserManager.js')
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe('BrowserManager — launch() öncesi güvenli durum', () => {
@@ -53,12 +54,15 @@ describe('BrowserManager — adoptNewestPageIfOpened() sekme değiştirme mantı
     expect(switched).toBe(false);
   });
 
-  it('YENİ bir sekme açılmışsa: aktif page’i en yeni sekmeye geçirir ve diğer (durgun) sekmeleri kapatır', async () => {
+  it('YENİ bir sekme açılmışsa (ve BAŞTAN itibaren gerçek bir URL\'deyse): aktif page’i en yeni sekmeye geçirir ve diğer (durgun) sekmeleri kapatır', async () => {
     const manager = new BrowserManager();
     const oldPage = { video: vi.fn().mockReturnValue(null), on: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
     const newestPage = {
       video: vi.fn().mockReturnValue(null),
       on: vi.fn(),
+      // Boş (about:blank/data:) DEĞİL — bu yüzden v2.3'teki grace-period bekleme mantığına hiç
+      // girmeden, eskisi gibi ANINDA adopte edilmeli.
+      url: vi.fn().mockReturnValue('https://example.com/product'),
       waitForLoadState: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
     };
@@ -74,6 +78,66 @@ describe('BrowserManager — adoptNewestPageIfOpened() sekme değiştirme mantı
     // "Yetim" sekmeler (en yeni olmayan HERKES) kapatılmalı — sadece bir öncekiler değil.
     expect(staleTab.close).toHaveBeenCalled();
     expect(oldPage.close).toHaveBeenCalled();
+    expect(newestPage.close).not.toHaveBeenCalled();
+  });
+});
+
+describe('adoptNewestPageIfOpened() — boş (about:blank/data:) yeni sekmeyi yok sayma (v2.3)', () => {
+  it('yeni sekme grace period boyunca SÜREKLİ boş kalırsa (pop-under): yok sayılıp KAPATILIR, aktif sayfa DEĞİŞMEZ', async () => {
+    vi.useFakeTimers();
+    const manager = new BrowserManager();
+    const oldPage = { video: vi.fn().mockReturnValue(null), on: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
+    const newestPage = {
+      video: vi.fn().mockReturnValue(null),
+      on: vi.fn(),
+      url: vi.fn().mockReturnValue('about:blank'), // hiç navigasyon yapmıyor — ölü pop-under
+      waitForLoadState: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const fakeContext = { pages: vi.fn().mockReturnValue([oldPage, newestPage]) };
+    (manager as unknown as { context: unknown; page: unknown }).context = fakeContext;
+    (manager as unknown as { context: unknown; page: unknown }).page = oldPage;
+
+    const resultPromise = manager.adoptNewestPageIfOpened();
+    await vi.advanceTimersByTimeAsync(2000); // grace period'dan (1200ms) fazla
+    const switched = await resultPromise;
+
+    expect(switched).toBe(false);
+    // Aktif sayfa hâlâ eski (asıl kullanışlı) sayfa — DEĞİŞMEDİ.
+    expect(manager.getPage()).toBe(oldPage);
+    // Ölü sekmenin kendisi kapatıldı...
+    expect(newestPage.close).toHaveBeenCalled();
+    // ...ama asıl (kullanışlı) sekmeye DOKUNULMADI.
+    expect(oldPage.close).not.toHaveBeenCalled();
+  });
+
+  it('yeni sekme İLK BAŞTA boşsa ama grace period içinde GERÇEK bir URL\'e navigasyon yaparsa: normal şekilde adopte edilir', async () => {
+    vi.useFakeTimers();
+    const manager = new BrowserManager();
+    const oldPage = { video: vi.fn().mockReturnValue(null), on: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
+    const urlMock = vi
+      .fn()
+      .mockReturnValueOnce('data:,')
+      .mockReturnValueOnce('data:,')
+      .mockReturnValue('https://example.com/product'); // birkaç poll turu sonra gerçek URL'e geçiyor
+    const newestPage = {
+      video: vi.fn().mockReturnValue(null),
+      on: vi.fn(),
+      url: urlMock,
+      waitForLoadState: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const fakeContext = { pages: vi.fn().mockReturnValue([oldPage, newestPage]) };
+    (manager as unknown as { context: unknown; page: unknown }).context = fakeContext;
+    (manager as unknown as { context: unknown; page: unknown }).page = oldPage;
+
+    const resultPromise = manager.adoptNewestPageIfOpened();
+    await vi.advanceTimersByTimeAsync(2000);
+    const switched = await resultPromise;
+
+    expect(switched).toBe(true);
+    expect(manager.getPage()).toBe(newestPage);
+    expect(oldPage.close).toHaveBeenCalled(); // artık "stale" — kapatılmalı
     expect(newestPage.close).not.toHaveBeenCalled();
   });
 });

@@ -125,6 +125,12 @@ const DEFAULT_EXECUTION_SETTINGS = {
     screenshot: true,
     video: false,
     trace: true,
+    // v2.0 — Selenium Grid tercihi diğerleriyle aynı şekilde tarayıcıda hatırlanır, ANCAK
+    // Settings sayfasının "Execution Defaults" bölümünde AYRI bir checkbox olarak GÖSTERİLMEZ
+    // (bkz. Create Test sayfasındaki updateSeleniumGridAvailability) — çünkü kullanılabilirliği
+    // her zaman o anki browser seçimine ve hub'ın yapılandırılmış olmasına bağlıdır, statik bir
+    // "varsayılan" gibi sunmak yanıltıcı olurdu.
+    useSeleniumGrid: false,
 };
 
 
@@ -570,12 +576,22 @@ function initCreateTestPage() {
     const traceOption =
         document.getElementById('traceOption');
 
+    const useSeleniumGridOption =
+        document.getElementById('useSeleniumGridOption');
+
+    const seleniumGridHint =
+        document.getElementById('seleniumGridHint');
+
 
     const generatedCodeOutput =
         document.getElementById('generatedCodeOutput');
 
     const executionLogOutput =
         document.getElementById('executionLogOutput');
+
+    // v2.2 — bkz. app.js "LIVE EXECUTION LOG" bölümündeki showGridLiveViewLink/hideGridLiveViewLink.
+    const gridLiveViewLink =
+        document.getElementById('gridLiveViewLink');
 
     const generatedFileName =
         document.getElementById('generatedFileName');
@@ -1080,11 +1096,91 @@ function initCreateTestPage() {
         appState.executionSettings.trace =
             traceOption.checked;
 
+        appState.executionSettings.useSeleniumGrid =
+            useSeleniumGridOption.checked;
+
 
         persistExecutionSettings(
             appState.executionSettings,
         );
     }
+
+
+    /* -----------------------------------------------------
+       SELENIUM GRID AVAILABILITY (v2.0)
+       ------------------------------------------------------
+       Checkbox SADECE şu iki koşul birden sağlandığında tıklanabilir: (1) seçili motor "chromium",
+       (2) backend'de SELENIUM_GRID_URL yapılandırılmış (bkz. GET /api/settings → seleniumGrid.configured).
+       Koşullardan biri sağlanmazsa checkbox devre dışı bırakılır VE işareti kaldırılır — aksi halde
+       kullanıcı "Grid kullanıyorum" sanıp aslında yerelde çalışan bir test oluşturabilir. Kaldırma
+       işlemi appState'e YAZILMAZ (saveExecutionSettings burada çağrılmaz) — bu sayede kullanıcı
+       motoru geri Chromium'a alırsa önceki tercihi (işaretliyse) geri gelir.
+    ----------------------------------------------------- */
+
+    let seleniumGridConfigured = false;
+
+    function updateSeleniumGridAvailability() {
+
+        const selectedBrowser =
+            document.querySelector(
+                'input[name="browser"]:checked',
+            )?.value || 'chromium';
+
+        const available =
+            selectedBrowser === 'chromium' &&
+            seleniumGridConfigured;
+
+        useSeleniumGridOption.disabled =
+            !available;
+
+        useSeleniumGridOption.checked =
+            available &&
+            appState.executionSettings.useSeleniumGrid;
+
+        if (!seleniumGridConfigured) {
+            seleniumGridHint.textContent =
+                'Selenium Grid is not configured on the backend (SELENIUM_GRID_URL missing).';
+        } else if (selectedBrowser !== 'chromium') {
+            seleniumGridHint.textContent =
+                'Selenium Grid is only supported with the Chromium engine.';
+        } else {
+            seleniumGridHint.textContent = '';
+        }
+    }
+
+
+    updateSeleniumGridAvailability();
+
+
+    (async () => {
+
+        try {
+
+            const response =
+                await fetch('/api/settings');
+
+            if (!response.ok) {
+                return;
+            }
+
+            const data =
+                await response.json();
+
+            seleniumGridConfigured =
+                Boolean(data?.seleniumGrid?.configured);
+
+        } catch (error) {
+
+            console.error(
+                'Failed to fetch Selenium Grid availability:',
+                error,
+            );
+
+        } finally {
+
+            updateSeleniumGridAvailability();
+        }
+    })();
 
 
     document
@@ -1095,7 +1191,10 @@ function initCreateTestPage() {
 
             input.addEventListener(
                 'change',
-                saveExecutionSettings,
+                () => {
+                    saveExecutionSettings();
+                    updateSeleniumGridAvailability();
+                },
             );
         });
 
@@ -1105,6 +1204,7 @@ function initCreateTestPage() {
         screenshotOption,
         videoOption,
         traceOption,
+        useSeleniumGridOption,
     ].forEach((input) => {
 
         input.addEventListener(
@@ -1574,6 +1674,28 @@ function initCreateTestPage() {
     }
 
 
+    // v2.2 — SADECE Selenium Grid ile çalışan, noVNC eşlemesi olan run'larda backend bir
+    // 'grid_live_view' olayı (veya geç bağlanan bir istemci için 'run_snapshot'ın
+    // summary.seleniumGridLiveViewUrl alanı) gönderir — bu iki fonksiyon o linki
+    // Execution Log başlığındaki gizli <a> öğesinde gösterir/gizler. Best-effort: bu link hiç
+    // gelmeyebilir (Grid kullanılmıyorsa, ya da .env'de SELENIUM_GRID_NODE_VNC_MAP tanımsızsa) —
+    // bu durumda link basitçe hep gizli kalır, testin kendisini hiç etkilemez.
+    function showGridLiveViewLink(url) {
+
+        gridLiveViewLink.href = url;
+        gridLiveViewLink.classList.remove('hidden');
+        gridLiveViewLink.classList.add('flex');
+    }
+
+
+    function hideGridLiveViewLink() {
+
+        gridLiveViewLink.classList.add('hidden');
+        gridLiveViewLink.classList.remove('flex');
+        gridLiveViewLink.href = '#';
+    }
+
+
     function disconnectLiveLog() {
 
         if (liveLogPollTimer) {
@@ -1620,6 +1742,21 @@ function initCreateTestPage() {
 
                         appendLiveLogLine(
                             formatLiveStepLine(data.step),
+                        );
+
+                    } else if (data.type === 'grid_live_view') {
+
+                        showGridLiveViewLink(data.url);
+
+                    } else if (
+                        data.type === 'run_snapshot' &&
+                        data.summary?.seleniumGridLiveViewUrl
+                    ) {
+
+                        // Geç bağlanan bir istemci — session zaten açılmışsa (grid_live_view olayı
+                        // kaçırılmış olabilir) summary üzerinden yine de yakalıyoruz.
+                        showGridLiveViewLink(
+                            data.summary.seleniumGridLiveViewUrl,
                         );
                     }
 
@@ -1990,6 +2127,10 @@ function initCreateTestPage() {
             executionLogOutput.textContent =
                 'Preparing test...';
 
+            // Önceki bir Grid koşusundan kalmış olabilecek linki temizle — bu run Grid kullanmıyorsa
+            // ya da henüz session açılmadıysa yanlışlıkla eski/geçersiz bir linkin görünmesini önler.
+            hideGridLiveViewLink();
+
 
             updateStatusBadge(
                 'running',
@@ -2046,6 +2187,9 @@ function initCreateTestPage() {
 
                                     trace:
                                     traceOption.checked,
+
+                                    useSeleniumGrid:
+                                    useSeleniumGridOption.checked,
 
                                     variables:
                                         collectedVariables,
@@ -4339,12 +4483,62 @@ async function initGeneratedTestsPage() {
             'generatedTestsNextPage',
         );
 
+    // v2.0 — toplu/paralel çalıştırma için checkbox seçimi + "Seçilenleri Çalıştır" UI'ı.
+    const selectAllGeneratedTestsCheckbox =
+        document.getElementById(
+            'selectAllGeneratedTestsCheckbox',
+        );
+
+    const generatedTestsSelectionBar =
+        document.getElementById(
+            'generatedTestsSelectionBar',
+        );
+
+    const generatedTestsSelectionCount =
+        document.getElementById(
+            'generatedTestsSelectionCount',
+        );
+
+    const clearGeneratedTestsSelectionButton =
+        document.getElementById(
+            'clearGeneratedTestsSelectionButton',
+        );
+
+    const runSelectedGeneratedTestsButton =
+        document.getElementById(
+            'runSelectedGeneratedTestsButton',
+        );
+
 
     let allTests = [];
 
     let currentPage = 1;
 
     const pageSize = 10;
+
+    // Sayfalar arası (currentPage değişse bile) seçim korunur — dosya adına göre tutuluyor,
+    // render'da bu Set'e bakılarak checkbox'ların checked durumu belirlenir.
+    let selectedGeneratedTestFiles = new Set();
+
+    // v2.0 — bir toplu çalıştırma başladıktan sonra, HER dosya için canlı durumu tutar (bkz.
+    // trackBatchRuns). renderGeneratedTests() bunu okuyup ilgili satıra küçük bir rozet basar.
+    // Terminal olmayan (WS henüz açık) girdiler her zaman status:'running'dir.
+    let batchRunStatusByFile = new Map();
+
+    // v2.0 — trackBatchRuns sırasında gelen `step` WS event'lerini dosya bazında CANLI biriktirir
+    // (bkz. trackBatchRuns). Bir dosya bu Map'te KEY olarak varsa (değeri boş dizi bile olsa) o
+    // satırın adımları sunucudan gelen eski `test.steps` yerine BU canlı listeden render edilir.
+    // Toplu çalıştırma tamamen bitince (tüm run'lar terminal) temizlenir — bkz. trackBatchRuns
+    // içindeki remaining===0 dalı — çünkü o noktada loadGeneratedTests() zaten kalıcı/gerçek
+    // `steps` alanını sunucudan getirecektir.
+    let liveStepsByFile = new Map();
+
+    // v2.0 — hangi dosyaların step satırı (stepsRow) açık/kapalı olduğunu tutar. Daha önce bu
+    // durum SADECE DOM class'ında tutuluyordu; ama toplu koşum sırasında canlı adımlar geldikçe
+    // tabloyu yeniden render etmemiz gerekiyor (bkz. renderGeneratedTests çağrıları) ve tam bir
+    // yeniden render, DOM'daki class'ları sıfırlayıp kullanıcının açtığı satırları kapatırdı. Bu
+    // yüzden açık/kapalı durumu burada, render'dan BAĞIMSIZ bir state olarak tutuyoruz.
+    let expandedGeneratedTestSteps = new Set();
 
 
     function formatDate(dateValue) {
@@ -4358,6 +4552,151 @@ async function initGeneratedTestsPage() {
         ).toLocaleString(
             'tr-TR',
         );
+    }
+
+
+    // Generated Tests tablosunda dosya adının altında gösterilecek kısa/okunabilir sayfa etiketi
+    // üretir — tam URL yerine sadece host (ör. "www.hepsiburada.com") gösterilir, satırı
+    // kalabalıklaştırmadan hangi sayfaya ait olduğunu anlamak için yeterlidir. Geçersiz/boş URL'de
+    // sessizce boş döner (o zaman satırda hiç gösterilmez).
+    function formatUrlForDisplay(url) {
+
+        if (
+            !url ||
+            typeof url !==
+            'string'
+        ) {
+            return '';
+        }
+
+        try {
+
+            return new URL(
+                url,
+            ).hostname;
+
+        } catch (error) {
+            // Geçersiz/eksik URL — ham metni olduğu gibi göster, sessizce yutmaktansa yine de
+            // kullanıcıya bir ipucu vermiş oluruz.
+            return url;
+        }
+    }
+
+
+    // v2.0 — "Tümünü Seç" checkbox'ının checked/indeterminate durumunu, verilen test listesine
+    // (genelde visibleTests — mevcut filtreye uyan TÜM testler, sadece bu sayfadakiler değil)
+    // göre günceller. renderGeneratedTests()'ten VE tek tek checkbox değişikliklerinden çağrılır.
+    function updateSelectAllGeneratedTestsCheckbox(tests) {
+
+        if (!selectAllGeneratedTestsCheckbox) {
+            return;
+        }
+
+        const fileNames =
+            tests.map((test) =>
+                typeof test ===
+                'string'
+
+                    ? test
+
+                    : test.fileName,
+            );
+
+        const allSelected =
+            fileNames.length >
+            0 &&
+            fileNames.every((fileName) =>
+                selectedGeneratedTestFiles.has(
+                    fileName,
+                ),
+            );
+
+        const someSelected =
+            fileNames.some((fileName) =>
+                selectedGeneratedTestFiles.has(
+                    fileName,
+                ),
+            );
+
+        selectAllGeneratedTestsCheckbox.checked =
+            allSelected;
+
+        selectAllGeneratedTestsCheckbox.indeterminate =
+            !allSelected &&
+            someSelected;
+    }
+
+
+    // v2.0 — seçim çubuğunun (sayı + Run Selected/Clear selection) görünürlüğünü ve metnini
+    // günceller. Seçim her değiştiğinde (tekli checkbox, "Tümünü Seç", "Clear selection")
+    // çağrılmalıdır.
+    function updateGeneratedTestsSelectionBar() {
+
+        if (!generatedTestsSelectionBar) {
+            return;
+        }
+
+        const count =
+            selectedGeneratedTestFiles.size;
+
+        if (count === 0) {
+
+            generatedTestsSelectionBar.classList.add(
+                'hidden',
+            );
+
+            generatedTestsSelectionBar.classList.remove(
+                'flex',
+            );
+
+            return;
+        }
+
+        generatedTestsSelectionBar.classList.remove(
+            'hidden',
+        );
+
+        generatedTestsSelectionBar.classList.add(
+            'flex',
+        );
+
+        generatedTestsSelectionCount.textContent =
+            `${count} selected`;
+    }
+
+
+    // v2.0 — batchRunStatusByFile'daki bir durumun rozet metnini/stilini üretir (bkz.
+    // trackBatchRuns dosya başı NOT — durumlar RunStatus ile birebir aynıdır: 'running' HARİÇ,
+    // o sadece bu frontend state'inin başlangıç değeridir).
+    function batchStatusBadgeLabel(status) {
+
+        switch (status) {
+            case 'passed':
+                return 'Passed';
+            case 'failed':
+                return 'Failed';
+            case 'error':
+                return 'Error';
+            case 'cancelled':
+                return 'Cancelled';
+            default:
+                return 'Running…';
+        }
+    }
+
+    function batchStatusBadgeClasses(status) {
+
+        switch (status) {
+            case 'passed':
+                return 'bg-secondary/15 text-secondary';
+            case 'failed':
+            case 'error':
+                return 'bg-error/15 text-error';
+            case 'cancelled':
+                return 'bg-surface-container-highest text-on-surface-variant';
+            default:
+                return 'bg-primary-container/60 text-on-primary-container animate-pulse';
+        }
     }
 
 
@@ -4588,6 +4927,24 @@ async function initGeneratedTestsPage() {
                             : test.createdAt;
 
 
+                    // Dosya adı slug'ı hangi sayfaya ait olduğunu her zaman net göstermiyor (ör.
+                    // "formu-doldur-ad-olarak..." adından DemoQA olduğu anlaşılmaz) — bu yüzden
+                    // hedef URL'yi dosya adının hemen altında küçük/soluk bir satır olarak da
+                    // gösteriyoruz. Bu, özellikle birden fazla test paralel koşarken (bkz.
+                    // trackBatchRuns) hangi satırın hangi sayfayla ilgili olduğunu ayırt etmeyi
+                    // kolaylaştırır.
+                    const testUrl =
+                        typeof test !==
+                        'string'
+                            ? test.url
+                            : '';
+
+                    const testUrlLabel =
+                        formatUrlForDisplay(
+                            testUrl,
+                        );
+
+
                     // "Replay (No AI)" butonu SADECE bu testi üreten koşum PASSED ile bittiyse ve
                     // kayıtlı replaySteps varsa gösterilir (bkz. backend LegacyGeneratedTestMeta.replaySteps
                     // dosya başı açıklaması) — bu şekilde kullanıcı hangi testlerin AI'sız tekrar
@@ -4601,6 +4958,56 @@ async function initGeneratedTestsPage() {
                         test.replaySteps.length >
                         0;
 
+                    // v2.0 BDD/step görüntüleme — bkz. backend BddStepView/buildBddSteps.ts dosya
+                    // başı açıklaması. Eski (bu alan eklenmeden ÖNCE üretilmiş) kayıtlarda ve düz
+                    // string girdilerde (çok eski format) bulunmaz — o durumda genişletme oku hiç
+                    // gösterilmez.
+                    // v2.0 — bu dosya şu an bir toplu çalıştırmanın parçasıysa (liveStepsByFile'da
+                    // KEY olarak varsa), sunucudan gelen eski `test.steps` yerine WS'ten canlı
+                    // biriken adımlar gösterilir (bkz. trackBatchRuns). Aksi halde (koşum yok/bitti)
+                    // meta'daki kalıcı `steps` kullanılır.
+                    const liveSteps =
+                        liveStepsByFile.get(
+                            fileName,
+                        );
+
+                    const isLive =
+                        liveSteps !==
+                        undefined;
+
+                    const steps =
+                        isLive
+                            ? liveSteps
+                            : (typeof test !==
+                            'string' &&
+                            Array.isArray(
+                                test.steps,
+                            )
+                                ? test.steps
+                                : []);
+
+                    const hasSteps =
+                        steps.length >
+                        0 ||
+                        isLive;
+
+                    const isStepsExpanded =
+                        expandedGeneratedTestSteps.has(
+                            fileName,
+                        );
+
+                    const isSelected =
+                        selectedGeneratedTestFiles.has(
+                            fileName,
+                        );
+
+                    // v2.0 — bu dosya şu an bir toplu çalıştırmanın parçasıysa (bkz. trackBatchRuns),
+                    // dosya adının yanında küçük bir durum rozeti gösterilir.
+                    const batchStatus =
+                        batchRunStatusByFile.get(
+                            fileName,
+                        );
+
 
                     return `
                         <tr
@@ -4608,7 +5015,34 @@ async function initGeneratedTestsPage() {
                                 hover:bg-surface-container/50
                                 transition-colors
                             "
+                            data-file="${fileName}"
                         >
+
+                            <td
+                                class="
+                                    py-sm
+                                    pl-md
+                                    pr-xs
+                                "
+                            >
+
+                                <input
+                                    class="
+                                        generatedTestRowCheckbox
+                                        w-[16px]
+                                        h-[16px]
+                                        rounded
+                                        border-outline-variant
+                                        cursor-pointer
+                                    "
+                                    data-file="${fileName}"
+                                    type="checkbox"
+                                    aria-label="Select ${fileName}"
+                                    ${isSelected ? 'checked' : ''}
+                                />
+
+                            </td>
+
 
                             <td
                                 class="
@@ -4620,31 +5054,125 @@ async function initGeneratedTestsPage() {
                                 <div
                                     class="
                                         flex
-                                        items-center
+                                        items-start
                                         gap-sm
                                     "
                                 >
+
+                                    ${
+                        hasSteps
+                            ? `
+                                    <button
+                                        class="
+                                            toggleGeneratedTestStepsButton
+                                            text-on-surface-variant
+                                            hover:text-on-surface
+                                            flex items-center justify-center
+                                            w-[20px] h-[20px]
+                                            shrink-0
+                                            mt-[2px]
+                                        "
+                                        data-file="${fileName}"
+                                        type="button"
+                                        aria-label="Toggle steps for ${fileName}"
+                                        aria-expanded="${isStepsExpanded ? 'true' : 'false'}"
+                                    >
+                                        <span
+                                            class="
+                                                material-symbols-outlined
+                                                text-[18px]
+                                                transition-transform
+                                            "
+                                            style="${isStepsExpanded ? 'transform: rotate(90deg);' : ''}"
+                                        >
+                                            chevron_right
+                                        </span>
+                                    </button>
+                                    `
+                            : `<span class="w-[20px] h-[20px] shrink-0"></span>`
+                    }
 
                                     <span
                                         class="
                                             material-symbols-outlined
                                             text-primary-fixed-dim
                                             text-[20px]
+                                            mt-[2px]
+                                            shrink-0
                                         "
                                     >
                                         javascript
                                     </span>
 
-                                    <span
+                                    <div
                                         class="
-                                            font-mono
-                                            text-sm
-                                            text-primary-fixed
-                                            break-all
+                                            flex
+                                            flex-col
+                                            gap-[2px]
+                                            min-w-0
                                         "
                                     >
-                                        ${fileName}
-                                    </span>
+
+                                        <div
+                                            class="
+                                                flex
+                                                items-center
+                                                flex-wrap
+                                                gap-sm
+                                            "
+                                        >
+
+                                            <span
+                                                class="
+                                                    font-mono
+                                                    text-sm
+                                                    text-primary-fixed
+                                                    break-all
+                                                "
+                                            >
+                                                ${fileName}
+                                            </span>
+
+                                            ${
+                        batchStatus
+                            ? `
+                                            <span
+                                                class="
+                                                    inline-flex items-center gap-1
+                                                    px-2 py-[2px]
+                                                    rounded-full
+                                                    text-[10px] font-bold uppercase tracking-wider
+                                                    shrink-0
+                                                    ${batchStatusBadgeClasses(batchStatus.status)}
+                                                "
+                                            >
+                                                ${batchStatusBadgeLabel(batchStatus.status)}
+                                            </span>
+                                            `
+                            : ''
+                    }
+
+                                        </div>
+
+                                        ${
+                        testUrlLabel
+                            ? `
+                                        <span
+                                            class="
+                                                font-mono
+                                                text-[11px]
+                                                text-on-surface-variant/70
+                                                break-all
+                                            "
+                                            title="${escapeHtml(testUrl)}"
+                                        >
+                                            ${escapeHtml(testUrlLabel)}
+                                        </span>
+                                        `
+                            : ''
+                    }
+
+                                    </div>
 
                                 </div>
 
@@ -4848,6 +5376,68 @@ async function initGeneratedTestsPage() {
                             </td>
 
                         </tr>
+
+                        ${
+                        hasSteps
+                            ? `
+                        <tr
+                            class="stepsRow ${isStepsExpanded ? '' : 'hidden'}"
+                            data-file="${fileName}"
+                        >
+                            <td colspan="5" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
+                                ${
+                                    isLive &&
+                                    steps.length === 0
+                                        ? `
+                                <p class="font-body-sm text-body-sm text-on-surface-variant italic py-sm">
+                                    Running — waiting for the first step...
+                                </p>
+                                `
+                                        : `
+                                <ol class="flex flex-col gap-1 py-sm border-l-2 border-outline-variant/40 pl-md">
+                                    ${steps
+                                    .map(
+                                        (step) => `
+                                    <li class="flex items-start gap-sm">
+                                        <span
+                                            class="
+                                                material-symbols-outlined
+                                                text-[16px]
+                                                mt-[1px]
+                                                ${step.ok ? 'text-secondary' : 'text-error'}
+                                            "
+                                        >
+                                            ${step.ok ? 'check_circle' : 'cancel'}
+                                        </span>
+                                        <span class="font-mono text-xs text-on-surface-variant shrink-0">
+                                            ${step.index + 1}.
+                                        </span>
+                                        <span class="font-body-sm text-body-sm text-on-surface flex-1">
+                                            ${escapeHtml(step.description)}
+                                        </span>
+                                        <span
+                                            class="
+                                                font-mono text-[10px]
+                                                uppercase tracking-wider
+                                                text-on-surface-variant/70
+                                                shrink-0
+                                                mt-[2px]
+                                            "
+                                        >
+                                            ${escapeHtml(step.action)}
+                                        </span>
+                                    </li>
+                                    `,
+                                    )
+                                    .join('')}
+                                </ol>
+                                `
+                                }
+                            </td>
+                        </tr>
+                        `
+                            : ''
+                    }
                     `;
                 })
                 .join('');
@@ -4881,6 +5471,122 @@ async function initGeneratedTestsPage() {
         generatedTestsNextPage.disabled =
             currentPage ===
             totalPages;
+
+
+        // v2.0 — "Tümünü Seç" checkbox'ının checked/indeterminate durumu, sayfalamadan BAĞIMSIZ
+        // olarak mevcut filtreye uyan TÜM testlere (visibleTests, sadece bu sayfadakilere değil)
+        // göre hesaplanır — "Tümünü Seç" gerçekten TÜMÜNÜ seçsin/yansıtsın diye.
+        updateSelectAllGeneratedTestsCheckbox(
+            visibleTests,
+        );
+
+        updateGeneratedTestsSelectionBar();
+
+
+        document
+            .querySelectorAll(
+                '.generatedTestRowCheckbox',
+            )
+            .forEach((checkbox) => {
+
+                checkbox.addEventListener(
+                    'change',
+                    () => {
+
+                        const fileName =
+                            checkbox.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        if (checkbox.checked) {
+                            selectedGeneratedTestFiles.add(
+                                fileName,
+                            );
+                        } else {
+                            selectedGeneratedTestFiles.delete(
+                                fileName,
+                            );
+                        }
+
+                        updateSelectAllGeneratedTestsCheckbox(
+                            getVisibleTests(),
+                        );
+
+                        updateGeneratedTestsSelectionBar();
+                    },
+                );
+            });
+
+
+        document
+            .querySelectorAll(
+                '.toggleGeneratedTestStepsButton',
+            )
+            .forEach((button) => {
+
+                button.addEventListener(
+                    'click',
+                    () => {
+
+                        const fileName =
+                            button.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        const stepsRow =
+                            document.querySelector(
+                                `.stepsRow[data-file="${CSS.escape(fileName)}"]`,
+                            );
+
+                        if (!stepsRow) {
+                            return;
+                        }
+
+                        const nowHidden =
+                            stepsRow.classList.toggle(
+                                'hidden',
+                            );
+
+                        // Açık/kapalı durumunu render'dan bağımsız State'e de yaz — canlı adımlar
+                        // geldikçe tabloyu yeniden çizsek bile (bkz. trackBatchRuns) kullanıcının
+                        // açtığı satır kapanmasın (bkz. expandedGeneratedTestSteps tanımı).
+                        if (nowHidden) {
+                            expandedGeneratedTestSteps.delete(
+                                fileName,
+                            );
+                        } else {
+                            expandedGeneratedTestSteps.add(
+                                fileName,
+                            );
+                        }
+
+                        button.setAttribute(
+                            'aria-expanded',
+                            String(!nowHidden),
+                        );
+
+                        const chevron =
+                            button.querySelector(
+                                '.material-symbols-outlined',
+                            );
+
+                        if (chevron) {
+                            chevron.style.transform =
+                                nowHidden
+                                    ? ''
+                                    : 'rotate(90deg)';
+                        }
+                    },
+                );
+            });
 
 
         document
@@ -5159,6 +5865,183 @@ async function initGeneratedTestsPage() {
     }
 
 
+    /**
+     * v2.0 — /api/generated-tests/run-batch ile başlatılmış run'ları CANLI takip eder. Her
+     * `runId` için AYRI bir `/ws/runs/:runId` bağlantısı açar (bkz. openLiveLogSocket — aynı
+     * protokol/host deseni) — bu, run'ların gerçekten paralel/bağımsız olduğunun frontend
+     * tarafındaki karşılığıdır. `step` event'leri liveStepsByFile'a biriktirilip ilgili satırın
+     * (otomatik açılan) stepsRow'unda CANLI gösterilir — tek koşumdaki "Execution Log" deneyiminin
+     * toplu koşum karşılığı budur (bkz. openLiveLogSocket / formatLiveStepLine). Terminal bir durum
+     * geldiğinde (run_finished/run_error/zaten-bitmiş bir run_snapshot) ilgili satırın rozetini
+     * günceller; TÜMÜ bittiğinde listeyi sunucudan tazeler (yeni geçmiş kayıtlarının Test
+     * Runs/Reports'ta görünmesi için) ve canlı adım arabelleğini temizler.
+     */
+    function trackBatchRuns(started) {
+
+        let remaining =
+            started.length;
+
+        const protocol =
+            window.location.protocol ===
+            'https:'
+                ? 'wss:'
+                : 'ws:';
+
+        const settle = (fileName, status) => {
+
+            if (status) {
+
+                batchRunStatusByFile.set(
+                    fileName,
+                    { status },
+                );
+            } else {
+                // Durum bilinmiyor (ör. WS bağlantı hatası) — run backend'de devam ediyor
+                // olabilir, bu yüzden YANLIŞ bir "Error" rozeti basmak yerine rozeti kaldırıyoruz;
+                // kullanıcı sonucu Refresh ile (veya toplu çalıştırma bitince otomatik) görecek.
+                batchRunStatusByFile.delete(
+                    fileName,
+                );
+            }
+
+            renderGeneratedTests();
+
+            remaining -= 1;
+
+            if (remaining === 0) {
+
+                batchRunStatusByFile.clear();
+
+                // Canlı adım arabelleğini burada temizliyoruz — az sonra loadGeneratedTests() bu
+                // dosyaların KALICI `steps` alanını sunucudan getirecek, bu yüzden canlı kopyaya
+                // artık ihtiyaç yok (aksi halde eski canlı liste kalıcı listeyi hep gölgede
+                // bırakırdı, bkz. render şablonundaki `isLive` önceliği).
+                liveStepsByFile.clear();
+
+                if (runSelectedGeneratedTestsButton) {
+
+                    runSelectedGeneratedTestsButton.disabled =
+                        false;
+                }
+
+                void loadGeneratedTests();
+            }
+        };
+
+        started.forEach(({ fileName, runId }) => {
+
+            batchRunStatusByFile.set(
+                fileName,
+                { status: 'running' },
+            );
+
+            // Boş dizi olarak başlatmak (undefined DEĞİL) render şablonundaki `isLive` bayrağını
+            // tetikler — satır otomatik olarak "adımlar" bölümünü gösterir hale gelir.
+            liveStepsByFile.set(
+                fileName,
+                [],
+            );
+
+            // Kullanıcı canlı ilerlemeyi görebilsin diye satırı otomatik açıyoruz — tek koşumdaki
+            // Execution Log paneli her zaman görünür olduğu için buradaki davranış tutarlı.
+            expandedGeneratedTestSteps.add(
+                fileName,
+            );
+
+            const socket =
+                new WebSocket(
+                    `${protocol}//${window.location.host}/ws/runs/${runId}`,
+                );
+
+            const TERMINAL_STATUSES =
+                new Set([
+                    'passed',
+                    'failed',
+                    'error',
+                    'cancelled',
+                ]);
+
+            socket.addEventListener(
+                'message',
+                (event) => {
+
+                    try {
+
+                        const data =
+                            JSON.parse(
+                                event.data,
+                            );
+
+                        if (data.type === 'step') {
+
+                            // Aynı şekil buildBddSteps() (backend) ile birebir eşleşsin diye —
+                            // tek koşumdaki formatLiveStepLine()'ın kullandığı alanlarla aynı.
+                            const list =
+                                liveStepsByFile.get(
+                                    fileName,
+                                ) || [];
+
+                            list.push({
+                                index: data.step?.stepIndex,
+                                action: data.step?.decision?.action,
+                                description:
+                                    data.step?.decision?.summary?.trim() ||
+                                    data.step?.decision?.reasoning ||
+                                    '',
+                                ok: Boolean(
+                                    data.step?.actionResult?.ok,
+                                ),
+                            });
+
+                            liveStepsByFile.set(
+                                fileName,
+                                list,
+                            );
+
+                            renderGeneratedTests();
+
+                        } else if (data.type === 'run_finished') {
+
+                            socket.close();
+                            settle(fileName, data.status);
+
+                        } else if (data.type === 'run_error') {
+
+                            socket.close();
+                            settle(fileName, 'error');
+
+                        } else if (
+                            data.type === 'run_snapshot' &&
+                            TERMINAL_STATUSES.has(data.summary?.status)
+                        ) {
+                            // WS bağlanana kadar run zaten bitmiş olabilir (nadir ama mümkün) —
+                            // bu durumda ilk snapshot zaten terminal durumu taşır.
+                            socket.close();
+                            settle(fileName, data.summary.status);
+                        }
+
+                    } catch (error) {
+
+                        console.error(
+                            'Toplu çalıştırma WS mesajı işlenemedi:',
+                            error,
+                        );
+                    }
+                },
+            );
+
+            socket.addEventListener(
+                'error',
+                () => {
+                    settle(fileName, null);
+                },
+            );
+        });
+
+        renderGeneratedTests();
+    }
+
+
     async function loadGeneratedTests() {
 
         refreshGeneratedTestsButton.disabled =
@@ -5259,6 +6142,176 @@ async function initGeneratedTestsPage() {
             renderGeneratedTests();
         },
     );
+
+
+    if (selectAllGeneratedTestsCheckbox) {
+
+        selectAllGeneratedTestsCheckbox.addEventListener(
+            'change',
+            () => {
+
+                // Sadece bu sayfadaki değil, mevcut filtreye uyan TÜM testler seçilir/bırakılır
+                // (bkz. updateSelectAllGeneratedTestsCheckbox dosya başı NOT — "Tümünü Seç" gerçekten
+                // tümünü kapsasın diye).
+                const fileNames =
+                    getVisibleTests().map((test) =>
+                        typeof test ===
+                        'string'
+
+                            ? test
+
+                            : test.fileName,
+                    );
+
+                if (selectAllGeneratedTestsCheckbox.checked) {
+                    fileNames.forEach((fileName) =>
+                        selectedGeneratedTestFiles.add(
+                            fileName,
+                        ),
+                    );
+                } else {
+                    fileNames.forEach((fileName) =>
+                        selectedGeneratedTestFiles.delete(
+                            fileName,
+                        ),
+                    );
+                }
+
+                renderGeneratedTests();
+            },
+        );
+    }
+
+
+    if (clearGeneratedTestsSelectionButton) {
+
+        clearGeneratedTestsSelectionButton.addEventListener(
+            'click',
+            () => {
+
+                selectedGeneratedTestFiles.clear();
+                renderGeneratedTests();
+            },
+        );
+    }
+
+
+    if (runSelectedGeneratedTestsButton) {
+
+        runSelectedGeneratedTestsButton.addEventListener(
+            'click',
+            async () => {
+
+                const fileNames =
+                    Array.from(
+                        selectedGeneratedTestFiles,
+                    );
+
+                if (fileNames.length === 0) {
+                    return;
+                }
+
+                runSelectedGeneratedTestsButton.disabled =
+                    true;
+
+                try {
+
+                    const response =
+                        await fetch(
+                            '/api/generated-tests/run-batch',
+                            {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    fileNames,
+                                }),
+                            },
+                        );
+
+                    const result =
+                        await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(
+                            result.message ||
+                            'Failed to start batch run.',
+                        );
+                    }
+
+                    const results =
+                        Array.isArray(result.results)
+                            ? result.results
+                            : [];
+
+                    const started =
+                        results.filter(
+                            (r) => r.runId,
+                        );
+
+                    const failedToStart =
+                        results.filter(
+                            (r) => r.error,
+                        );
+
+                    if (failedToStart.length > 0) {
+
+                        showToast(
+                            `${failedToStart.length} test başlatılamadı: ${failedToStart
+                                .map((r) => r.fileName)
+                                .join(', ')}`,
+                            'error',
+                        );
+                    }
+
+                    if (started.length === 0) {
+
+                        runSelectedGeneratedTestsButton.disabled =
+                            false;
+
+                        return;
+                    }
+
+                    const replayCount =
+                        started.filter(
+                            (r) => r.mode === 'replay',
+                        ).length;
+
+                    const runCount =
+                        started.length -
+                        replayCount;
+
+                    showToast(
+                        `${started.length} test paralel olarak başlatıldı` +
+                        (replayCount > 0
+                            ? ` (${replayCount} Replay, ${runCount} Run)`
+                            : ''),
+                        'success',
+                    );
+
+                    // Seçim, başlatma sonrası temizlenir — takip artık rozetler üzerinden yapılır.
+                    selectedGeneratedTestFiles.clear();
+
+                    trackBatchRuns(started);
+
+                } catch (error) {
+
+                    console.error(error);
+
+                    showToast(
+                        error instanceof Error
+                            ? error.message
+                            : 'Failed to start batch run.',
+                        'error',
+                    );
+
+                    runSelectedGeneratedTestsButton.disabled =
+                        false;
+                }
+            },
+        );
+    }
 
 
     generatedTestsPreviousPage.addEventListener(
@@ -6685,6 +7738,16 @@ async function initSettingsPage() {
             'settingsAgentInfo',
         );
 
+    const settingsSeleniumGridInfo =
+        document.getElementById(
+            'settingsSeleniumGridInfo',
+        );
+
+    const settingsVectorCacheInfo =
+        document.getElementById(
+            'settingsVectorCacheInfo',
+        );
+
 
     /* -----------------------------------------------------
        EXECUTION DEFAULTS (appState.executionSettings ile
@@ -6837,6 +7900,35 @@ async function initSettingsPage() {
             infoTile('Navigation Timeout', `${data.playwright.navigationTimeoutMs} ms`) +
             infoTile('Action Timeout', `${data.playwright.defaultActionTimeoutMs} ms`);
 
+        // v2.0 — bkz. GET /api/settings → seleniumGrid.configured (hub adresinin KENDİSİ BİLEREK
+        // dönülmez/gösterilmez, sadece "yapılandırılmış mı" bilgisi).
+        const gridStatus =
+            data.seleniumGrid?.configured
+                ? '<span class="text-secondary">✓ Configured</span>'
+                : '<span class="text-on-surface-variant">✗ Not configured</span>';
+
+        settingsSeleniumGridInfo.innerHTML =
+            infoTile('Hub Status', gridStatus);
+
+        // v2.0 Faz 3 — bkz. GET /api/settings → vectorCache (Milvus/Ollama adresleri KENDİLERİ
+        // BİLEREK dönülmez/gösterilmez, tıpkı Selenium Grid hub adresinde olduğu gibi — sadece
+        // "yapılandırılmış mı" bilgisi + hassas olmayan eşik/model bilgileri gösterilir).
+        const vectorWriteStatus =
+            data.vectorCache?.writeEnabled
+                ? '<span class="text-secondary">✓ Enabled (collecting data)</span>'
+                : '<span class="text-on-surface-variant">✗ Disabled</span>';
+
+        const vectorReadStatus =
+            data.vectorCache?.readEnabled
+                ? '<span class="text-secondary">✓ Enabled (skipping LLM on cache hits)</span>'
+                : '<span class="text-on-surface-variant">✗ Disabled</span>';
+
+        settingsVectorCacheInfo.innerHTML =
+            infoTile('Write (data collection)', vectorWriteStatus) +
+            infoTile('Read (LLM skip)', vectorReadStatus) +
+            infoTile('Embedding Model', data.vectorCache?.embeddingModel || '—') +
+            infoTile('Min. Similarity', data.vectorCache?.minSimilarity ?? '—');
+
     } catch (error) {
 
         console.error(
@@ -6849,6 +7941,12 @@ async function initSettingsPage() {
 
         settingsAgentInfo.innerHTML =
             '<div class="col-span-3 text-error font-body-sm text-body-sm">Settings could not be loaded from backend.</div>';
+
+        settingsSeleniumGridInfo.innerHTML =
+            '<div class="text-error font-body-sm text-body-sm">Settings could not be loaded from backend.</div>';
+
+        settingsVectorCacheInfo.innerHTML =
+            '<div class="col-span-2 text-error font-body-sm text-body-sm">Settings could not be loaded from backend.</div>';
     }
 }
 

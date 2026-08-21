@@ -29,6 +29,9 @@ const generateAndRunSchema = z.object({
   screenshot: z.boolean().optional().default(false),
   video: z.boolean().optional().default(false),
   trace: z.boolean().optional().default(false),
+  // v2.0 — bkz. RunOptions.useSeleniumGrid dosya başı açıklaması (SADECE browser "chromium" iken
+  // geçerli; BrowserManager başka bir motorla birlikte gelirse net bir hatayla durur).
+  useSeleniumGrid: z.boolean().optional().default(false),
   variables: z.record(z.string(), z.string()).optional().default({}),
   // Hassas değerler (şifre, token vb.) — variables'tan BİLEREK ayrı; bkz. LegacyGenerateAndRunInput.
   secrets: z.record(z.string(), z.string()).optional().default({}),
@@ -41,6 +44,11 @@ const runExistingSchema = z.object({
   screenshot: z.boolean().optional(),
   video: z.boolean().optional(),
   trace: z.boolean().optional(),
+  useSeleniumGrid: z.boolean().optional(),
+});
+
+const runBatchSchema = z.object({
+  fileNames: z.array(z.string().min(1)).min(1, 'En az bir test seçilmeli'),
 });
 
 legacyTestsRouter.post('/tests/generate-and-run', async (req, res) => {
@@ -187,6 +195,30 @@ legacyTestsRouter.post('/generated-tests/replay', async (req, res) => {
   } catch (err) {
     log.error({ err }, 'generated-tests/replay başarısız');
     res.status(200).json(failedResultShape(errorMessage(err, 'Test AI\'sız tekrar oynatılamadı.')));
+  }
+});
+
+/**
+ * v2.0 — checkbox ile seçilen birden fazla generated test'i GERÇEKTEN paralel olarak başlatır
+ * (bkz. LegacyTestService.runGeneratedTestsBatch dosya başı açıklaması). Yukarıdaki tekli
+ * endpoint'lerin AKSİNE, eski frontend'in beklediği bir sözleşmeye bağlı değildir (bu yeni bir
+ * yüzeydir) — bu yüzden normal HTTP durum kodları kullanılır (her zaman 200 + failedResultShape
+ * numarası YOK) ve yanıt bloklamadan hemen döner: her öğe için ya bir `runId` (canlı takip için
+ * `/ws/runs/:runId`'ye bağlanılır) ya da bir `error` içerir, PASS/FAIL sonucu bu yanıtta YOKTUR.
+ */
+legacyTestsRouter.post('/generated-tests/run-batch', async (req, res) => {
+  const parsed = runBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const results = await legacyTestService.runGeneratedTestsBatch(parsed.data.fileNames);
+    res.status(200).json({ results });
+  } catch (err) {
+    log.error({ err }, 'generated-tests/run-batch başarısız');
+    res.status(500).json({ message: errorMessage(err, 'Toplu çalıştırma başlatılamadı.') });
   }
 });
 

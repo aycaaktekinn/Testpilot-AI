@@ -38,6 +38,7 @@ export class RunLogger {
     llmCallCount: number,
     failureReason?: string,
     replaySteps?: ReplayStep[],
+    seleniumGridLiveViewUrl?: string,
   ): Promise<RunReport> {
     const report: RunReport = {
       runId: this.runId,
@@ -51,6 +52,7 @@ export class RunLogger {
       failureReason,
       steps: this.steps,
       replaySteps,
+      seleniumGridLiveViewUrl,
     };
 
     this.finalReport = report;

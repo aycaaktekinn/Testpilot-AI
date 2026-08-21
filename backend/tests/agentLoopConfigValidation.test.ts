@@ -72,6 +72,7 @@ function fakeOptions(): RunOptions {
     captureScreenshot: false,
     captureVideo: false,
     captureTrace: false,
+    useSeleniumGrid: false,
   };
 }
 

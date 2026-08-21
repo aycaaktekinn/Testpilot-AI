@@ -393,6 +393,44 @@
                                 </span>
                             </label>
 
+                            <!-- v2.0 — Selenium Grid (opsiyonel, ek bir seçenek): SADECE Chromium
+                                 motoruyla VE hub yapılandırılmışken kullanılabilir; her iki koşul
+                                 sağlanmazsa app.js (updateSeleniumGridAvailability) bu checkbox'ı
+                                 otomatik olarak devre dışı bırakıp işaretini kaldırır — kullanıcının
+                                 "Grid kullanıyorum sandığı" ama aslında yerelde çalışan bir test
+                                 oluşturması engellenir. -->
+                            <label
+                                    class="col-span-2 flex items-center gap-2
+                                           cursor-pointer p-1.5
+                                           hover:bg-surface-variant
+                                           rounded transition-colors"
+                            >
+                                <input
+                                        id="useSeleniumGridOption"
+                                        disabled
+                                        class="rounded
+                                               bg-surface-container
+                                               border-outline-variant
+                                               text-primary
+                                               disabled:opacity-40
+                                               disabled:cursor-not-allowed"
+                                        type="checkbox"
+                                />
+
+                                <span
+                                        class="font-body-sm text-body-sm
+                                               text-on-surface"
+                                >
+                                    Run via Selenium Grid (Chromium only)
+                                </span>
+                            </label>
+
+                            <div
+                                    id="seleniumGridHint"
+                                    class="col-span-2 font-body-sm text-[12px]
+                                           text-on-surface-variant/70 italic -mt-1"
+                            ></div>
+
                         </div>
 
                     </div>
@@ -773,7 +811,8 @@
                 <div
                         class="bg-surface-container-high
                                px-md py-sm
-                               border-b border-[#334155]"
+                               border-b border-[#334155]
+                               flex items-center justify-between gap-2"
                 >
                     <h3
                             class="font-body-sm text-body-sm
@@ -789,6 +828,29 @@
 
                         Execution Log
                     </h3>
+
+                    <!-- v2.2 — SADECE Selenium Grid ile çalışan bir run'da, backend bir noVNC eşlemesi
+                         bulursa (bkz. AgentEvent 'grid_live_view') görünür olur; aksi halde hidden kalır.
+                         target="_blank": noVNC kendi sekmesinde açılsın, Execution Log paneli kaybolmasın. -->
+                    <a
+                            id="gridLiveViewLink"
+                            href="#"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="hidden items-center gap-1
+                                   font-body-xs text-body-xs font-semibold
+                                   text-primary hover:underline
+                                   whitespace-nowrap"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-[16px]"
+                        >
+                            visibility
+                        </span>
+
+                        Watch Live (Grid)
+                    </a>
                 </div>
 
                 <pre

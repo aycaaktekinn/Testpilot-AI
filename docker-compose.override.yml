@@ -1,0 +1,105 @@
+# v2.1 — Selenium Grid'in host makineden (Docker DIŞINDAN) CDP ile erişilebilir olması için YEREL EK
+# AYARLAR. Bu dosya `docker-compose.yml`'i (mentörünün dosyası) HİÇ DEĞİŞTİRMEZ — Docker Compose,
+# aynı dizindeki `docker-compose.override.yml`'i OTOMATİK olarak `docker-compose.yml`'in ÜZERİNE
+# birleştirir — mentörünün orijinal dosyasına dokunmadan sadece eksik alanları EKLİYORUZ.
+#
+# ÖNEMLİ — BU DOSYANIN İLK SÜRÜMÜ HATALIYDI, BURADA DÜZELTİLDİ: ilk denemede her node'a doğrudan
+# `SE_NODE_HOST=localhost` demiştik — bu, host'tan (backend'den) erişimi düzeltir gibi görünse de
+# HUB'IN KENDİSİNİN node'a ulaşmasını (kayıt/health-check) BOZDU: "localhost" hub'ın kendi
+# container'ından bakıldığında hub'ın KENDİSİNE işaret eder, node'a değil — canlıda doğrulandı, node
+# kaydı sonsuz döngüye giriyordu ("Sending registration event..." hiç bitmiyordu). Bu yüzden BURADA
+# `SE_NODE_HOST`/`SE_NODE_PORT`'a HİÇ DOKUNMUYORUZ — node'lar KENDİ Docker-içi adresleriyle normal
+# şekilde kayıt olmaya devam ediyor, hub-node ilişkisi tamamen orijinal haliyle çalışıyor.
+#
+# GERÇEK ÇÖZÜM (aşağıda): her node'a SABİT bir iç IP veriyoruz (aksi halde Docker her yeniden
+# başlatmada FARKLI bir IP atayabilir, bizim eşleme tablomuz eskir) ve node'un GERÇEK portunu host'a
+# yayınlıyoruz (ports). Node'un kendi self-report ettiği adres hâlâ "172.28.0.1X:..." (Docker-içi,
+# host'tan erişilemez) olacak — ama artık BUNU DEĞİŞTİRMEK yerine backend KODU (bkz.
+# SeleniumGridClient.rewriteCdpUrlForHostAccess + .env SELENIUM_GRID_NODE_HOST_MAP) hub'dan dönen bu
+# adresi SADECE KENDİ TARAFINDA (istemci tarafında), aşağıdaki sabit IP → host portu eşlemesiyle
+# yeniden yazıyor — hub-node iletişimine hiç dokunmadan. (bkz.
+# https://github.com/SeleniumHQ/selenium/issues/11910 — "se:forwardCdp internal docker IP döndürüyor",
+# aynı sınıf sorun.)
+#
+# İKİNCİ BİR DÜZELTME (canlıda doğrulandı): hub'ın döndürdüğü `se:cdp` alanı ayrıca YANLIŞ bir port
+# (4444) iddia ediyor — bu selenium/node-chrome imajında node'un GERÇEK dinlediği port budur DEĞİL,
+# 5555'tir (`docker compose exec chrome-node-N curl -sv http://localhost:4444/status` container'ın
+# KENDİ İÇİNDEN bile "Connection refused" veriyor; `http://localhost:5555/status` ise geçerli bir
+# "ready": true yanıtı dönüyor). Yani `se:cdp`'deki port numarası bu topoloji için hiç güvenilir
+# değil — biz zaten hub'dan gelen host:port'u TAMAMEN (port dahil) kendi haritamızla DEĞİŞTİRDİĞİMİZ
+# için (bkz. rewriteCdpUrlForHostAccess) bu sorun bizi etkilemiyor, TEK YAPILMASI GEREKEN aşağıdaki
+# `ports:` eşlemelerinde container tarafını 4444 değil 5555 yapmaktı.
+#
+# KULLANIM: bu dosya `docker-compose.yml` ile AYNI dizindeyse, Compose'un varsayılan dosya keşfi
+# (docker-compose.yml + docker-compose.override.yml) bunu otomatik bulur — "docker compose up -d"
+# yeterli (Milvus'unki farklı bir isimde -docker-compose.milvus.yml- olduğu için bu otomatik keşfe
+# hiç dahil olmaz, ona dokunmaz). Container'ları bu ayarla YENİDEN OLUŞTURMAK için:
+#   docker compose up -d --force-recreate selenium-hub chrome-node-1 chrome-node-2 chrome-node-3 chrome-node-4 chrome-node-5
+#
+# .env'E EKLENMESİ GEREKEN SATIR (backend'in bu eşlemeyi bilmesi için — bkz. env.ts
+# SELENIUM_GRID_NODE_HOST_MAP dosya başı açıklaması):
+#   SELENIUM_GRID_NODE_HOST_MAP={"172.28.0.11":"localhost:5561","172.28.0.12":"localhost:5562","172.28.0.13":"localhost:5563","172.28.0.14":"localhost:5564","172.28.0.15":"localhost:5565"}
+
+networks:
+  seleniumnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  # Hub da AYNI özel ağa alınıyor — aksi halde node'ların "selenium-hub" hostname'iyle event bus'a
+  # bağlanması (bkz. mentörünün docker-compose.yml'sindeki SE_EVENT_BUS_HOST=selenium-hub) çalışmaz,
+  # çünkü Docker'ın gömülü DNS'i sadece AYNI ağı paylaşan container'lar arasında hostname çözer.
+  selenium-hub:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.10
+
+  # v2.2 — her node'a AYRICA bir noVNC portu yayınlıyoruz (canlı izleme için, kullanıcı isteği).
+  # Node'un kendi stereotype'ında "se:noVncPort": 7900 olarak görünüyor (bkz. node loglarındaki
+  # "novnc entered RUNNING state") — bu, Java tabanlı ana Grid sunucusundan (5555, bkz. yukarıdaki
+  # 4444 NOT'u) TAMAMEN AYRI bir servis (supervisor'ın ayrıca başlattığı bir noVNC web sunucusu), bu
+  # yüzden aynı "yanlış port" riskini taşıması beklenmez — yine de ilk denemede `curl -sv
+  # http://localhost:<port>` ile doğrulaman iyi olur (bkz. daha önceki 4444/5555 tecrübemiz).
+  # TARAYICIDAN AÇARKEN: http://localhost:<port> adresine gidince bir VNC şifresi istenecek —
+  # selenium/node-chrome imajlarının standart varsayılanı "secret"tir.
+  chrome-node-1:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.11
+    ports:
+      - '5561:5555'
+      - '6081:7900'
+
+  chrome-node-2:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.12
+    ports:
+      - '5562:5555'
+      - '6082:7900'
+
+  chrome-node-3:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.13
+    ports:
+      - '5563:5555'
+      - '6083:7900'
+
+  chrome-node-4:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.14
+    ports:
+      - '5564:5555'
+      - '6084:7900'
+
+  chrome-node-5:
+    networks:
+      seleniumnet:
+        ipv4_address: 172.28.0.15
+    ports:
+      - '5565:5555'
+      - '6085:7900'

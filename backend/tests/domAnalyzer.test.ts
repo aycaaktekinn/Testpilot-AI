@@ -27,6 +27,7 @@ function fakeOptions(overrides: Partial<RunOptions> = {}): RunOptions {
     captureScreenshot: false,
     captureVideo: false,
     captureTrace: false,
+    useSeleniumGrid: false,
     ...overrides,
   };
 }
