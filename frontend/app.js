@@ -4438,6 +4438,17 @@ async function initGeneratedTestsPage() {
             'generatedTestsSearch',
         );
 
+    // v2.3 — bkz. renderActiveGeneratedTestRuns() dosya başı açıklaması.
+    const generatedTestsActiveRunsPanel =
+        document.getElementById(
+            'generatedTestsActiveRunsPanel',
+        );
+
+    const generatedTestsActiveRunsList =
+        document.getElementById(
+            'generatedTestsActiveRunsList',
+        );
+
     const generatedTestsSort =
         document.getElementById(
             'generatedTestsSort',
@@ -4532,6 +4543,13 @@ async function initGeneratedTestsPage() {
     // içindeki remaining===0 dalı — çünkü o noktada loadGeneratedTests() zaten kalıcı/gerçek
     // `steps` alanını sunucudan getirecektir.
     let liveStepsByFile = new Map();
+
+    // v2.3 — trackBatchRuns sırasında gelen 'grid_live_view' WS event'ini (ve geç bağlanan
+    // istemciler için ilk 'run_snapshot'ın seleniumGridLiveViewUrl alanını) dosya bazında tutar —
+    // tek koşumdaki gridLiveViewLink'in (bkz. dosya başı açıklaması, satır ~593) toplu koşum
+    // karşılığı. Bir dosyanın run'ı bittiğinde (settle) silinir: Grid session zaten kapanmış
+    // olacağı için link artık geçersizdir, göstermeye devam etmek kullanıcıyı yanıltır.
+    let liveViewUrlByFile = new Map();
 
     // v2.0 — hangi dosyaların step satırı (stepsRow) açık/kapalı olduğunu tutar. Daha önce bu
     // durum SADECE DOM class'ında tutuluyordu; ama toplu koşum sırasında canlı adımlar geldikçe
@@ -5008,6 +5026,14 @@ async function initGeneratedTestsPage() {
                             fileName,
                         );
 
+                    // v2.3 — bu dosyanın run'ı şu an Grid üzerinden çalışıyorsa ve bir noVNC linki
+                    // geldiyse (bkz. liveViewUrlByFile dosya başı açıklaması), rozetin yanında bir
+                    // "Watch Live" linki gösterilir.
+                    const liveViewUrl =
+                        liveViewUrlByFile.get(
+                            fileName,
+                        );
+
 
                     return `
                         <tr
@@ -5148,6 +5174,31 @@ async function initGeneratedTestsPage() {
                                             >
                                                 ${batchStatusBadgeLabel(batchStatus.status)}
                                             </span>
+                                            `
+                            : ''
+                    }
+
+                                            ${
+                        liveViewUrl
+                            ? `
+                                            <a
+                                                href="${liveViewUrl}"
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                class="
+                                                    inline-flex items-center gap-1
+                                                    px-2 py-[2px]
+                                                    rounded-full
+                                                    text-[10px] font-bold uppercase tracking-wider
+                                                    shrink-0
+                                                    bg-primary/15 text-primary
+                                                    hover:bg-primary/25
+                                                    transition-colors
+                                                "
+                                            >
+                                                <span class="material-symbols-outlined text-[12px]">visibility</span>
+                                                Watch Live
+                                            </a>
                                             `
                             : ''
                     }
@@ -5755,6 +5806,105 @@ async function initGeneratedTestsPage() {
                     },
                 );
             });
+
+        renderActiveGeneratedTestRuns();
+    }
+
+
+    /**
+     * v2.3 — sayfanın üstünde, o an "Run Selected" ile paralel çalışan TÜM koşumları tek bir
+     * panelde özetler (bkz. generatedTestsActiveRunsPanel/generatedTestsActiveRunsList,
+     * pages/generated-tests.html). Amaç: tabloyu aşağı kaydırmadan, hangi testlerin hâlâ çalıştığını
+     * ve (Grid kullanılıyorsa) her birinin kendi "Watch Live" linkini tek bakışta görebilmek — satır
+     * başına link zaten var (bkz. renderGeneratedTests içindeki liveViewUrl), bu panel onu
+     * TEKRARLAMAZ, sadece dağınık satırları tek yerde toplar. `renderGeneratedTests()`'in sonunda
+     * çağrılır, ayrı bir state'i yoktur — `batchRunStatusByFile`/`liveViewUrlByFile`'ı okur.
+     */
+    function renderActiveGeneratedTestRuns() {
+
+        if (!generatedTestsActiveRunsPanel || !generatedTestsActiveRunsList) {
+            return;
+        }
+
+        const activeFileNames =
+            Array.from(batchRunStatusByFile.keys());
+
+        if (activeFileNames.length === 0) {
+
+            generatedTestsActiveRunsPanel.classList.add('hidden');
+            generatedTestsActiveRunsPanel.classList.remove('flex');
+            generatedTestsActiveRunsList.innerHTML = '';
+            return;
+        }
+
+        generatedTestsActiveRunsPanel.classList.remove('hidden');
+        generatedTestsActiveRunsPanel.classList.add('flex');
+
+        generatedTestsActiveRunsList.innerHTML =
+            activeFileNames
+                .map((fileName) => {
+
+                    const status =
+                        batchRunStatusByFile.get(fileName);
+
+                    const liveViewUrl =
+                        liveViewUrlByFile.get(fileName);
+
+                    return `
+                        <div
+                                class="
+                                    inline-flex items-center gap-sm
+                                    px-sm py-xs
+                                    rounded-lg
+                                    bg-surface-container-lowest
+                                    border border-outline-variant
+                                "
+                        >
+                            <span class="font-mono text-[11px] text-on-surface break-all">
+                                ${fileName}
+                            </span>
+
+                            <span
+                                    class="
+                                        inline-flex items-center gap-1
+                                        px-2 py-[2px]
+                                        rounded-full
+                                        text-[10px] font-bold uppercase tracking-wider
+                                        shrink-0
+                                        ${batchStatusBadgeClasses(status.status)}
+                                    "
+                            >
+                                ${batchStatusBadgeLabel(status.status)}
+                            </span>
+
+                            ${
+                        liveViewUrl
+                            ? `
+                            <a
+                                    href="${liveViewUrl}"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="
+                                        inline-flex items-center gap-1
+                                        px-2 py-[2px]
+                                        rounded-full
+                                        text-[10px] font-bold uppercase tracking-wider
+                                        shrink-0
+                                        bg-primary/15 text-primary
+                                        hover:bg-primary/25
+                                        transition-colors
+                                    "
+                            >
+                                <span class="material-symbols-outlined text-[12px]">visibility</span>
+                                Watch Live
+                            </a>
+                            `
+                            : ''
+                    }
+                        </div>
+                        `;
+                })
+                .join('');
     }
 
 
@@ -5904,6 +6054,12 @@ async function initGeneratedTestsPage() {
                 );
             }
 
+            // v2.3 — run bitti (ya da durumu bilinmiyor): Grid session'ı da kapanmış/kapanıyor
+            // olacağı için canlı izleme linkini kaldırıyoruz, aksi halde ölü bir link asılı kalır.
+            liveViewUrlByFile.delete(
+                fileName,
+            );
+
             renderGeneratedTests();
 
             remaining -= 1;
@@ -6010,14 +6166,36 @@ async function initGeneratedTestsPage() {
                             socket.close();
                             settle(fileName, 'error');
 
-                        } else if (
-                            data.type === 'run_snapshot' &&
-                            TERMINAL_STATUSES.has(data.summary?.status)
-                        ) {
-                            // WS bağlanana kadar run zaten bitmiş olabilir (nadir ama mümkün) —
-                            // bu durumda ilk snapshot zaten terminal durumu taşır.
-                            socket.close();
-                            settle(fileName, data.summary.status);
+                        } else if (data.type === 'grid_live_view') {
+
+                            // v2.3 — bkz. liveViewUrlByFile dosya başı açıklaması. Tek koşumdaki
+                            // gridLiveViewLink'in toplu koşum karşılığı.
+                            liveViewUrlByFile.set(
+                                fileName,
+                                data.url,
+                            );
+
+                            renderGeneratedTests();
+
+                        } else if (data.type === 'run_snapshot') {
+
+                            // v2.3 — geç bağlanan bir istemci için: run zaten Grid'e bağlanmışsa
+                            // (session açılmışsa) bu bilgi ilk snapshot'ta da taşınır (bkz.
+                            // runManager.handleEvent — grid_live_view olayında summary'ye de yazılır).
+                            if (data.summary?.seleniumGridLiveViewUrl) {
+                                liveViewUrlByFile.set(
+                                    fileName,
+                                    data.summary.seleniumGridLiveViewUrl,
+                                );
+                                renderGeneratedTests();
+                            }
+
+                            if (TERMINAL_STATUSES.has(data.summary?.status)) {
+                                // WS bağlanana kadar run zaten bitmiş olabilir (nadir ama mümkün) —
+                                // bu durumda ilk snapshot zaten terminal durumu taşır.
+                                socket.close();
+                                settle(fileName, data.summary.status);
+                            }
                         }
 
                     } catch (error) {

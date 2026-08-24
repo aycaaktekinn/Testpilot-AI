@@ -52,6 +52,7 @@ export function baseEnv(overrides: Record<string, unknown> = {}) {
     VECTOR_CACHE_READ_ENABLED: false,
     VECTOR_CACHE_MIN_SIMILARITY: 0.92,
     VECTOR_CACHE_TOP_K: 5,
+    VECTOR_CACHE_EMBED_TIMEOUT_MS: 5000,
     FRONTEND_DIR: '../frontend',
     ...overrides,
   };

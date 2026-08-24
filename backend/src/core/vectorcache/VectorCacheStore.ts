@@ -1,5 +1,5 @@
 import { MilvusClient, DataType } from '@zilliz/milvus2-sdk-node';
-import { EmbeddingClient } from './EmbeddingClient.js';
+import { DEFAULT_EMBED_TIMEOUT_MS, EmbeddingClient } from './EmbeddingClient.js';
 import { buildSituationText, safeHostname, type SituationInput } from './situationText.js';
 import { createLogger } from '../../config/logger.js';
 
@@ -80,9 +80,16 @@ export class VectorCacheStore {
   private readonly embeddingClient: EmbeddingClient;
   private collectionReady: Promise<void> | null = null;
 
-  constructor(milvusUrl: string, ollamaUrl: string, embeddingModel: string) {
+  constructor(
+    milvusUrl: string,
+    ollamaUrl: string,
+    embeddingModel: string,
+    // v2.3 — .env'den (VECTOR_CACHE_EMBED_TIMEOUT_MS) gelir; buradaki varsayılan sadece bu
+    // parametre verilmeden doğrudan çağrılan yerler (ör. testler) için bir geri düşüştür.
+    embedTimeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
+  ) {
     this.milvus = new MilvusClient({ address: milvusUrl });
-    this.embeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel);
+    this.embeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, embedTimeoutMs);
   }
 
   /**

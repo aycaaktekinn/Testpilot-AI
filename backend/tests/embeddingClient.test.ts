@@ -74,7 +74,7 @@ describe('EmbeddingClient', () => {
     await expect(client.embed('x')).rejects.toThrow(/bağlanılamadı/i);
   });
 
-  it('zaman asiminda acik bir zaman asimi hatasi firlatir', async () => {
+  it('zaman asiminda acik bir zaman asimi hatasi firlatir (parametre verilmezse varsayilan 20000ms)', async () => {
     const abortError = new Error('The operation was aborted');
     abortError.name = 'AbortError';
     global.fetch = vi.fn().mockRejectedValue(abortError) as unknown as typeof fetch;
@@ -82,5 +82,20 @@ describe('EmbeddingClient', () => {
     const client = new EmbeddingClient('http://localhost:11434', 'test-model');
 
     await expect(client.embed('x')).rejects.toThrow(/yanıt vermedi/i);
+    await expect(client.embed('x')).rejects.toThrow(/20000ms/);
+  });
+
+  it('ozel bir timeoutMs verilirse (v2.3 — VECTOR_CACHE_EMBED_TIMEOUT_MS) hata mesaji ve setTimeout suresi bunu kullanir', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    global.fetch = vi.fn().mockRejectedValue(abortError) as unknown as typeof fetch;
+
+    const client = new EmbeddingClient('http://localhost:11434', 'test-model', 60_000);
+
+    await expect(client.embed('x')).rejects.toThrow(/60000ms/);
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
+
+    setTimeoutSpy.mockRestore();
   });
 });

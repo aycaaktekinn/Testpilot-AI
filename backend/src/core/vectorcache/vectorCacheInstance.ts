@@ -11,5 +11,10 @@ import { VectorCacheStore } from './VectorCacheStore.js';
  * noktaya sadece o doğrulamadan geçmiş bir env objesiyle ulaşılabilir.
  */
 export const vectorCacheStore: VectorCacheStore | null = env.VECTOR_CACHE_ENABLED
-  ? new VectorCacheStore(env.MILVUS_URL, env.OLLAMA_URL, env.OLLAMA_EMBEDDING_MODEL!)
+  ? new VectorCacheStore(
+      env.MILVUS_URL,
+      env.OLLAMA_URL,
+      env.OLLAMA_EMBEDDING_MODEL!,
+      env.VECTOR_CACHE_EMBED_TIMEOUT_MS,
+    )
   : null;

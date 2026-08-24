@@ -326,6 +326,30 @@
         </div>
 
 
+        <!-- v2.3: AKTİF KOŞUMLAR PANELİ — "Run Selected" ile paralel başlatılan koşumlar sürerken
+             görünür (bkz. app.js renderActiveGeneratedTestRuns / trackBatchRuns). Her aktif dosya
+             için küçük bir kart: dosya adı + canlı durum rozeti + (Grid kullanılıyorsa) kendi
+             "Watch Live" linki — tabloyu aşağı kaydırmadan TÜM paralel koşumları tek bakışta
+             görebilmek için. Hiç aktif koşum yokken tamamen gizli (boş bir panel göstermenin
+             anlamı yok). -->
+        <div
+                id="generatedTestsActiveRunsPanel"
+                class="hidden flex-col gap-sm
+                       p-md
+                       border-b border-outline-variant
+                       bg-surface-container/40"
+        >
+            <span class="font-body-sm text-body-sm font-bold text-on-surface-variant uppercase tracking-wider">
+                Active Runs
+            </span>
+
+            <div
+                    id="generatedTestsActiveRunsList"
+                    class="flex flex-wrap gap-sm"
+            ></div>
+        </div>
+
+
         <!-- TABLE -->
         <div class="overflow-x-auto">
 

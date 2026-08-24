@@ -154,6 +154,13 @@ const envSchema = z.object({
   // denenir, eşiği geçen VE güncel sayfada gerçek bir elemente karşılık gelen ilk aday kullanılır).
   VECTOR_CACHE_TOP_K: z.coerce.number().int().min(1).default(5),
 
+  // v2.3 — Ollama'nın embedding üretmesi bu süreden uzun sürerse iptal edilir (bkz. EmbeddingClient
+  // dosya başı açıklaması). Eskiden kodda sabit 20sn idi; yerel bir embedding modelinin İLK istekte
+  // Ollama'nın belleğine yüklenmesi ("cold start") — özellikle sınırlı RAM'de ve büyükçe quantize
+  // modellerde (4b gibi) — bunu kolayca aşabildiği için artık .env'den ayarlanabilir, varsayılan da
+  // 60sn'ye çıkarıldı. Model bir kez belleğe yüklendikten sonra sonraki istekler çok daha hızlı olur.
+  VECTOR_CACHE_EMBED_TIMEOUT_MS: z.coerce.number().default(60000),
+
   // Statik frontend dosyalarının bulunduğu klasör. Backend, kurulumu basitleştirmek için bu
   // klasörü de kendi üzerinden (aynı origin'den) sunar — böylece frontend'in kullandığı göreli
   // "/api/..." istekleri otomatik olarak bu backend'e gider (ayrı bir sunucuya/CORS ayarına gerek kalmaz).
