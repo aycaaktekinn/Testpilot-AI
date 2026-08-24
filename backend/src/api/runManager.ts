@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { RunReport, RunSummary, TestRunRequest } from '../domain/types.js';
+import type { ReplayStep, RunReport, RunSummary, TestRunRequest } from '../domain/types.js';
 import { AgentLoop } from '../core/agent/AgentLoop.js';
 import type { AgentEvent, AgentEventListener } from '../core/agent/types.js';
 import { createLlmProvider } from '../core/llm/createLlmProvider.js';
@@ -81,6 +81,105 @@ class RunManager {
         record.summary.finishedAt = new Date().toISOString();
       });
 
+    return summary;
+  }
+
+  /**
+   * v2.4 — `runGeneratedTestsBatch()` (bkz. LegacyTestService) için: `startRun()` ile AYNI, TEK
+   * fark — istek bir replay denemesiyse (replaySteps dolu) VE bu deneme özellikle
+   * 'replay_mismatch' (bkz. AgentLoop "Güvenlik kapısı 3") ile başarısız olursa, bu başarısız İLK
+   * denemeyi 'run_finished' olarak DIŞARI YAYINLAMAZ — bunun yerine bir 'batch_retry_started'
+   * olayı yayınlayıp AYNI runId altında, replaySteps OLMADAN (tam AI) otomatik olarak İKİNCİ bir
+   * deneme başlatır. Sadece bu ikinci denemenin sonucu gerçek 'run_finished' olarak yayınlanır ve
+   * Test Runs/Generated Tests geçmişine kaydedilir (bkz. persistBatchRunWhenFinished — hiçbir
+   * değişiklik gerekmedi, çünkü o zaten sadece 'run_finished'ı dinliyor).
+   *
+   * NEDEN aynı runId korunuyor: Frontend, batch API yanıtındaki runId ile HEMEN bir WS bağlantısı
+   * açar (bkz. trackBatchRuns). Yeni bir runId üretip frontend'in bağlantı değiştirmesini istemek
+   * yerine, mevcut bağlantı üzerinden retry akışını şeffafça sürdürüyoruz — frontend sadece yeni
+   * 'batch_retry_started' olay tipini tanıyıp run'ı henüz BİTMİŞ SAYMAMASI gerektiğini bilmeli.
+   *
+   * NEDEN sadece 'replay_mismatch'te: Başka bir nedenle başarısız olursa (ör. TIMEOUT,
+   * ASSERTION_FAILED, loop_detected) bu gerçek bir test/site sorunu olabilir — körü körüne AI ile
+   * otomatik tekrar denemek yanlış bir "aslında geçti" izlenimi verebilir. SADECE replay_mismatch,
+   * "kayıtlı adım artık geçersiz, AI ile adapte olarak dene" anlamına gelir.
+   */
+  startRunWithAutoRetry(request: TestRunRequest): RunSummary {
+    const isReplayAttempt = Boolean(request.replaySteps && request.replaySteps.length > 0);
+    if (!isReplayAttempt) {
+      // Zaten tam AI ile başlıyor — retry mantığına gerek yok, normal startRun ile birebir aynı.
+      return this.startRun(request);
+    }
+
+    const runId = nanoid(12);
+    const options = { ...defaultRunOptions, ...request.options };
+
+    const summary: RunSummary = {
+      runId,
+      status: 'running',
+      url: request.url,
+      scenario: request.scenario,
+      startedAt: new Date().toISOString(),
+      currentStep: 0,
+    };
+
+    const record: RunRecord = { summary, listeners: new Set() };
+    this.runs.set(runId, record);
+
+    const runAttempt = (replaySteps: ReplayStep[] | undefined, isRetryAttempt: boolean): void => {
+      const loop = new AgentLoop(this.llmProvider, (event) => {
+        const isReplayMismatch =
+          !isRetryAttempt &&
+          event.type === 'run_finished' &&
+          event.status === 'failed' &&
+          event.report.failureReason?.startsWith('replay_mismatch');
+
+        if (isReplayMismatch) {
+          // İlk (replay) denemenin gerçek 'run_finished'ını YAYINLAMIYORUZ — WS abonesi/geçmiş
+          // kaydı bunu hiç görmeyecek, sadece nihai (AI) sonucu görecek.
+          this.handleEvent(runId, {
+            type: 'batch_retry_started',
+            runId,
+            reason: event.report.failureReason ?? 'replay_mismatch',
+          });
+          runAttempt(undefined, true);
+          return;
+        }
+
+        this.handleEvent(runId, event);
+      });
+      record.loop = loop;
+
+      void loop
+        .run({
+          runId,
+          url: request.url,
+          scenario: request.scenario,
+          variables: request.variables,
+          secrets: request.secrets,
+          options,
+          replaySteps,
+        })
+        .then((report) => {
+          // Yukarıdaki callback ile aynı 'replay_mismatch İLK deneme' durumunda record.report/
+          // summary'yi GÜNCELLEMİYORUZ (az sonra ikinci denemenin sonucuyla üzerine yazılacak) —
+          // aksi halde GET /api/runs/:id gibi düz okuma yolları geçici/yanlış bir "failed" görebilir.
+          const isReplayMismatch =
+            !isRetryAttempt && report.status === 'failed' && report.failureReason?.startsWith('replay_mismatch');
+          if (isReplayMismatch) return;
+
+          record.report = report;
+          record.summary.status = report.status;
+          record.summary.finishedAt = report.finishedAt;
+        })
+        .catch((err) => {
+          log.error({ err, runId, isRetryAttempt }, 'Run beklenmeyen şekilde çöktü');
+          record.summary.status = 'error';
+          record.summary.finishedAt = new Date().toISOString();
+        });
+    };
+
+    runAttempt(request.replaySteps, false);
     return summary;
   }
 

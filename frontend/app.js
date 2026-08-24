@@ -4697,6 +4697,11 @@ async function initGeneratedTestsPage() {
                 return 'Error';
             case 'cancelled':
                 return 'Cancelled';
+            // v2.4 — kayıtlı adımlar sayfayla eşleşmediği için (replay_mismatch) backend AYNI run'ı
+            // otomatik olarak AI ile yeniden deniyor (bkz. runManager.startRunWithAutoRetry) — bu
+            // run HENÜZ BİTMEDİ, sadece modu değişti; bu yüzden "Failed" DEĞİL, ayrı bir rozet.
+            case 'retrying':
+                return 'AI ile yeniden deneniyor…';
             default:
                 return 'Running…';
         }
@@ -4712,6 +4717,8 @@ async function initGeneratedTestsPage() {
                 return 'bg-error/15 text-error';
             case 'cancelled':
                 return 'bg-surface-container-highest text-on-surface-variant';
+            case 'retrying':
+                return 'bg-tertiary/15 text-tertiary animate-pulse';
             default:
                 return 'bg-primary-container/60 text-on-primary-container animate-pulse';
         }
@@ -6152,6 +6159,28 @@ async function initGeneratedTestsPage() {
                             liveStepsByFile.set(
                                 fileName,
                                 list,
+                            );
+
+                            renderGeneratedTests();
+
+                        } else if (data.type === 'batch_retry_started') {
+
+                            // v2.4 — kayıtlı adımlar (Replay/No AI) bu sayfada artık geçerli değil;
+                            // backend AYNI runId altında otomatik olarak AI ile yeniden deniyor
+                            // (bkz. runManager.startRunWithAutoRetry). Socket'i KAPATMIYORUZ — bu
+                            // 'run_finished' DEĞİL, run hâlâ sürüyor, sadece modu değişti. Rozet için
+                            // 'retrying' özel durumunu kullanıyoruz (bkz. batchStatusBadgeLabel).
+                            batchRunStatusByFile.set(
+                                fileName,
+                                { status: 'retrying' },
+                            );
+
+                            // Başarısız replay denemesinin adımlarını temizliyoruz — AI denemesi
+                            // sıfırdan, kendi adım numaralarıyla başlayacak; ikisini üst üste
+                            // göstermek kafa karıştırırdı.
+                            liveStepsByFile.set(
+                                fileName,
+                                [],
                             );
 
                             renderGeneratedTests();

@@ -221,6 +221,14 @@ export class LegacyTestService {
    * geçmişine YAZMAZ (bu sadece LegacyTestService'in bilinçli bir sorumluluğudur) — bu yüzden her
    * run için `run_finished` olayını dinleyip aynı `finalizeResult()`'ı burada da (arka planda)
    * çağırarak köprülüyoruz; aksi halde bu run'lar Reports/Test Runs sayfalarında hiç görünmezdi.
+   *
+   * v2.4 — "Mümkünse Replay (No AI)" denemesi sayfa değişmiş olduğu için 'replay_mismatch' ile
+   * başarısız olursa, `runManager.startRunWithAutoRetry()` bunu OTOMATİK olarak, AYNI runId
+   * altında, tam AI modunda yeniden dener (bkz. o metodun dosya başı açıklaması) — bu sayede
+   * "Run Selected" artık dinamik/değişken sayfalarda da güvenilir şekilde sonuçlanır, kullanıcının
+   * elle "Run (AI ile)" ile tek tek yeniden denemesi gerekmez. Sadece NİHAİ sonuç (başarısız replay
+   * denemesi DEĞİL) `persistBatchRunWhenFinished` ile geçmişe kaydedilir — aşağıda hiçbir değişiklik
+   * gerekmedi, çünkü o zaten sadece gerçek 'run_finished' olayını dinliyor.
    */
   async runGeneratedTestsBatch(fileNames: string[]): Promise<BatchRunStartResult[]> {
     const results: BatchRunStartResult[] = [];
@@ -242,7 +250,7 @@ export class LegacyTestService {
         // "Mümkünse Replay (No AI), yoksa Run" — bkz. TestRunRequest.replaySteps dosya başı NOT.
         const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
-        const summary = runManager.startRun({
+        const summary = runManager.startRunWithAutoRetry({
           url: meta.url,
           scenario: meta.scenario,
           variables: meta.variables,

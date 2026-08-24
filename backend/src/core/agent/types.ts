@@ -10,6 +10,13 @@ export type AgentEvent =
   // gelir çünkü bu bilgi ancak Grid session'ı gerçekten açıldıktan sonra bilinebilir (bkz.
   // BrowserManager.getGridLiveViewUrl dosya başı açıklaması). Grid kullanılmıyorsa ya da noVNC
   // eşlemesi yoksa HİÇ yayınlanmaz.
-  | { type: 'grid_live_view'; runId: string; url: string };
+  | { type: 'grid_live_view'; runId: string; url: string }
+  // v2.4 — AgentLoop'un KENDİSİ bunu ASLA yayınlamaz; bu tamamen RunManager'a ait sentetik bir
+  // olaydır (bkz. RunManager.startRunWithAutoRetry). SADECE toplu/paralel çalıştırmada (bkz.
+  // LegacyTestService.runGeneratedTestsBatch) bir "Replay (No AI)" denemesi 'replay_mismatch' ile
+  // başarısız olduğunda, AYNI runId altında otomatik olarak tam AI modunda yeniden denenirken
+  // yayınlanır — WS istemcisi bunu run'ın BİTTİĞİ anlamına gelmediğini bilmeli (gerçek
+  // 'run_finished' sadece bu ikinci denemenin sonucunda gelir).
+  | { type: 'batch_retry_started'; runId: string; reason: string };
 
 export type AgentEventListener = (event: AgentEvent) => void;
