@@ -94,6 +94,31 @@ export class GeneratedTestStore {
   }
 
   /**
+   * v2.4 — kullanıcının verdiği özel görünen ismi (bkz. LegacyGeneratedTestMeta.displayName
+   * dosya başı açıklaması) index.json'a kaydeder. Diskteki .spec.ts dosyasına DOKUNMAZ — sadece
+   * bu tek alanı günceller, kaydın geri kalanı (fileName, url, replaySteps, vb.) AYNEN kalır.
+   * Boş/whitespace-only bir isim gelirse özel ismi TAMAMEN KALDIRIR (frontend tekrar otomatik
+   * dosya adını göstermeye döner) — bu şekilde kullanıcı ismi silip varsayılana dönebilir.
+   */
+  async rename(fileName: string, displayName: string): Promise<LegacyGeneratedTestMeta> {
+    assertSafeFileName(fileName);
+
+    const all = await this.list();
+    const index = all.findIndex((t) => t.fileName === fileName);
+    const existing = all[index];
+    if (index === -1 || !existing) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
+
+    const trimmed = displayName.trim();
+    const updated: LegacyGeneratedTestMeta = { ...existing, displayName: trimmed || undefined };
+    all[index] = updated;
+
+    await this.persistIndex(all);
+    return updated;
+  }
+
+  /**
    * "Clear All" — listedeki her .spec.ts dosyasını diskten silmeyi dener (best-effort, tek
    * dosya başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır. Silinen kayıt
    * sayısını döner (frontend'in "X test silindi" gibi bir geri bildirim vermesi için).
@@ -138,7 +163,11 @@ function isNotFound(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: string }).code === 'ENOENT';
 }
 
-/** Senaryo metninden ve runId'den güvenli, benzersiz bir .spec.ts dosya adı üretir. */
+/**
+ * Verilen metinden (v2.4 öncesi HER ZAMAN senaryo metniydi; v2.4 — bkz. LegacyTestService.
+ * finalizeResult — kullanıcı bir test adı verdiyse artık ONDAN türetilir) ve runId'den güvenli,
+ * benzersiz bir .spec.ts dosya adı üretir.
+ */
 export function buildGeneratedFileName(scenario: string, runId: string): string {
   const slug = scenario
     .toLowerCase()

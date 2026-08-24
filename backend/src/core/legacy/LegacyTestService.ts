@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { nanoid } from 'nanoid';
-import type { RunArtifacts, RunOptions, RunReport } from '../../domain/types.js';
+import type { ReplayStep, RunArtifacts, RunOptions, RunReport } from '../../domain/types.js';
 import type {
   BatchRunStartResult,
   LegacyGenerateAndRunInput,
@@ -86,7 +86,13 @@ export class LegacyTestService {
       this.activeRunId = null;
     }
 
-    return this.finalizeResult(report, options, (Date.now() - startedAtMs) / 1000, input.variables);
+    return this.finalizeResult(
+      report,
+      options,
+      (Date.now() - startedAtMs) / 1000,
+      input.variables,
+      input.testName,
+    );
   }
 
   /** Şu an aktif bir run varsa iptal eder. Frontend sonucu beklemez, en iyi çaba prensibiyle çalışır. */
@@ -135,25 +141,106 @@ export class LegacyTestService {
     return { fileName };
   }
 
+  /**
+   * v2.4 — "senaryo ismi" düzenleme. Sadece görüntülenen ismi değiştirir (bkz.
+   * LegacyGeneratedTestMeta.displayName dosya başı açıklaması) — diskteki .spec.ts dosyasının
+   * gerçek adı (`fileName`, Test Runs geçmişindeki birincil anahtar) DEĞİŞMEZ.
+   */
+  async renameGeneratedTest(fileName: string, displayName: string): Promise<LegacyGeneratedTestMeta> {
+    return this.generatedTestStore.rename(fileName, displayName);
+  }
+
   async clearGeneratedTests(): Promise<{ count: number }> {
     const count = await this.generatedTestStore.clear();
     return { count };
   }
 
+  /**
+   * v2.4 — TEK "Run" butonu: önceden ayrı bir "Replay (No AI)" butonu vardı, kullanıcı artık
+   * bunu görmüyor — karar backend'e taşındı. Kayıtlı replaySteps varsa ÖNCE onunla (hızlı, LLM
+   * çağrısı yok) dener; SADECE 'replay_mismatch' ile başarısız olursa (kayıtlı adım artık sayfayla
+   * eşleşmiyor) OTOMATİK olarak, AYNI runId altında, tam AI moduna geçip yeniden dener. Kayıtlı
+   * adım hiç yoksa (ya da zaten tam AI'a düşüldüyse) davranış eskisiyle birebir aynıdır.
+   *
+   * NEDEN sadece 'replay_mismatch'te AI'a geçiliyor: bkz. RunManager.startRunWithAutoRetry dosya
+   * başı açıklaması — aynı gerekçe burada da geçerlidir (başka bir başarısızlık nedeni gerçek bir
+   * test/site sorunu olabilir, körü körüne tekrar denemek yanlış bir izlenim verebilir).
+   */
   async runGeneratedTest(fileName: string, overrides: LegacyRunExistingOverrides): Promise<LegacyTestResultResponse> {
     const meta = await this.generatedTestStore.getMeta(fileName);
+    const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
-    return this.generateAndRun({
-      url: meta.url,
-      scenario: meta.scenario,
-      variables: meta.variables,
-      headed: overrides.headed ?? meta.headed,
-      browser: overrides.browser ?? meta.browser,
-      screenshot: overrides.screenshot ?? meta.screenshot,
-      video: overrides.video ?? meta.video,
-      trace: overrides.trace ?? meta.trace,
+    if (!hasReplay) {
+      // Kayıtlı adım yok — tek seçenek zaten tam AI, eski davranışla birebir aynı.
+      return this.generateAndRun({
+        url: meta.url,
+        scenario: meta.scenario,
+        variables: meta.variables,
+        headed: overrides.headed ?? meta.headed,
+        browser: overrides.browser ?? meta.browser,
+        screenshot: overrides.screenshot ?? meta.screenshot,
+        video: overrides.video ?? meta.video,
+        trace: overrides.trace ?? meta.trace,
+        useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
+      });
+    }
+
+    if (this.activeLoop) {
+      throw new ValidationError('Zaten çalışan bir test var. Önce mevcut testi durdurun.');
+    }
+
+    const runId = nanoid(12);
+    const options: RunOptions = {
+      ...defaultRunOptions,
+      headless: !(overrides.headed ?? meta.headed),
+      browserEngine: overrides.browser ?? meta.browser,
+      captureScreenshot: overrides.screenshot ?? meta.screenshot,
+      captureVideo: overrides.video ?? meta.video,
+      captureTrace: overrides.trace ?? meta.trace,
       useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
-    });
+    };
+
+    runManager.registerExternalRun(runId, meta.url, meta.scenario);
+
+    // NEDEN aynı runId'yi iki denemede de koruyoruz: `getActiveRunId()`'ı poll edip
+    // `/ws/runs/:runId`'ye bağlanmış olabilecek bir istemci varsa, bağlantısını hiç değiştirmeden
+    // (ikinci denemeye de) canlı adımları izlemeye devam edebilsin diye.
+    const runAttempt = async (replaySteps: ReplayStep[] | undefined): Promise<RunReport> => {
+      const loop = new AgentLoop(this.llmProvider, (event) => runManager.publishExternalEvent(runId, event));
+      this.activeLoop = loop;
+      this.activeRunId = runId;
+      try {
+        return await loop.run({
+          runId,
+          url: meta.url,
+          scenario: meta.scenario,
+          variables: meta.variables,
+          replaySteps,
+          options,
+        });
+      } finally {
+        this.activeLoop = null;
+        this.activeRunId = null;
+      }
+    };
+
+    const startedAtMs = Date.now();
+    let report = await runAttempt(meta.replaySteps);
+
+    if (report.status === 'failed' && report.failureReason?.startsWith('replay_mismatch')) {
+      log.warn(
+        { fileName, runId },
+        'Replay (No AI) denemesi replay_mismatch ile başarısız oldu, otomatik olarak AI ile yeniden deneniyor',
+      );
+      runManager.publishExternalEvent(runId, {
+        type: 'replay_retry_started',
+        runId,
+        reason: report.failureReason,
+      });
+      report = await runAttempt(undefined);
+    }
+
+    return this.finalizeResult(report, options, (Date.now() - startedAtMs) / 1000, meta.variables);
   }
 
   /**
@@ -161,6 +248,10 @@ export class LegacyTestService {
    * LegacyGeneratedTestMeta.replaySteps), LLM'e HİÇ danışmadan, aynen yeniden oynatır. `generateAndRun`
    * ile AYNI "tek aktif run" bookkeeping'ini paylaşır (activeLoop/activeRunId) — aynı anda hem
    * normal bir run hem bir replay çalışamaz.
+   *
+   * v2.4 NOT — frontend'de bu artık AYRI bir buton olarak GÖSTERİLMİYOR (tek "Run" butonu var,
+   * bkz. runGeneratedTest() dosya başı açıklaması — o zaten replay'i otomatik önce dener). Bu
+   * metod/endpoint (/generated-tests/replay) geriye dönük uyumluluk için olduğu gibi bırakıldı.
    */
   async replayGeneratedTest(fileName: string, overrides: LegacyRunExistingOverrides): Promise<LegacyTestResultResponse> {
     if (this.activeLoop) {
@@ -297,14 +388,24 @@ export class LegacyTestService {
     options: RunOptions,
     durationSeconds: number,
     variables: Record<string, string>,
+    // v2.4 — SADECE `generateAndRun` (yeni bir test oluştururken) verir; kullanıcının Create Test
+    // sayfasında girdiği isteğe bağlı isim (bkz. LegacyGenerateAndRunInput.testName dosya başı
+    // açıklaması). Var olan bir testi tekrar çalıştıran diğer çağıranlar (runGeneratedTest,
+    // persistBatchRunWhenFinished) bunu BİLEREK GEÇMEZ — o testin zaten kendi kimliği/ismi vardır,
+    // her tekrar çalıştırmada "düzenli" isim bilgisini rastgele bir şeyle EZMEMEK için.
+    testName?: string,
   ): Promise<LegacyTestResultResponse> {
     const status = report.status === 'passed' ? 'passed' : 'failed';
     const createdAt = report.finishedAt ?? new Date().toISOString();
+    const trimmedTestName = testName?.trim();
 
     // Sentezlenen kodu + orijinal çalıştırma bağlamını diske kaydet (best-effort — başarısız
     // olursa yanıtı asla bozmaz, sadece loglanır).
     const code = synthesizeTestCode(report);
-    const fileName = buildGeneratedFileName(report.scenario, report.runId);
+    // Kullanıcı bir isim verdiyse dosya adının slug kısmı da ONDAN türetilir (senaryo metninden
+    // DEĞİL) — bu sayede hem diskteki dosya adı hem index.json kaydı baştan "düzenli" olur, sadece
+    // görüntüleme katmanında bir isim eklenmiş olmaz (bkz. buildGeneratedFileName dosya başı NOT).
+    const fileName = buildGeneratedFileName(trimmedTestName || report.scenario, report.runId);
     try {
       await this.generatedTestStore.save(
         {
@@ -326,6 +427,10 @@ export class LegacyTestService {
           // BDD/step bazlı görüntüleme için — replaySteps'in aksine PASS/FAIL fark etmeksizin
           // doldurulur (bkz. BddStepView, buildBddSteps.ts dosya başı açıklaması).
           steps: buildBddSteps(report),
+          // v2.4 — bkz. LegacyGeneratedTestMeta.displayName dosya başı açıklaması. Kullanıcı isim
+          // vermediyse `undefined` kalır — frontend bu durumda otomatik üretilen `fileName`'i
+          // gösterir (davranış eskisiyle birebir aynı, bkz. renderGeneratedTests).
+          displayName: trimmedTestName || undefined,
         },
         code,
       );

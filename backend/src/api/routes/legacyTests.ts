@@ -24,6 +24,9 @@ const browserEngineSchema = z.enum(['chromium', 'firefox', 'webkit']);
 const generateAndRunSchema = z.object({
   url: z.string().url('Geçerli bir URL giriniz'),
   scenario: z.string().min(3, 'Senaryo en az 3 karakter olmalı').max(8000),
+  // v2.4 — bkz. LegacyGenerateAndRunInput.testName dosya başı açıklaması. Boş string BİLİNÇLİ
+  // olarak izin verilir (kullanıcı doldurmadıysa frontend boş gönderir) — bu yüzden `.min(1)` YOK.
+  testName: z.string().max(120, 'İsim en fazla 120 karakter olabilir').optional().default(''),
   headed: z.boolean().optional().default(false),
   browser: browserEngineSchema.optional().default('chromium'),
   screenshot: z.boolean().optional().default(false),
@@ -49,6 +52,13 @@ const runExistingSchema = z.object({
 
 const runBatchSchema = z.object({
   fileNames: z.array(z.string().min(1)).min(1, 'En az bir test seçilmeli'),
+});
+
+// v2.4 — bkz. LegacyTestService.renameGeneratedTest dosya başı açıklaması. Boş string BİLİNÇLİ
+// olarak izin verilir (özel ismi kaldırıp varsayılan dosya adına dönmek için) — bu yüzden `.min(1)`
+// YOK, sadece makul bir üst sınır var.
+const renameSchema = z.object({
+  displayName: z.string().max(120, 'İsim en fazla 120 karakter olabilir'),
 });
 
 legacyTestsRouter.post('/tests/generate-and-run', async (req, res) => {
@@ -154,6 +164,26 @@ legacyTestsRouter.delete('/generated-tests/:fileName', async (req, res) => {
     res.status(200).json(result);
   } catch (err) {
     res.status(404).json({ message: errorMessage(err, 'Test silinemedi.') });
+  }
+});
+
+// v2.4 — "senaryo ismi" (bkz. LegacyGeneratedTestMeta.displayName dosya başı açıklaması) düzenleme.
+// Bilinçli olarak PATCH: sadece TEK bir alanı (displayName) günceller, kaydın geri kalanına
+// dokunmaz. `/generated-tests/:fileName`'in aksine burada normal HTTP durum kodları kullanılır —
+// bu YENİ bir yüzeydir, eski frontend'in "her zaman 200" sözleşmesine bağlı değildir.
+legacyTestsRouter.patch('/generated-tests/:fileName/name', async (req, res) => {
+  const parsed = renameSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const result = await legacyTestService.renameGeneratedTest(req.params.fileName, parsed.data.displayName);
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/:fileName/name başarısız');
+    res.status(404).json({ message: errorMessage(err, 'Test yeniden adlandırılamadı.') });
   }
 });
 

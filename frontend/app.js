@@ -501,6 +501,13 @@ function initCreateTestPage() {
     const testScenarioInput =
         document.getElementById('testScenario');
 
+    // v2.4 — kullanıcının verdiği isteğe bağlı test adı (bkz. create-test.html "TEST NAME" NOT).
+    // Backend'e LegacyGenerateAndRunInput.testName olarak gönderilir; Generated Tests listesinde
+    // otomatik üretilen dosya adı yerine görünen isim olarak kullanılır (bkz. LegacyTestService.
+    // generateAndRun / finalizeResult dosya başı açıklaması).
+    const testNameInput =
+        document.getElementById('testName');
+
 
     /* -----------------------------------------------------
        PENDING SUGGESTION HANDOFF (from the Scenario Suggestions page)
@@ -2068,6 +2075,12 @@ function initCreateTestPage() {
                     .value
                     .trim();
 
+            const testName =
+                testNameInput
+                    ?.value
+                    .trim() ||
+                '';
+
 
             const selectedBrowser =
                 document.querySelector(
@@ -2172,6 +2185,7 @@ function initCreateTestPage() {
                                 JSON.stringify({
                                     url,
                                     scenario,
+                                    testName,
 
                                     headed:
                                     headedModeInput.checked,
@@ -4942,6 +4956,16 @@ async function initGeneratedTestsPage() {
 
                             : test.fileName;
 
+                    // v2.4 — kullanıcının bu teste verdiği özel isim (bkz. backend
+                    // LegacyGeneratedTestMeta.displayName dosya başı açıklaması). Boşsa otomatik
+                    // üretilen dosya adı gösterilmeye devam eder — davranış eskisiyle aynıdır.
+                    const displayName =
+                        typeof test !==
+                        'string' &&
+                        test.displayName
+                            ? test.displayName
+                            : null;
+
 
                     const createdAt =
                         typeof test ===
@@ -4970,18 +4994,6 @@ async function initGeneratedTestsPage() {
                         );
 
 
-                    // "Replay (No AI)" butonu SADECE bu testi üreten koşum PASSED ile bittiyse ve
-                    // kayıtlı replaySteps varsa gösterilir (bkz. backend LegacyGeneratedTestMeta.replaySteps
-                    // dosya başı açıklaması) — bu şekilde kullanıcı hangi testlerin AI'sız tekrar
-                    // oynatılabileceğini butonun varlığından anlar, ayrıca bir açıklamaya gerek kalmaz.
-                    const hasReplay =
-                        typeof test !==
-                        'string' &&
-                        Array.isArray(
-                            test.replaySteps,
-                        ) &&
-                        test.replaySteps.length >
-                        0;
 
                     // v2.0 BDD/step görüntüleme — bkz. backend BddStepView/buildBddSteps.ts dosya
                     // başı açıklaması. Eski (bu alan eklenmeden ÖNCE üretilmiş) kayıtlarda ve düz
@@ -5157,14 +5169,49 @@ async function initGeneratedTestsPage() {
 
                                             <span
                                                 class="
-                                                    font-mono
+                                                    ${
+                                                        displayName
+                                                            ? 'font-body-sm'
+                                                            : 'font-mono'
+                                                    }
                                                     text-sm
                                                     text-primary-fixed
                                                     break-all
                                                 "
+                                                ${
+                                                    displayName
+                                                        ? `title="${escapeHtml(fileName)}"`
+                                                        : ''
+                                                }
                                             >
-                                                ${fileName}
+                                                ${escapeHtml(displayName || fileName)}
                                             </span>
+
+                                            <button
+                                                class="
+                                                    renameGeneratedTestButton
+                                                    inline-flex
+                                                    items-center
+                                                    justify-center
+                                                    text-on-surface-variant
+                                                    hover:text-on-surface
+                                                    shrink-0
+                                                "
+                                                data-file="${fileName}"
+                                                data-current-name="${escapeHtml(displayName || '')}"
+                                                title="Rename this test"
+                                                aria-label="Rename ${fileName}"
+                                                type="button"
+                                            >
+                                                <span
+                                                    class="
+                                                        material-symbols-outlined
+                                                        text-[15px]
+                                                    "
+                                                >
+                                                    edit
+                                                </span>
+                                            </button>
 
                                             ${
                         batchStatus
@@ -5337,6 +5384,7 @@ async function initGeneratedTestsPage() {
                                             font-bold
                                         "
                                         data-file="${fileName}"
+                                        title="Kayıtlı adımlar varsa önce onunla (AI'sız, hızlı) dener; sayfa değişmişse otomatik olarak AI ile yeniden dener"
                                         type="button"
                                     >
 
@@ -5352,45 +5400,6 @@ async function initGeneratedTestsPage() {
                                         Run
 
                                     </button>
-
-
-                                    ${
-                                        hasReplay
-                                            ? `
-                                    <button
-                                        class="
-                                            replayGeneratedTestButton
-                                            inline-flex
-                                            items-center
-                                            gap-xs
-                                            text-on-surface-variant
-                                            hover:text-on-surface
-                                            px-sm
-                                            py-[6px]
-                                            rounded-lg
-                                            border
-                                            border-outline-variant
-                                        "
-                                        data-file="${fileName}"
-                                        title="Re-run this test's recorded steps without calling the AI"
-                                        type="button"
-                                    >
-
-                                        <span
-                                            class="
-                                                material-symbols-outlined
-                                                text-[16px]
-                                            "
-                                        >
-                                            replay
-                                        </span>
-
-                                        Replay (No AI)
-
-                                    </button>
-                                    `
-                                            : ''
-                                    }
 
 
                                     <!-- Kenara, diğer aksiyonlardan ayrı duruyor (ince bir ayraçla)
@@ -5708,7 +5717,7 @@ async function initGeneratedTestsPage() {
 
         document
             .querySelectorAll(
-                '.replayGeneratedTestButton',
+                '.renameGeneratedTestButton',
             )
             .forEach((button) => {
 
@@ -5721,15 +5730,19 @@ async function initGeneratedTestsPage() {
                                 'data-file',
                             );
 
-
                         if (!fileName) {
                             return;
                         }
 
+                        const currentName =
+                            button.getAttribute(
+                                'data-current-name',
+                            ) ||
+                            '';
 
-                        await replayExistingTest(
+                        await renameGeneratedTest(
                             fileName,
-                            button,
+                            currentName,
                         );
                     },
                 );
@@ -6163,7 +6176,7 @@ async function initGeneratedTestsPage() {
 
                             renderGeneratedTests();
 
-                        } else if (data.type === 'batch_retry_started') {
+                        } else if (data.type === 'replay_retry_started') {
 
                             // v2.4 — kayıtlı adımlar (Replay/No AI) bu sayfada artık geçerli değil;
                             // backend AYNI runId altında otomatik olarak AI ile yeniden deniyor
@@ -6945,6 +6958,87 @@ async function replayExistingTest(
             button.textContent =
                 'Replay (No AI)';
         }
+    }
+}
+
+
+/* =========================================================
+   RENAME GENERATED TEST ("senaryo ismi")
+   ------------------------------------------------------
+   Sadece görüntülenen ismi değiştirir (bkz. backend LegacyGeneratedTestMeta.displayName dosya
+   başı açıklaması) — diskteki .spec.ts dosyasının gerçek adı DEĞİŞMEZ, bu yüzden Test Runs
+   geçmişi/Run/Delete gibi diğer aksiyonlar etkilenmez. Native prompt() kullanılıyor — bu
+   sayfadaki diğer aksiyonlarla (ör. Delete'in confirm()'ü) aynı, basit/bloklayan desen.
+========================================================= */
+
+async function renameGeneratedTest(
+    fileName,
+    currentName,
+) {
+
+    const nextName =
+        window.prompt(
+            'Bu test için bir isim girin (boş bırakırsan otomatik oluşturulan dosya adı gösterilir):',
+            currentName,
+        );
+
+    // Kullanıcı iptal ettiyse (Cancel/Esc) prompt() null döner — hiçbir şey yapma. Boş string
+    // (kutuyu temizleyip OK'e basmak) GEÇERLİ bir istek: özel ismi kaldırır.
+    if (nextName === null) {
+        return;
+    }
+
+    if (nextName.trim() === currentName.trim()) {
+        return;
+    }
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/generated-tests/${encodeURIComponent(fileName)}/name`,
+                {
+                    method: 'PATCH',
+
+                    headers: {
+                        'Content-Type':
+                            'application/json',
+                    },
+
+                    body:
+                        JSON.stringify({
+                            displayName: nextName,
+                        }),
+                },
+            );
+
+        const result =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                result.message ||
+                'Failed to rename test.',
+            );
+        }
+
+        showToast(
+            'Test renamed.',
+            'success',
+        );
+
+        await loadGeneratedTests();
+
+    } catch (error) {
+
+        console.error(error);
+
+        showToast(
+            error instanceof Error
+                ? error.message
+                : 'Failed to rename test.',
+            'error',
+        );
     }
 }
 

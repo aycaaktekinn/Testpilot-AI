@@ -86,6 +86,15 @@ export interface LegacyGeneratedTestMeta {
    * listesini/genişletme okunu göstermemelidir (bkz. generated-tests.html render mantığı).
    */
   steps?: BddStepView[];
+  /**
+   * v2.4 — kullanıcının bu teste verdiği isteğe bağlı, insan tarafından okunabilir özel isim
+   * (bkz. GeneratedTestStore.rename). BİLEREK `fileName`'den AYRI tutulur: `fileName` diskteki
+   * gerçek .spec.ts dosyasının adı VE Test Runs geçmişindeki (`LegacyRunRecord.testFile`) birincil
+   * anahtardır — bunu değiştirmek geçmiş koşum kayıtlarını "yetim" bırakırdı. `displayName` SADECE
+   * görüntüleme amaçlıdır; boşsa frontend `fileName`'i (otomatik üretilen slug) göstermeye devam
+   * eder (bkz. renderGeneratedTests dosya başı NOT).
+   */
+  displayName?: string;
 }
 
 /**
@@ -108,6 +117,14 @@ export interface BatchRunStartResult {
 export interface LegacyGenerateAndRunInput {
   url: string;
   scenario: string;
+  /**
+   * v2.4 — kullanıcının Create Test sayfasında verdiği isteğe bağlı, insan tarafından okunabilir
+   * isim (bkz. create-test.html "TEST NAME" NOT). Doluysa hem `LegacyGeneratedTestMeta.displayName`
+   * hem de üretilecek dosya adının slug kısmı için kullanılır (bkz. LegacyTestService.finalizeResult
+   * dosya başı açıklaması) — boşsa davranış eskisiyle birebir aynıdır (senaryo metninden otomatik
+   * slug + rastgele id).
+   */
+  testName?: string;
   headed: boolean;
   browser: BrowserEngine;
   screenshot: boolean;

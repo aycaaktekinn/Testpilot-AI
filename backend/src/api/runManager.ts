@@ -88,7 +88,7 @@ class RunManager {
    * v2.4 — `runGeneratedTestsBatch()` (bkz. LegacyTestService) için: `startRun()` ile AYNI, TEK
    * fark — istek bir replay denemesiyse (replaySteps dolu) VE bu deneme özellikle
    * 'replay_mismatch' (bkz. AgentLoop "Güvenlik kapısı 3") ile başarısız olursa, bu başarısız İLK
-   * denemeyi 'run_finished' olarak DIŞARI YAYINLAMAZ — bunun yerine bir 'batch_retry_started'
+   * denemeyi 'run_finished' olarak DIŞARI YAYINLAMAZ — bunun yerine bir 'replay_retry_started'
    * olayı yayınlayıp AYNI runId altında, replaySteps OLMADAN (tam AI) otomatik olarak İKİNCİ bir
    * deneme başlatır. Sadece bu ikinci denemenin sonucu gerçek 'run_finished' olarak yayınlanır ve
    * Test Runs/Generated Tests geçmişine kaydedilir (bkz. persistBatchRunWhenFinished — hiçbir
@@ -97,7 +97,7 @@ class RunManager {
    * NEDEN aynı runId korunuyor: Frontend, batch API yanıtındaki runId ile HEMEN bir WS bağlantısı
    * açar (bkz. trackBatchRuns). Yeni bir runId üretip frontend'in bağlantı değiştirmesini istemek
    * yerine, mevcut bağlantı üzerinden retry akışını şeffafça sürdürüyoruz — frontend sadece yeni
-   * 'batch_retry_started' olay tipini tanıyıp run'ı henüz BİTMİŞ SAYMAMASI gerektiğini bilmeli.
+   * 'replay_retry_started' olay tipini tanıyıp run'ı henüz BİTMİŞ SAYMAMASI gerektiğini bilmeli.
    *
    * NEDEN sadece 'replay_mismatch'te: Başka bir nedenle başarısız olursa (ör. TIMEOUT,
    * ASSERTION_FAILED, loop_detected) bu gerçek bir test/site sorunu olabilir — körü körüne AI ile
@@ -138,7 +138,7 @@ class RunManager {
           // İlk (replay) denemenin gerçek 'run_finished'ını YAYINLAMIYORUZ — WS abonesi/geçmiş
           // kaydı bunu hiç görmeyecek, sadece nihai (AI) sonucu görecek.
           this.handleEvent(runId, {
-            type: 'batch_retry_started',
+            type: 'replay_retry_started',
             runId,
             reason: event.report.failureReason ?? 'replay_mismatch',
           });
