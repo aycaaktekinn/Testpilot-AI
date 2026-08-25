@@ -165,7 +165,51 @@ const envSchema = z.object({
   // klasörü de kendi üzerinden (aynı origin'den) sunar — böylece frontend'in kullandığı göreli
   // "/api/..." istekleri otomatik olarak bu backend'e gider (ayrı bir sunucuya/CORS ayarına gerek kalmaz).
   FRONTEND_DIR: z.string().default('../frontend'),
+
+  // v3.0 — Admin panel / Projects / Users / Runs geçmişi için Oracle Database bağlantısı (bkz.
+  // db/migrations/001_initial_schema.sql). ORACLE_DB_HOST tanımlı DEĞİLSE (varsayılan) Oracle
+  // katmanı TAMAMEN devre dışı kalır — bugünkü JSON dosya tabanlı (index.json/runs/*.json) akış
+  // hiçbir şekilde etkilenmez; bu, admin panel özelliğini adım adım (Faz 0 → Faz 6) devreye almamızı
+  // sağlıyor. "oracledb" paketi THIN MODE'da çalışır (bkz. oracleClient.ts dosya başı NOT) — ayrı bir
+  // Oracle Instant Client kurulumu GEREKMEZ.
+  ORACLE_DB_HOST: z.string().optional(),
+  ORACLE_DB_PORT: z.coerce.number().default(1521),
+  // Yerel Docker kurulumunda (docker-compose.oracle.yml) APP_USER=testpilot ile eşleşir; gerçek/
+  // kurumsal bir instance'a bağlanırken o instance'ın servis adını (ör. "FREEPDB1", "ORCLPDB1")
+  // buraya yazın.
+  ORACLE_DB_SERVICE_NAME: z.string().default('FREEPDB1'),
+  ORACLE_DB_USER: z.string().default('testpilot'),
+  ORACLE_DB_PASSWORD: z.string().optional(),
+
+  // v3.0 Faz 2 — local kullanıcı girişi (bkz. auth/token.ts). Kendi imzalı, bağımsız (stateless)
+  // token'larımızı HMAC-SHA256 ile imzalamak için kullanılır — bilinçli olarak "jsonwebtoken" gibi
+  // yeni bir npm paketi EKLENMEDİ (Node'un kendi "crypto" modülü yeterli VE oracledb'de yaşanan
+  // sandbox kurulum sürtünmesini bir daha yaşamamak için). Sadece Oracle/admin panel
+  // kullanılıyorken (ORACLE_DB_HOST tanımlıyken) zorunludur — bkz. aşağıdaki .superRefine.
+  // Üretmek için: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
+  AUTH_TOKEN_SECRET: z.string().optional(),
+  // Giriş yapıldıktan sonra oturumun (cookie'nin) kaç saat geçerli kalacağı.
+  AUTH_TOKEN_TTL_HOURS: z.coerce.number().positive().default(24),
 }).superRefine((data, ctx) => {
+  // Host tanımlıysa (yani Oracle katmanı kullanılacaksa) şifre de zorunludur — sessizce boş
+  // şifreyle bağlanmayı denemek yerine başlangıçta net bir hata vermek daha güvenlidir.
+  if (data.ORACLE_DB_HOST && !data.ORACLE_DB_PASSWORD) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ORACLE_DB_PASSWORD'],
+      message: 'ORACLE_DB_HOST tanımlıyken ORACLE_DB_PASSWORD gerekli',
+    });
+  }
+  // Admin panel girişi Oracle'daki USERS tablosuna bağımlı olduğu için, Oracle etkinken
+  // AUTH_TOKEN_SECRET de zorunludur — aksi halde login endpoint'i çalışma zamanında (istek anında)
+  // net olmayan bir hatayla patlardı; bunun yerine başlangıçta anlaşılır bir hata vermeyi tercih ediyoruz.
+  if (data.ORACLE_DB_HOST && !data.AUTH_TOKEN_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['AUTH_TOKEN_SECRET'],
+      message: 'ORACLE_DB_HOST tanımlıyken AUTH_TOKEN_SECRET gerekli (bkz. .env.example)',
+    });
+  }
   // Seçilen sağlayıcının API anahtarı zorunludur; diğer sağlayıcının anahtarı boş bırakılabilir.
   if (data.LLM_PROVIDER === 'openrouter' && !data.OPENROUTER_API_KEY) {
     ctx.addIssue({

@@ -14,9 +14,69 @@ const suggestionsMenu = document.getElementById('suggestionsMenu');
 const generatedTestsMenu = document.getElementById('generatedTestsMenu');
 const testRunsMenu = document.getElementById('testRunsMenu');
 const reportsMenu = document.getElementById('reportsMenu');
+const adminPanelMenu = document.getElementById('adminPanelMenu');
+const adminPanelMenuItem = document.getElementById('adminPanelMenuItem');
+
+// v3.0 Faz 5.2 — sidebar'daki gerçek kullanıcı kartı (bkz. index.html USER CARD NOT'u) — eskiden
+// sabit "Dev User" placeholder'dı, artık gerçek giriş yapmış kullanıcıyı ve TEK global Logout
+// butonunu barındırıyor.
+const sidebarUserInitial = document.getElementById('sidebarUserInitial');
+const sidebarUsername = document.getElementById('sidebarUsername');
+const sidebarUserRole = document.getElementById('sidebarUserRole');
+const sidebarLogoutButton = document.getElementById('sidebarLogoutButton');
 
 const settingsMenu = document.getElementById('settingsMenu');
 const helpButton = document.getElementById('helpButton');
+
+// v3.0 Faz 5.2 — normal (MEMBER) kullanıcılar Admin Panel'i GÖRMEMELİ (bkz. sohbet notu). Giriş
+// yapan kullanıcının rolü burada tutulur; hem sayfa yüklenirken (checkAppAuth) hem login sonrası
+// dolduruluyor — applyLoggedInUser() ADMIN değilse sidebar'daki linki gizler, navigateTo() da
+// 'admin' sayfasına DOĞRUDAN URL/fonksiyon çağrısıyla gidilmeye çalışılırsa (link zaten gizli
+// olsa da) ikinci bir savunma katmanı olarak engeller. Gerçek güvenlik sınırı YİNE DE backend'deki
+// requireAdmin middleware'idir (bkz. adminUsers.ts/adminProjects.ts vs.) — bu SADECE arayüz/UX.
+let currentAppUserRole = null;
+
+/** user: { username, displayName, role } — hem checkAppAuth() (GET /api/auth/me) hem login submit
+ * (POST /api/auth/login) sonrasında BURADAN çağrılır, ikisinin de döndürdüğü user şekli aynı. */
+function applyLoggedInUser(user) {
+    currentAppUserRole = user?.role ?? null;
+
+    // NOT — 'hidden' BİLİNÇLİ OLARAK <li id="adminPanelMenuItem"> üzerinde toggle'lanıyor, <a
+    // id="adminPanelMenu"> üzerinde DEĞİL — <a>'nın kendi class'ında zaten kalıcı "flex" var, aynı
+    // elemana hem "flex" hem "hidden" eklemek Tailwind'in CSS çıktı SIRASINA bağlı kalır (kırılgan).
+    // <li>'de hiç çakışan bir display class'ı yok, bu yüzden güvenli.
+    adminPanelMenuItem.classList.toggle('hidden', currentAppUserRole !== 'ADMIN');
+
+    const label = user?.displayName || user?.username || '';
+    sidebarUsername.textContent = label || '—';
+    sidebarUserRole.textContent = currentAppUserRole === 'ADMIN' ? 'Admin' : 'Member';
+    sidebarUserInitial.textContent = label ? label.trim().charAt(0).toUpperCase() : '?';
+}
+
+// v3.0 Faz 2.1 — SİTE GENELİ login gate elemanları (bkz. index.html #appLoginGate ve dosya
+// sonundaki checkAppAuth()/wireAppLoginForm()).
+const appLoginGate = document.getElementById('appLoginGate');
+const appLoginForm = document.getElementById('appLoginForm');
+const appLoginUsernameInput = document.getElementById('appLoginUsername');
+const appLoginPasswordInput = document.getElementById('appLoginPassword');
+const appLoginError = document.getElementById('appLoginError');
+const appLoginSubmitButton = document.getElementById('appLoginSubmitButton');
+
+// v3.0 Faz 2.1 — GLOBAL 401 GÜVENLİK AĞI: uygulamanın HER YERİNDEKİ (onlarca farklı sayfa/
+// fonksiyondaki) fetch() çağrısını tek tek "401 gelirse login gate'i göster" diye değiştirmek
+// yerine, window.fetch'in KENDİSİNİ bir kez sarmalıyoruz — session süresi dolduğunda/cookie
+// geçersizleştiğinde HANGİ sayfada olursa olsun kullanıcı otomatik olarak login ekranına
+// döner. showAppLoginGate() BİLİNÇLİ OLARAK idempotent (zaten görünürken tekrar çağrılması
+// zararsız) — bu yüzden /api/auth/me veya /api/auth/login'in kendi 401'lerinde de güvenle çalışır.
+// Orijinal response AYNEN döndürülür — çağıran kodun kendi hata işleme mantığı bozulmaz.
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    if (response.status === 401 && typeof showAppLoginGate === 'function') {
+        showAppLoginGate();
+    }
+    return response;
+};
 
 // Mobil navigasyon (hamburger menü / kayar sidebar) için — bkz. dosya sonundaki
 // "MOBILE NAVIGATION" bölümü.
@@ -248,6 +308,12 @@ const pageConfig = {
         subtitle: 'Test Reports & Analytics',
     },
 
+    admin: {
+        file: 'admin-panel.html',
+        menu: adminPanelMenu,
+        subtitle: 'Projects, Grid URL & LLM configuration',
+    },
+
     settings: {
         file: 'settings.html',
         menu: settingsMenu,
@@ -269,6 +335,7 @@ function setActiveSidebarMenu(activeMenu) {
         generatedTestsMenu,
         testRunsMenu,
         reportsMenu,
+        adminPanelMenu,
         settingsMenu,
     ];
 
@@ -383,6 +450,17 @@ async function navigateTo(pageName) {
         return;
     }
 
+    // v3.0 Faz 5.2 — 'admin' sayfasına SADECE ADMIN rolü geçebilir. Sidebar'daki link zaten
+    // ADMIN olmayanlardan gizli (bkz. applyLoggedInUser), ama navigateTo() BÜTÜN sayfa
+    // geçişlerinin TEK giriş noktası olduğu için (link tıklaması / hash / ileride eklenecek başka
+    // bir tetikleyici fark etmeksizin) gerçek engel BURADA — link'i gizlemek sadece UX, buradaki
+    // kontrol MEMBER bir kullanıcının admin panel fragment'ını hiç ÇEKMEMESİNİ garanti eder
+    // (aksi halde /api/admin/* çağrıları 403 dönerdi ama sayfa yarım yamalak/hatalı yüklenirdi).
+    if (pageName === 'admin' && currentAppUserRole !== 'ADMIN') {
+        showToast('Bu sayfaya erişim için admin yetkisi gerekiyor.', 'error');
+        return;
+    }
+
     // Mobilde bir menü öğesine dokunmak hem sayfayı değiştirmeli hem de artık gereksiz olan
     // kayar sidebar'ı kapatmalı — kapanmasa kullanıcı yeni sayfanın üzerinde açık bir drawer'la
     // kalır. Masaüstünde bu no-op'tur (closeMobileSidebar zaten md:'de anlamsız sınıfları toggler).
@@ -480,6 +558,11 @@ async function initializePage(pageName) {
 
     if (pageName === 'reports') {
         await initReportsPage();
+        return;
+    }
+
+    if (pageName === 'admin') {
+        await initAdminPanelPage();
         return;
     }
 
@@ -7994,6 +8077,959 @@ async function initReportsPage() {
 
 
 /* =========================================================
+   ADMIN PANEL
+   ------------------------------------------------------
+   v3.0 Faz 1 — Project CRUD. Henüz kimlik doğrulama/rol kontrolü YOK (Faz 2'de eklenecek).
+   "New Project" ve "Edit" AYNI modalı kullanır (adminProjectModal) — Edit'te form mevcut proje
+   değerleriyle doldurulur, Save PATCH ile TÜM alanları birlikte gönderir (bkz. backend
+   adminProjects.ts dosya başı NOT — bu klasik "sadece değişen alan" PATCH'i DEĞİLDİR).
+========================================================= */
+
+async function initAdminPanelPage() {
+
+    // v3.0 Faz 2 — LOGIN GATE elemanları. #adminLoginSection / #adminPanelContent görünürlüğü
+    // showLoginGate()/showPanelContent() ile toggle edilir (bkz. dosya sonundaki auth akışı).
+    const loginSection = document.getElementById('adminLoginSection');
+    const panelContent = document.getElementById('adminPanelContent');
+    const loginForm = document.getElementById('adminLoginForm');
+    const loginUsernameInput = document.getElementById('adminLoginUsername');
+    const loginPasswordInput = document.getElementById('adminLoginPassword');
+    const loginError = document.getElementById('adminLoginError');
+    const loginSubmitButton = document.getElementById('adminLoginSubmitButton');
+    const loggedInAsLabel = document.getElementById('adminLoggedInAs');
+    const logoutButton = document.getElementById('adminLogoutButton');
+
+    const tableBody = document.getElementById('adminProjectsTableBody');
+    const emptyState = document.getElementById('adminProjectsEmptyState');
+    const loadingState = document.getElementById('adminProjectsLoadingState');
+    const oracleWarning = document.getElementById('adminOracleNotConfigured');
+
+    const newProjectButton = document.getElementById('newProjectButton');
+    const refreshButton = document.getElementById('refreshProjectsButton');
+
+    // v3.0 Faz 2.2/2.3 — TABS (Projects | Users | LDAP) elemanları.
+    const tabProjectsButton = document.getElementById('adminTabProjectsButton');
+    const tabUsersButton = document.getElementById('adminTabUsersButton');
+    const tabLdapButton = document.getElementById('adminTabLdapButton');
+    const projectsSection = document.getElementById('adminProjectsSection');
+    const usersSection = document.getElementById('adminUsersSection');
+    const ldapSection = document.getElementById('adminLdapSection');
+
+    const usersTableBody = document.getElementById('adminUsersTableBody');
+    const usersEmptyState = document.getElementById('adminUsersEmptyState');
+    const usersLoadingState = document.getElementById('adminUsersLoadingState');
+    const refreshUsersButton = document.getElementById('refreshUsersButton');
+
+    // v3.0 Faz 5.1 — "Add User" modalı (bkz. aşağıdaki openUserModal/userForm submit).
+    const newUserButton = document.getElementById('newUserButton');
+    const userModal = document.getElementById('adminUserModal');
+    const closeUserModalButton = document.getElementById('closeAdminUserModal');
+    const cancelUserModalButton = document.getElementById('cancelAdminUserModal');
+    const userForm = document.getElementById('adminUserForm');
+    const userFormError = document.getElementById('adminUserFormError');
+    const saveUserButton = document.getElementById('saveAdminUserButton');
+    const userUsernameInput = document.getElementById('adminUserUsername');
+    const userDisplayNameInput = document.getElementById('adminUserDisplayName');
+    const userPasswordInput = document.getElementById('adminUserPassword');
+    const userRoleSelect = document.getElementById('adminUserRole');
+
+    // v3.0 Faz 2.3 — LDAP ayarları formu elemanları.
+    const ldapForm = document.getElementById('adminLdapForm');
+    const ldapUrlInput = document.getElementById('adminLdapUrl');
+    const ldapBaseDnInput = document.getElementById('adminLdapBaseDn');
+    const ldapManagerDnInput = document.getElementById('adminLdapManagerDn');
+    const ldapManagerPasswordInput = document.getElementById('adminLdapManagerPassword');
+    const ldapManagerPasswordHint = document.getElementById('adminLdapManagerPasswordHint');
+    const ldapUserDnPatternInput = document.getElementById('adminLdapUserDnPattern');
+    const ldapUserSearchFilterInput = document.getElementById('adminLdapUserSearchFilter');
+    const ldapGroupSearchBaseInput = document.getElementById('adminLdapGroupSearchBase');
+    const ldapGroupSearchFilterInput = document.getElementById('adminLdapGroupSearchFilter');
+    const ldapPasswordEncoderSelect = document.getElementById('adminLdapPasswordEncoderType');
+    const ldapFormError = document.getElementById('adminLdapFormError');
+    const ldapFormSuccess = document.getElementById('adminLdapFormSuccess');
+    const saveLdapButton = document.getElementById('saveAdminLdapButton');
+
+    // v3.0 Faz 5 — sekmelerin ÜSTÜNDE her zaman görünen, tek/global Grid URL alanı elemanları.
+    const globalGridUrlInput = document.getElementById('adminGlobalGridUrl');
+    const saveGlobalGridUrlButton = document.getElementById('saveAdminGlobalGridUrlButton');
+    const globalGridUrlError = document.getElementById('adminGlobalGridUrlError');
+    const globalGridUrlSavedBadge = document.getElementById('adminGlobalGridUrlSavedBadge');
+
+    let currentUserId = null; // giriş yapmış kullanıcının id'si — kendi kendini düşürme engeli için (bkz. showPanelContent).
+    let usersLoadedOnce = false;
+    let ldapLoadedOnce = false;
+
+    const modal = document.getElementById('adminProjectModal');
+    const modalTitle = document.getElementById('adminProjectModalTitle');
+    const closeModalButton = document.getElementById('closeAdminProjectModal');
+    const cancelModalButton = document.getElementById('cancelAdminProjectModal');
+    const form = document.getElementById('adminProjectForm');
+    const formError = document.getElementById('adminProjectFormError');
+    const saveButton = document.getElementById('saveAdminProjectButton');
+
+    const idInput = document.getElementById('adminProjectId');
+    const nameInput = document.getElementById('adminProjectName');
+    const maxParallelInput = document.getElementById('adminProjectMaxParallel');
+    const llmModelInput = document.getElementById('adminProjectLlmModel');
+
+    // Bu sayfaya özel, küçük bir tarih biçimlendirici — formatDate() diğer sayfaların kendi
+    // closure'ları içinde tanımlı (ör. Generated Tests), global değil, bu yüzden burada ayrıca
+    // (kasıtlı olarak minimal) bir kopyası var.
+    function formatAdminDate(value) {
+        if (!value) {
+            return '-';
+        }
+        try {
+            return new Date(value).toLocaleString('tr-TR');
+        } catch (error) {
+            return '-';
+        }
+    }
+
+    let currentProjects = [];
+
+    function openProjectModal(project) {
+
+        formError.classList.add('hidden');
+        formError.textContent = '';
+
+        if (project) {
+            modalTitle.textContent = 'Edit Project';
+            idInput.value = String(project.id);
+            nameInput.value = project.name || '';
+            maxParallelInput.value = project.maxParallelRuns ?? '';
+            llmModelInput.value = project.llmModel || '';
+        } else {
+            modalTitle.textContent = 'New Project';
+            form.reset();
+            idInput.value = '';
+        }
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        nameInput.focus();
+    }
+
+    function closeProjectModal() {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+
+    function renderAdminProjectsTable(projects) {
+
+        currentProjects = projects;
+
+        if (!projects.length) {
+            tableBody.innerHTML = '';
+            emptyState.classList.remove('hidden');
+            return;
+        }
+
+        emptyState.classList.add('hidden');
+
+        tableBody.innerHTML = projects.map((project) => `
+            <tr class="hover:bg-surface-container-low/50 transition-colors">
+                <td class="py-sm px-md">
+                    <span class="font-body-md text-on-surface font-semibold">
+                        ${escapeHtml(project.name)}
+                    </span>
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${project.maxParallelRuns !== null && project.maxParallelRuns !== undefined ? project.maxParallelRuns : '<span class="text-on-surface-variant/50">—</span>'}
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${project.llmModel ? escapeHtml(project.llmModel) : '<span class="text-on-surface-variant/50">—</span>'}
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${formatAdminDate(project.createdAt)}
+                </td>
+                <td class="py-sm px-md text-right">
+                    <div class="flex justify-end gap-sm">
+                        <button
+                                class="editProjectButton
+                                       inline-flex items-center justify-center
+                                       text-on-surface-variant hover:text-on-surface
+                                       p-[6px] rounded-lg
+                                       border border-outline-variant
+                                       transition-colors"
+                                data-id="${project.id}"
+                                title="Edit"
+                                aria-label="Edit ${escapeHtml(project.name)}"
+                                type="button"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">edit</span>
+                        </button>
+
+                        <button
+                                class="deleteProjectButton
+                                       inline-flex items-center justify-center
+                                       text-on-surface-variant hover:text-error
+                                       hover:bg-error/10
+                                       p-[6px] rounded-lg
+                                       border border-outline-variant
+                                       hover:border-error/40
+                                       transition-colors"
+                                data-id="${project.id}"
+                                title="Delete"
+                                aria-label="Delete ${escapeHtml(project.name)}"
+                                type="button"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">delete</span>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+
+        wireProjectRowButtons();
+    }
+
+    function wireProjectRowButtons() {
+
+        document.querySelectorAll('.editProjectButton').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = Number(button.getAttribute('data-id'));
+                const project = currentProjects.find((p) => p.id === id);
+                if (project) {
+                    openProjectModal(project);
+                }
+            });
+        });
+
+        document.querySelectorAll('.deleteProjectButton').forEach((button) => {
+            button.addEventListener('click', async () => {
+
+                const id = button.getAttribute('data-id');
+                const project = currentProjects.find((p) => String(p.id) === id);
+                const name = project ? project.name : 'this project';
+
+                const confirmed = confirm(`Delete project "${name}"? This cannot be undone.`);
+                if (!confirmed) {
+                    return;
+                }
+
+                button.disabled = true;
+
+                try {
+                    const response = await fetch(`/api/admin/projects/${id}`, { method: 'DELETE' });
+
+                    if (!response.ok) {
+                        const result = await response.json().catch(() => ({}));
+                        throw new Error(result.error?.message || 'Failed to delete project.');
+                    }
+
+                    showToast('Project deleted.', 'success');
+                    await loadAdminProjects();
+
+                } catch (error) {
+                    console.error(error);
+                    showToast(error instanceof Error ? error.message : 'Failed to delete project.', 'error');
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    async function loadAdminProjects() {
+
+        loadingState.classList.remove('hidden');
+        tableBody.innerHTML = '';
+        emptyState.classList.add('hidden');
+        oracleWarning.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/admin/projects');
+
+            if (response.status === 503) {
+                oracleWarning.classList.remove('hidden');
+                return;
+            }
+
+            // Oturum süresi dolmuş/cookie geçersiz — sessizce hata göstermek yerine kullanıcıyı
+            // giriş ekranına geri döndürüyoruz (bkz. showLoginGate() dosya sonunda).
+            if (response.status === 401) {
+                showLoginGate();
+                return;
+            }
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to load projects.');
+            }
+
+            renderAdminProjectsTable(result.projects || []);
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load projects.', 'error');
+        } finally {
+            loadingState.classList.add('hidden');
+        }
+    }
+
+    newProjectButton.addEventListener('click', () => openProjectModal(null));
+    refreshButton.addEventListener('click', () => loadAdminProjects());
+    closeModalButton.addEventListener('click', closeProjectModal);
+    cancelModalButton.addEventListener('click', closeProjectModal);
+
+    form.addEventListener('submit', async (event) => {
+
+        event.preventDefault();
+
+        formError.classList.add('hidden');
+        formError.textContent = '';
+
+        const id = idInput.value.trim();
+
+        const payload = {
+            name: nameInput.value.trim(),
+            maxParallelRuns: maxParallelInput.value.trim() ? Number(maxParallelInput.value) : undefined,
+            llmModel: llmModelInput.value.trim(),
+        };
+
+        saveButton.disabled = true;
+
+        try {
+            const response = await fetch(
+                id ? `/api/admin/projects/${id}` : '/api/admin/projects',
+                {
+                    method: id ? 'PATCH' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                },
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to save project.');
+            }
+
+            showToast(id ? 'Project updated.' : 'Project created.', 'success');
+            closeProjectModal();
+            await loadAdminProjects();
+
+        } catch (error) {
+            console.error(error);
+            formError.textContent = error instanceof Error ? error.message : 'Failed to save project.';
+            formError.classList.remove('hidden');
+        } finally {
+            saveButton.disabled = false;
+        }
+    });
+
+
+    /* -----------------------------------------------------
+       LOGIN GATE — v3.0 Faz 2. Sayfa ilk yüklendiğinde
+       GET /api/auth/me ile mevcut oturum kontrol edilir;
+       yoksa/süresi geçmişse SADECE login formu gösterilir,
+       varsa proje içeriği yüklenir. Login/logout SAYFAYI
+       YENİDEN YÜKLEMEZ — sadece iki bölümün görünürlüğünü
+       toggler (bkz. showLoginGate()/showPanelContent()).
+    ----------------------------------------------------- */
+
+    function showLoginGate() {
+        panelContent.classList.add('hidden');
+        panelContent.classList.remove('flex');
+        loginSection.classList.remove('hidden');
+        loginSection.classList.add('flex');
+        loginPasswordInput.value = '';
+    }
+
+    function showPanelContent(user) {
+        loginSection.classList.add('hidden');
+        loginSection.classList.remove('flex');
+        panelContent.classList.remove('hidden');
+        panelContent.classList.add('flex');
+
+        if (user) {
+            currentUserId = user.id;
+
+            if (loggedInAsLabel) {
+                loggedInAsLabel.textContent = `Signed in as ${user.username}`;
+                loggedInAsLabel.classList.remove('hidden');
+            }
+        }
+    }
+
+    loginForm.addEventListener('submit', async (event) => {
+
+        event.preventDefault();
+
+        loginError.classList.add('hidden');
+        loginError.textContent = '';
+        loginSubmitButton.disabled = true;
+
+        try {
+            const response = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: loginUsernameInput.value.trim(),
+                    password: loginPasswordInput.value,
+                }),
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Sign in failed.');
+            }
+
+            showPanelContent(result.user);
+            await loadAdminProjects();
+
+        } catch (error) {
+            console.error(error);
+            loginError.textContent = error instanceof Error ? error.message : 'Sign in failed.';
+            loginError.classList.remove('hidden');
+        } finally {
+            loginSubmitButton.disabled = false;
+        }
+    });
+
+    logoutButton.addEventListener('click', async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST' });
+        } catch (error) {
+            console.error(error);
+        }
+        loginUsernameInput.value = '';
+        // v3.0 Faz 5.2 — global nav/sidebar durumunu da sıfırla (bkz. app.js applyLoggedInUser) —
+        // aksi halde bir sonraki (farklı bir kullanıcıyla) girişe kadar eski admin bilgisi sidebar'da
+        // kalabilir.
+        if (typeof applyLoggedInUser === 'function') {
+            applyLoggedInUser(null);
+        }
+        // Site geneli login gate'i göster (bkz. index.html #appLoginGate) — Admin Panel'in KENDİ
+        // login formunu değil, çünkü artık logout TÜM uygulamadan çıkış anlamına geliyor (v3.0
+        // Faz 2.1), sadece admin panelden değil.
+        if (typeof showAppLoginGate === 'function') {
+            showAppLoginGate();
+        } else {
+            showLoginGate();
+        }
+    });
+
+    /* -----------------------------------------------------
+       USERS TAB — v3.0 Faz 2.2. Liste sadece sekmeye İLK
+       geçildiğinde çekilir (usersLoadedOnce), sonraki
+       geçişlerde tekrar fetch atılmaz — Refresh butonu
+       elle tazeleme için var.
+    ----------------------------------------------------- */
+
+    function renderAdminUsersTable(users) {
+
+        if (!users.length) {
+            usersTableBody.innerHTML = '';
+            usersEmptyState.classList.remove('hidden');
+            return;
+        }
+
+        usersEmptyState.classList.add('hidden');
+
+        usersTableBody.innerHTML = users.map((user) => {
+            const isSelf = user.id === currentUserId;
+            const isAdmin = user.role === 'ADMIN';
+
+            return `
+            <tr class="hover:bg-surface-container-low/50 transition-colors">
+                <td class="py-sm px-md">
+                    <span class="font-body-md text-on-surface font-semibold">${escapeHtml(user.username)}</span>
+                    ${isSelf ? '<span class="ml-2 text-[10px] uppercase tracking-wider text-on-surface-variant/70">(you)</span>' : ''}
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${user.displayName ? escapeHtml(user.displayName) : '<span class="text-on-surface-variant/50">—</span>'}
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${escapeHtml(user.userType)}
+                </td>
+                <td class="py-sm px-md">
+                    <span class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'bg-primary/15 text-primary' : 'bg-surface-container-high text-on-surface-variant'}">
+                        ${escapeHtml(user.role)}
+                    </span>
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${formatAdminDate(user.createdAt)}
+                </td>
+                <td class="py-sm px-md text-right">
+                    <div class="flex justify-end gap-sm">
+                        <button
+                                class="toggleUserRoleButton
+                                       inline-flex items-center gap-1
+                                       px-sm py-[6px]
+                                       rounded-lg
+                                       border border-outline-variant
+                                       text-on-surface-variant
+                                       hover:text-on-surface
+                                       hover:bg-surface-container-high
+                                       transition-colors
+                                       disabled:opacity-40
+                                       disabled:cursor-not-allowed"
+                                data-id="${user.id}"
+                                data-current-role="${user.role}"
+                                ${isSelf ? 'disabled title="You cannot change your own role"' : ''}
+                                type="button"
+                        >
+                            ${isAdmin ? 'Remove Admin' : 'Make Admin'}
+                        </button>
+
+                        <button
+                                class="deleteUserButton
+                                       inline-flex items-center justify-center
+                                       text-on-surface-variant hover:text-error
+                                       hover:bg-error/10
+                                       p-[6px] rounded-lg
+                                       border border-outline-variant
+                                       hover:border-error/40
+                                       transition-colors
+                                       disabled:opacity-40
+                                       disabled:cursor-not-allowed
+                                       disabled:hover:text-on-surface-variant
+                                       disabled:hover:bg-transparent"
+                                data-id="${user.id}"
+                                data-username="${escapeHtml(user.username)}"
+                                ${isSelf ? 'disabled title="You cannot delete your own account"' : ''}
+                                title="Delete"
+                                aria-label="Delete ${escapeHtml(user.username)}"
+                                type="button"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">delete</span>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            `;
+        }).join('');
+
+        wireUserRoleButtons();
+        wireDeleteUserButtons();
+    }
+
+    function wireUserRoleButtons() {
+        document.querySelectorAll('.toggleUserRoleButton').forEach((button) => {
+            button.addEventListener('click', async () => {
+
+                const id = button.getAttribute('data-id');
+                const currentRole = button.getAttribute('data-current-role');
+                const nextRole = currentRole === 'ADMIN' ? 'MEMBER' : 'ADMIN';
+
+                const confirmed = confirm(
+                    nextRole === 'ADMIN'
+                        ? 'Grant admin access to this user?'
+                        : 'Remove admin access from this user?',
+                );
+                if (!confirmed) {
+                    return;
+                }
+
+                button.disabled = true;
+
+                try {
+                    const response = await fetch(`/api/admin/users/${id}/role`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ role: nextRole }),
+                    });
+
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(result.error?.message || 'Failed to update role.');
+                    }
+
+                    showToast('User role updated.', 'success');
+                    await loadAdminUsers();
+
+                } catch (error) {
+                    console.error(error);
+                    showToast(error instanceof Error ? error.message : 'Failed to update role.', 'error');
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    // v3.0 Faz 5.3 — kullanıcı silme (bkz. sohbet notu: "user silme kısmı ekleyelim, eklediğim
+    // user'ın şifresini unuttum" — şifre hash'lendiği için geri getirilemez, tek yol sil + doğru
+    // şifreyle tekrar oluştur). Kendi kendini silme / son admin'i silme engelleri zaten backend'de
+    // (adminUsers.ts) var — buradaki disabled/title'lar sadece erken/UX geri bildirimi, tek
+    // güvenlik sınırı backend'dekidir.
+    function wireDeleteUserButtons() {
+        document.querySelectorAll('.deleteUserButton').forEach((button) => {
+            button.addEventListener('click', async () => {
+
+                const id = button.getAttribute('data-id');
+                const username = button.getAttribute('data-username');
+
+                const confirmed = confirm(`Delete user "${username}"? This cannot be undone.`);
+                if (!confirmed) {
+                    return;
+                }
+
+                button.disabled = true;
+
+                try {
+                    const response = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+
+                    if (!response.ok) {
+                        const result = await response.json().catch(() => ({}));
+                        throw new Error(result.error?.message || 'Failed to delete user.');
+                    }
+
+                    showToast('User deleted.', 'success');
+                    await loadAdminUsers();
+
+                } catch (error) {
+                    console.error(error);
+                    showToast(error instanceof Error ? error.message : 'Failed to delete user.', 'error');
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    // v3.0 Faz 5.1 — "Add User" modalı. Proje modalının AKSİNE (openProjectModal(project)) burada
+    // DÜZENLEME modu yok — sadece oluşturma, bu yüzden parametre almıyor, form her açılışta reset.
+    function openUserModal() {
+        userFormError.classList.add('hidden');
+        userFormError.textContent = '';
+        userForm.reset();
+        userRoleSelect.value = 'MEMBER';
+
+        userModal.classList.remove('hidden');
+        userModal.classList.add('flex');
+        userUsernameInput.focus();
+    }
+
+    function closeUserModal() {
+        userModal.classList.add('hidden');
+        userModal.classList.remove('flex');
+    }
+
+    newUserButton.addEventListener('click', openUserModal);
+    closeUserModalButton.addEventListener('click', closeUserModal);
+    cancelUserModalButton.addEventListener('click', closeUserModal);
+
+    userForm.addEventListener('submit', async (event) => {
+
+        event.preventDefault();
+
+        userFormError.classList.add('hidden');
+        userFormError.textContent = '';
+
+        const payload = {
+            username: userUsernameInput.value.trim(),
+            displayName: userDisplayNameInput.value.trim(),
+            password: userPasswordInput.value,
+            role: userRoleSelect.value,
+        };
+
+        saveUserButton.disabled = true;
+
+        try {
+            const response = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to create user.');
+            }
+
+            showToast('User created.', 'success');
+            closeUserModal();
+            await loadAdminUsers();
+
+        } catch (error) {
+            console.error(error);
+            userFormError.textContent = error instanceof Error ? error.message : 'Failed to create user.';
+            userFormError.classList.remove('hidden');
+        } finally {
+            saveUserButton.disabled = false;
+        }
+    });
+
+    async function loadAdminUsers() {
+
+        usersLoadingState.classList.remove('hidden');
+        usersTableBody.innerHTML = '';
+        usersEmptyState.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/admin/users');
+
+            if (response.status === 503 || response.status === 401) {
+                // 503 (Oracle kapalı) zaten Projects sekmesinde gösteriliyor; 401'de global gate
+                // zaten devreye girer (bkz. window.fetch sarmalayıcısı) — burada ekstra bir şey
+                // göstermeye gerek yok.
+                return;
+            }
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to load users.');
+            }
+
+            usersLoadedOnce = true;
+            renderAdminUsersTable(result.users || []);
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load users.', 'error');
+        } finally {
+            usersLoadingState.classList.add('hidden');
+        }
+    }
+
+    refreshUsersButton.addEventListener('click', () => loadAdminUsers());
+
+    /* -----------------------------------------------------
+       LDAP TAB — v3.0 Faz 2.3. Sadece yapılandırmayı okur/
+       kaydeder, gerçek LDAP bağlantı testi YOK (bkz.
+       admin-panel.html #adminLdapInfoBanner). Liste sekmesi
+       gibi sadece İLK geçişte fetch atılır.
+    ----------------------------------------------------- */
+
+    function applyLdapPasswordHint(managerPasswordConfigured) {
+        ldapManagerPasswordHint.textContent = managerPasswordConfigured
+            ? 'Kayıtlı bir şifre var — değiştirmek istemiyorsan bu alanı boş bırak.'
+            : 'Henüz kayıtlı bir şifre yok.';
+    }
+
+    async function loadLdapConfig() {
+
+        ldapFormError.classList.add('hidden');
+        ldapFormSuccess.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/admin/ldap-config');
+
+            if (response.status === 503 || response.status === 401) {
+                // 503 (Oracle kapalı) zaten Projects sekmesinde gösteriliyor; 401'de global gate
+                // zaten devreye girer — burada ekstra bir şey göstermeye gerek yok.
+                return;
+            }
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to load LDAP configuration.');
+            }
+
+            ldapLoadedOnce = true;
+
+            const config = result.config;
+            if (!config) {
+                // Henüz hiç kaydedilmemiş — form boş, encoder type varsayılanı 'NO' (select'in
+                // ilk option'ı).
+                applyLdapPasswordHint(false);
+                return;
+            }
+
+            ldapUrlInput.value = config.url || '';
+            ldapBaseDnInput.value = config.baseDn || '';
+            ldapManagerDnInput.value = config.managerDn || '';
+            ldapUserDnPatternInput.value = config.userDnPattern || '';
+            ldapUserSearchFilterInput.value = config.userSearchFilter || '';
+            ldapGroupSearchBaseInput.value = config.groupSearchBase || '';
+            ldapGroupSearchFilterInput.value = config.groupSearchFilter || '';
+            ldapPasswordEncoderSelect.value = config.passwordEncoderType || 'NO';
+
+            applyLdapPasswordHint(config.managerPasswordConfigured);
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load LDAP configuration.', 'error');
+        }
+    }
+
+    ldapForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        ldapFormError.classList.add('hidden');
+        ldapFormSuccess.classList.add('hidden');
+        saveLdapButton.disabled = true;
+
+        try {
+            const response = await fetch('/api/admin/ldap-config', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: ldapUrlInput.value,
+                    baseDn: ldapBaseDnInput.value,
+                    managerDn: ldapManagerDnInput.value,
+                    // Boş bırakılırsa backend mevcut şifreyi korur (bkz. ldapConfigStore.ts
+                    // UpsertLdapConfigInput dosya başı NOT) — bu yüzden burada özel bir "boşsa
+                    // gönderme" mantığı YOK, backend zaten boş string'i "değiştirme" olarak ele alıyor.
+                    managerPassword: ldapManagerPasswordInput.value,
+                    userDnPattern: ldapUserDnPatternInput.value,
+                    userSearchFilter: ldapUserSearchFilterInput.value,
+                    groupSearchBase: ldapGroupSearchBaseInput.value,
+                    groupSearchFilter: ldapGroupSearchFilterInput.value,
+                    passwordEncoderType: ldapPasswordEncoderSelect.value,
+                }),
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to save LDAP configuration.');
+            }
+
+            ldapLoadedOnce = true;
+            ldapManagerPasswordInput.value = '';
+            applyLdapPasswordHint(result.config.managerPasswordConfigured);
+
+            ldapFormSuccess.textContent = 'LDAP yapılandırması kaydedildi.';
+            ldapFormSuccess.classList.remove('hidden');
+            showToast('LDAP configuration saved.', 'success');
+
+        } catch (error) {
+            console.error(error);
+            ldapFormError.textContent = error instanceof Error ? error.message : 'Failed to save LDAP configuration.';
+            ldapFormError.classList.remove('hidden');
+        } finally {
+            saveLdapButton.disabled = false;
+        }
+    });
+
+    /* -----------------------------------------------------
+       GLOBAL GRID URL — v3.0 Faz 5. Sekmelerin DIŞINDA,
+       her zaman görünen tek alan olduğu için tab mantığına
+       bağlı DEĞİL — sayfa yüklenince (aşağıdaki initial
+       auth check içinde) HER ZAMAN çekilir.
+    ----------------------------------------------------- */
+
+    async function loadGlobalGridUrl() {
+
+        globalGridUrlError.classList.add('hidden');
+
+        try {
+            const response = await fetch('/api/admin/global-settings');
+
+            if (response.status === 503 || response.status === 401) {
+                // 503 (Oracle kapalı) zaten Projects sekmesinde gösteriliyor; 401'de global gate
+                // zaten devreye girer — burada ekstra bir şey göstermeye gerek yok.
+                return;
+            }
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to load Grid URL.');
+            }
+
+            globalGridUrlInput.value = result.settings?.gridUrl || '';
+            // Sayfa yüklenirken zaten kaydedilmiş bir değer geldiyse (result.settings dolu), rozet
+            // baştan "Kaydedildi" göstersin — kullanıcı Save'e basmadan da mevcut durumu görsün.
+            setGlobalGridUrlSavedBadge(Boolean(result.settings?.gridUrl));
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load Grid URL.', 'error');
+        }
+    }
+
+    // v3.0 Faz 5 düzeltme — kullanıcı geri bildirimi: "save ediliyor ama kutu hep aynı/açık kalıyor,
+    // kaydedildiği belli olmuyor". Toast birkaç saniyede kayboluyor; bunun yanına, Save başarılı
+    // olduğu sürece EKRANDA KALICI duran küçük bir "✓ Kaydedildi" rozeti ekliyoruz. Kullanıcı kutuya
+    // tekrar yazmaya başlarsa (henüz kaydedilmemiş yeni bir değer demektir) rozet otomatik gizlenir.
+    function setGlobalGridUrlSavedBadge(isSaved) {
+        globalGridUrlSavedBadge.classList.toggle('hidden', !isSaved);
+        globalGridUrlSavedBadge.classList.toggle('flex', isSaved);
+    }
+
+    globalGridUrlInput.addEventListener('input', () => {
+        setGlobalGridUrlSavedBadge(false);
+    });
+
+    saveGlobalGridUrlButton.addEventListener('click', async () => {
+
+        globalGridUrlError.classList.add('hidden');
+        saveGlobalGridUrlButton.disabled = true;
+
+        try {
+            const response = await fetch('/api/admin/global-settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gridUrl: globalGridUrlInput.value.trim() }),
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to save Grid URL.');
+            }
+
+            globalGridUrlInput.value = result.settings?.gridUrl || '';
+            setGlobalGridUrlSavedBadge(Boolean(result.settings?.gridUrl));
+            showToast('Grid URL saved.', 'success');
+
+        } catch (error) {
+            console.error(error);
+            globalGridUrlError.textContent = error instanceof Error ? error.message : 'Failed to save Grid URL.';
+            globalGridUrlError.classList.remove('hidden');
+            setGlobalGridUrlSavedBadge(false);
+        } finally {
+            saveGlobalGridUrlButton.disabled = false;
+        }
+    });
+
+    function switchAdminTab(tab) {
+        const sections = { projects: projectsSection, users: usersSection, ldap: ldapSection };
+        const tabButtons = { projects: tabProjectsButton, users: tabUsersButton, ldap: tabLdapButton };
+
+        Object.keys(sections).forEach((key) => {
+            const isActive = key === tab;
+
+            sections[key].classList.toggle('hidden', !isActive);
+            sections[key].classList.toggle('flex', isActive);
+
+            tabButtons[key].classList.toggle('text-on-surface', isActive);
+            tabButtons[key].classList.toggle('text-on-surface-variant', !isActive);
+            tabButtons[key].classList.toggle('border-primary', isActive);
+            tabButtons[key].classList.toggle('border-transparent', !isActive);
+        });
+
+        if (tab === 'users' && !usersLoadedOnce) {
+            void loadAdminUsers();
+        }
+        if (tab === 'ldap' && !ldapLoadedOnce) {
+            void loadLdapConfig();
+        }
+    }
+
+    tabProjectsButton.addEventListener('click', () => switchAdminTab('projects'));
+    tabUsersButton.addEventListener('click', () => switchAdminTab('users'));
+    tabLdapButton.addEventListener('click', () => switchAdminTab('ldap'));
+
+    // Sayfa yüklenince mevcut bir oturum var mı diye kontrol et — varsa doğrudan içeriği göster,
+    // yoksa login formunda kal.
+    try {
+        const meResponse = await fetch('/api/auth/me');
+
+        if (meResponse.ok) {
+            const meResult = await meResponse.json();
+            showPanelContent(meResult.user);
+            await loadAdminProjects();
+            void loadGlobalGridUrl(); // sekmelerden bağımsız, her zaman görünen alan (bkz. yukarısı) — await beklemeden paralel yüklenebilir.
+        } else {
+            showLoginGate();
+        }
+    } catch (error) {
+        console.error(error);
+        showLoginGate();
+    }
+}
+
+
+/* =========================================================
    SETTINGS
 ========================================================= */
 
@@ -9015,6 +10051,17 @@ reportsMenu.addEventListener(
 );
 
 
+adminPanelMenu.addEventListener(
+    'click',
+    (event) => {
+
+        event.preventDefault();
+
+        navigateTo('admin');
+    },
+);
+
+
 /* =========================================================
    SETTINGS MENU
 ========================================================= */
@@ -9047,16 +10094,105 @@ helpButton.addEventListener(
 
 
 /* =========================================================
-   APPLICATION START
+   APP LOGIN GATE
+   ------------------------------------------------------
+   v3.0 Faz 2.1 — uygulama başlamadan ÖNCE (navigateTo('dashboard') çağrılmadan önce) oturum
+   kontrol edilir. Giriş yoksa TÜM app (sidebar dahil) #appLoginGate'in ARKASINDA kalır — normal
+   uygulama başlatma (startApp()) sadece giriş başarılı olduktan SONRA çalışır.
 ========================================================= */
 
-navigateTo('dashboard');
+function hideAppLoginGate() {
+    appLoginGate.classList.add('hidden');
+}
 
-// Header rozeti sayfa açılışında hemen kontrol edilir, ardından kullanıcı hangi sayfada
-// olursa olsun backend durumu güncel kalsın diye periyodik olarak tazelenir.
-void refreshHeaderEngineStatus();
+function showAppLoginGate() {
+    appLoginGate.classList.remove('hidden');
+    appLoginPasswordInput.value = '';
+}
 
-setInterval(
-    refreshHeaderEngineStatus,
-    30000,
-);
+// v3.0 Faz 5.2 — TEK global Logout butonu (bkz. index.html USER CARD NOT'u — eski logout butonu
+// sadece admin-panel.html içindeydi, MEMBER kullanıcılar o sayfayı artık hiç görmediği için
+// buraya, sidebar'a taşındı/eklendi). admin-panel.html'nin KENDİ logout butonu (adminLogoutButton)
+// hâlâ duruyor — admin kullanıcılar için zararsız bir tekrar, kaldırmaya gerek yok.
+sidebarLogoutButton.addEventListener('click', async () => {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (error) {
+        console.error(error);
+    }
+    applyLoggedInUser(null);
+    appLoginUsernameInput.value = '';
+    showAppLoginGate();
+});
+
+function startApp() {
+    navigateTo('dashboard');
+
+    // Header rozeti sayfa açılışında hemen kontrol edilir, ardından kullanıcı hangi sayfada
+    // olursa olsun backend durumu güncel kalsın diye periyodik olarak tazelenir.
+    void refreshHeaderEngineStatus();
+
+    setInterval(
+        refreshHeaderEngineStatus,
+        30000,
+    );
+}
+
+appLoginForm.addEventListener('submit', async (event) => {
+
+    event.preventDefault();
+
+    appLoginError.classList.add('hidden');
+    appLoginError.textContent = '';
+    appLoginSubmitButton.disabled = true;
+
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: appLoginUsernameInput.value.trim(),
+                password: appLoginPasswordInput.value,
+            }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error?.message || 'Sign in failed.');
+        }
+
+        applyLoggedInUser(result.user);
+        hideAppLoginGate();
+        startApp();
+
+    } catch (error) {
+        console.error(error);
+        appLoginError.textContent = error instanceof Error ? error.message : 'Sign in failed.';
+        appLoginError.classList.remove('hidden');
+    } finally {
+        appLoginSubmitButton.disabled = false;
+    }
+});
+
+// Sayfa yüklenince mevcut bir oturum var mı diye kontrol et — varsa login gate'i hiç göstermeden
+// doğrudan uygulamayı başlat, yoksa kullanıcı login formunda kalır (gate zaten varsayılan olarak
+// görünür, bkz. index.html).
+(async function checkAppAuth() {
+    try {
+        const response = await fetch('/api/auth/me');
+
+        if (response.ok) {
+            const result = await response.json();
+            applyLoggedInUser(result.user);
+            hideAppLoginGate();
+            startApp();
+        }
+        // response.ok DEĞİLSE hiçbir şey yapma — gate zaten görünür durumda, kullanıcı login
+        // formunu dolduracak.
+    } catch (error) {
+        console.error(error);
+        // Backend'e hiç ulaşılamıyorsa da (ör. sunucu henüz ayağa kalkmadı) gate görünür kalır —
+        // en azından kullanıcı boş/bozuk bir sayfa yerine anlamlı bir ekranla karşılaşır.
+    }
+})();

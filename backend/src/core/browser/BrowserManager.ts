@@ -3,6 +3,7 @@ import type { RunOptions } from '../../domain/types.js';
 import { env } from '../../config/env.js';
 import { SeleniumGridError } from '../../domain/errors.js';
 import { SeleniumGridClient } from './SeleniumGridClient.js';
+import { getGlobalSettings } from '../../db/globalSettingsStore.js';
 import { createLogger } from '../../config/logger.js';
 
 const log = createLogger('BrowserManager');
@@ -97,19 +98,52 @@ export class BrowserManager {
       );
     }
 
-    if (!env.SELENIUM_GRID_URL) {
-      throw new SeleniumGridError(
-        'Selenium Grid istendi ama SELENIUM_GRID_URL .env dosyasında tanımlı değil. Grid hub adresini ' +
-          '.env dosyasına ekleyip backend\'i yeniden başlatın.',
-      );
-    }
+    const gridUrl = await this.resolveGridUrl();
 
-    this.gridClient = new SeleniumGridClient(env.SELENIUM_GRID_URL);
+    this.gridClient = new SeleniumGridClient(gridUrl);
     const session = await this.gridClient.createSession();
     this.gridSessionId = session.sessionId;
     this.gridLiveViewUrl = session.liveViewUrl ?? null;
 
     return await chromium.connectOverCDP(session.cdpUrl);
+  }
+
+  /**
+   * v3.0 Faz 5 — hangi Grid hub'ına bağlanılacağını belirler. ÖNCELİK SIRASI:
+   *   1) Admin Panel'den ayarlanan global Grid URL (Oracle yapılandırılmışsa VE bir değer
+   *      kaydedilmişse) — backend'i yeniden başlatmadan değiştirilebilir, bu yüzden ÖNCELİKLİDİR.
+   *   2) .env dosyasındaki SELENIUM_GRID_URL — GERİYE DÖNÜK UYUMLULUK: Oracle/admin panel HİÇ
+   *      kullanılmıyorsa (ya da DB'de henüz hiç ayar kaydedilmemişse) bu değer kullanılır.
+   *
+   * NEDEN eskiden (Faz 1) eklenen PROJECTS.GRID_URL sütunu BURADA KULLANILMIYOR: sohbette fark
+   * edildi ki o alan hiçbir zaman run yürütme koduna bağlanmamıştı (admin panelde saklanıyordu ama
+   * okunmuyordu) — kullanıcı proje bazlı yerine TEK/sabit bir Grid URL istedi, bu yüzden proje
+   * bazlı alan KALDIRILDI (bkz. adminProjects.ts/projectStore.ts dosya başı NOT'ları), yerine bu
+   * TEK global ayar geçti.
+   *
+   * DB okuma HATA VERİRSE (ör. geçici bağlantı sorunu) run'ı ÇÖKERTMEMEK için sessizce .env
+   * değerine düşülür — bu metodun TEK amacı hangi hub'a bağlanılacağını bulmak, burada oluşan bir
+   * hata run'ı BAŞLAMADAN engellemesin.
+   */
+  private async resolveGridUrl(): Promise<string> {
+    if (env.ORACLE_DB_HOST) {
+      try {
+        const settings = await getGlobalSettings();
+        if (settings?.gridUrl) {
+          return settings.gridUrl;
+        }
+      } catch (err) {
+        log.warn({ err }, 'Global Grid URL ayarı (Admin Panel) okunamadı, .env değerine düşülüyor');
+      }
+    }
+
+    if (!env.SELENIUM_GRID_URL) {
+      throw new SeleniumGridError(
+        'Selenium Grid istendi ama hiçbir Grid URL yapılandırılmamış (ne Admin Panel\'de ne .env\'de). ' +
+          'Admin Panel\'den (Oracle yapılandırılmışsa) ya da .env dosyasındaki SELENIUM_GRID_URL ile ayarlayın.',
+      );
+    }
+    return env.SELENIUM_GRID_URL;
   }
 
   /** v2.2 — bkz. gridLiveViewUrl dosya başı açıklaması. Grid kullanılmıyorsa (ya da eşleme yoksa) `null`. */

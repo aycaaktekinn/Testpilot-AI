@@ -301,6 +301,104 @@
 
 
 <!-- ======================================================
+     APP LOGIN GATE — v3.0 Faz 2.1. SİTE GENELİ giriş zorunluluğu: bu katman uygulamanın geri
+     kalanının (sidebar + sayfa içeriği) ÜZERİNDE durur ve varsayılan olarak GÖRÜNÜRDÜR — app.js
+     sayfa yüklenir yüklenmez GET /api/auth/me ile oturum kontrol eder; giriş VARSA bu katman
+     gizlenir, YOKSA burada kalınır (bkz. app.js dosya sonundaki checkAppAuth()). Admin Panel'in
+     KENDİ içindeki login formundan (#adminLoginSection) FARKLIDIR — o SADECE admin panel
+     sayfasını korurdu (Faz 2), bu ise TÜM uygulamayı korur (Faz 2.1).
+====================================================== -->
+<div
+        id="appLoginGate"
+        class="fixed inset-0 z-[200]
+               flex items-center justify-center
+               bg-background
+               px-4"
+>
+    <div
+            class="w-full max-w-sm
+                   bg-surface-container
+                   border border-outline-variant
+                   rounded-xl
+                   p-6
+                   flex flex-col gap-4"
+    >
+        <div class="flex flex-col gap-1 items-center text-center mb-2">
+            <span class="material-symbols-outlined text-primary text-[32px]">terminal</span>
+            <h2 class="font-headline-sm text-headline-sm text-on-surface">TestPilot AI</h2>
+            <p class="font-body-sm text-body-sm text-on-surface-variant">
+                Sign in to continue.
+            </p>
+        </div>
+
+        <form id="appLoginForm" class="flex flex-col gap-3">
+
+            <div class="flex flex-col gap-1">
+                <label for="appLoginUsername" class="font-label-caps text-label-caps text-on-surface-variant">
+                    Username
+                </label>
+                <input
+                        id="appLoginUsername"
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-xs
+                               text-body-md text-on-surface
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none"
+                        type="text"
+                        autocomplete="username"
+                        required
+                />
+            </div>
+
+            <div class="flex flex-col gap-1">
+                <label for="appLoginPassword" class="font-label-caps text-label-caps text-on-surface-variant">
+                    Password
+                </label>
+                <input
+                        id="appLoginPassword"
+                        class="w-full
+                               bg-[#0F172A]
+                               border border-[#334155]
+                               rounded-lg
+                               px-sm py-xs
+                               text-body-md text-on-surface
+                               focus:border-primary-container
+                               focus:ring-2
+                               focus:ring-primary-container/20
+                               transition-all
+                               outline-none"
+                        type="password"
+                        autocomplete="current-password"
+                        required
+                />
+            </div>
+
+            <div id="appLoginError" class="hidden font-body-sm text-body-sm text-error"></div>
+
+            <button
+                    id="appLoginSubmitButton"
+                    class="mt-1
+                           px-4 py-2 rounded-lg
+                           bg-primary-container
+                           hover:bg-primary-container/80
+                           text-on-primary-container
+                           transition-colors"
+                    type="submit"
+            >
+                Sign In
+            </button>
+        </form>
+    </div>
+</div>
+
+
+<!-- ======================================================
      SIDEBAR
      ------------------------------------------------------
      MOBİL: md breakpoint'in (768px) altında bu artık `hidden` DEĞİL — her zaman flex, ama
@@ -578,6 +676,44 @@
 
         </li>
 
+
+        <!-- ADMIN PANEL — v3.0. Projects/Grid URL/paralel koşum/LLM model yönetimi (bkz.
+             pages/admin-panel.html). v3.0 Faz 5.2 — bu menü öğesi artık normal (MEMBER)
+             kullanıcılardan GİZLENİYOR (bkz. app.js applyLoggedInUser) — SADECE ADMIN
+             rolündeki kullanıcılar görür. class="hidden" başlangıç/varsayılan durumdur (rol henüz
+             bilinmezken flaş görünmesin diye) — checkAppAuth()/login sonrası gerçek role göre
+             açılır/kapalı kalır. -->
+        <li id="adminPanelMenuItem" class="hidden">
+
+            <a
+                    id="adminPanelMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    admin_panel_settings
+                </span>
+
+                Admin Panel
+
+            </a>
+
+        </li>
+
     </ul>
 
 
@@ -616,7 +752,13 @@
         </a>
 
 
-        <!-- USER CARD -->
+        <!-- USER CARD — v3.0 Faz 5.2 — eskiden sabit/statik "Dev User" / "QA Engineer" placeholder'ıydı
+             (auth sistemi henüz yokken kalmış). Artık GERÇEK giriş yapmış kullanıcıyı gösterir VE
+             bir Logout butonu içerir — bu, TÜM kullanıcılar (MEMBER dahil) için siteden çıkış
+             yapabilecekleri TEK yer haline geldi (eski logout butonu sadece admin-panel.html
+             içindeydi, MEMBER kullanıcılar artık o sayfayı hiç görmüyor — bkz. app.js
+             applyLoggedInUser). Metinler sayfa yüklenince/login sonrası app.js tarafından
+             doldurulur (bkz. applyLoggedInUser ve çevresindeki kod). -->
         <div
                 class="mt-4
                        px-md py-3
@@ -628,6 +770,7 @@
         >
 
             <div
+                    id="sidebarUserInitial"
                     class="w-8 h-8
                            rounded-full
                            bg-primary/20
@@ -636,32 +779,50 @@
                            text-primary
                            font-bold"
             >
-                QA
+                ?
             </div>
 
 
             <div
-                    class="flex flex-col"
+                    class="flex flex-col flex-1 min-w-0"
             >
 
                 <span
+                        id="sidebarUsername"
                         class="font-body-sm
                                text-body-sm
                                text-on-surface
-                               font-semibold"
+                               font-semibold
+                               truncate"
                 >
-                    Dev User
+                    —
                 </span>
 
                 <span
+                        id="sidebarUserRole"
                         class="font-label-caps
                                text-label-caps
                                text-on-surface-variant"
                 >
-                    QA Engineer
+                    &nbsp;
                 </span>
 
             </div>
+
+            <button
+                    id="sidebarLogoutButton"
+                    class="text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant
+                           p-2 rounded-lg
+                           transition-colors
+                           shrink-0"
+                    type="button"
+                    title="Logout"
+                    aria-label="Logout"
+            >
+                <span class="material-symbols-outlined text-[18px]">logout</span>
+            </button>
 
         </div>
 

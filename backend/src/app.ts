@@ -8,6 +8,12 @@ import { legacyTestsRouter } from './api/routes/legacyTests.js';
 import { settingsRouter } from './api/routes/settings.js';
 import { scenariosRouter } from './api/routes/scenarios.js';
 import { allureRouter } from './api/routes/allure.js';
+import { adminProjectsRouter } from './api/routes/adminProjects.js';
+import { adminUsersRouter } from './api/routes/adminUsers.js';
+import { adminLdapRouter } from './api/routes/adminLdap.js';
+import { adminSettingsRouter } from './api/routes/adminSettings.js';
+import { authRouter } from './api/routes/auth.js';
+import { requireAuth } from './api/middleware/requireAuth.js';
 import { errorHandler } from './api/middleware/errorHandler.js';
 import { env } from './config/env.js';
 import { createLogger } from './config/logger.js';
@@ -24,8 +30,20 @@ export function createApp() {
   // döndürdüğü "/artifacts/<runId>/..." URL'leri doğrudan bu klasöre eşlenir.
   app.use('/artifacts', express.static(path.resolve(env.ARTIFACTS_DIR)));
 
-  // Yeni, generic, runId+WebSocket tabanlı API.
+  // v3.0 Faz 2.1 — login/logout/me. requireAuth İLE KORUNMAZ (bilerek) — aksi halde giriş
+  // yapmadan önce "giriş yap" isteğinin kendisi 401 dönerdi. healthRouter da bilinçli olarak
+  // AÇIK bırakıldı (izleme/health-check araçları genelde kimlik doğrulamasız çalışır).
+  app.use('/api', authRouter);
   app.use('/api', healthRouter);
+
+  // v3.0 Faz 2.1 — SİTE GENELİ GİRİŞ ZORUNLULUĞU: bu satırdan sonraki tüm /api router'ları
+  // requireAuth arkasına alındı (bkz. requireAuth.ts dosya başı NOT). Rol farkı GÖZETMEZ — hem
+  // admin hem member buradan geçer; proje bazlı görünürlük/izin Faz 4'te eklenecek. NOT — bu,
+  // Oracle'ı artık FİİLEN zorunlu kılar: Oracle yapılandırılmadan hiç kimse login OLAMAZ (bkz.
+  // auth.ts /auth/login 503'ü), dolayısıyla requireAuth'tan hiçbir istek geçemez.
+  app.use('/api', requireAuth);
+
+  // Yeni, generic, runId+WebSocket tabanlı API.
   app.use('/api', runsRouter);
 
   // Mevcut (korunan) frontend'in beklediği eski API sözleşmesi — bkz. LegacyTestService.
@@ -39,6 +57,24 @@ export function createApp() {
 
   // Allure raporu üretme/durum sorgulama uç noktaları (bkz. AllureReportService).
   app.use('/api', allureRouter);
+
+  // v3.0 — Admin Panel / Project CRUD (Faz 1) + Faz 2: requireAdmin ile korunuyor. Sıralama
+  // BİLİNÇLİ: Oracle-yapılandırılmadı kontrolü requireAdmin'DEN ÖNCE, router'ın KENDİ İÇİNDE
+  // çalışır (bkz. adminProjects.ts dosya başı NOT) — böylece Oracle kapalıyken kullanıcı "giriş
+  // yapmalısın" yerine daha doğru olan "veritabanı yapılandırılmamış" mesajını görür.
+  app.use('/api', adminProjectsRouter);
+
+  // v3.0 Faz 2.2 — Admin Panel "Users" sekmesi (listele + rol değiştir). AYNI requireAdmin
+  // deseni (kendi router'ının İÇİNDE, bkz. adminUsers.ts dosya başı NOT).
+  app.use('/api', adminUsersRouter);
+
+  // v3.0 Faz 2.3 — Admin Panel "LDAP" sekmesi (yapılandırmayı oku/kaydet). Gerçek LDAP BIND
+  // doğrulaması BURADA YOK — sadece yapılandırma CRUD'u (bkz. adminLdap.ts dosya başı NOT).
+  app.use('/api', adminLdapRouter);
+
+  // v3.0 Faz 5 — Admin Panel'deki sabit/global Grid URL ayarı (bkz. adminSettings.ts dosya başı
+  // NOT). AYNI requireAdmin deseni (kendi router'ının İÇİNDE).
+  app.use('/api', adminSettingsRouter);
 
   // Üretilmiş Allure raporu (statik HTML) — "Generate Report" çalıştırılana kadar bu klasör boş
   // olabilir, o durumda Express doğal olarak 404 döner (frontend bunu /api/allure/status ile

@@ -1,0 +1,1076 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full gap-lg">
+
+    <!-- LOGIN GATE — v3.0 Faz 2. Sayfa yüklenince app.js önce GET /api/auth/me ile giriş
+         durumunu kontrol eder; giriş yapılmamışsa SADECE bu bölüm görünür, aşağıdaki
+         #adminPanelContent tamamen gizli kalır (bkz. initAdminPanelPage()). -->
+    <div
+            id="adminLoginSection"
+            class="hidden
+                   flex-1 flex items-center justify-center"
+    >
+        <div
+                class="w-full max-w-sm
+                       bg-surface-container
+                       border border-outline-variant
+                       rounded-xl
+                       p-6
+                       flex flex-col gap-4"
+        >
+            <div class="flex flex-col gap-1 items-center text-center mb-2">
+                <span class="material-symbols-outlined text-primary text-[32px]">admin_panel_settings</span>
+                <h2 class="font-headline-sm text-headline-sm text-on-surface">Admin Sign In</h2>
+                <p class="font-body-sm text-body-sm text-on-surface-variant">
+                    This area is restricted to admin accounts.
+                </p>
+            </div>
+
+            <form id="adminLoginForm" class="flex flex-col gap-3">
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="adminLoginUsername"
+                            class="font-label-caps text-label-caps text-on-surface-variant"
+                    >
+                        Username
+                    </label>
+                    <input
+                            id="adminLoginUsername"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-xs
+                                   text-body-md text-on-surface
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            type="text"
+                            autocomplete="username"
+                            required
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="adminLoginPassword"
+                            class="font-label-caps text-label-caps text-on-surface-variant"
+                    >
+                        Password
+                    </label>
+                    <input
+                            id="adminLoginPassword"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-xs
+                                   text-body-md text-on-surface
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            type="password"
+                            autocomplete="current-password"
+                            required
+                    />
+                </div>
+
+                <div
+                        id="adminLoginError"
+                        class="hidden font-body-sm text-body-sm text-error"
+                ></div>
+
+                <button
+                        id="adminLoginSubmitButton"
+                        class="mt-1
+                               px-4 py-2 rounded-lg
+                               bg-primary-container
+                               hover:bg-primary-container/80
+                               text-on-primary-container
+                               transition-colors"
+                        type="submit"
+                >
+                    Sign In
+                </button>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- ADMIN PANEL CONTENT — sadece giriş yapılmışsa görünür (bkz. yukarıdaki NOT). -->
+    <div id="adminPanelContent" class="hidden flex-1 flex flex-col gap-lg">
+
+    <!-- PAGE HEADER -->
+    <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-md">
+
+        <div class="flex flex-col gap-base">
+            <h1 class="font-display-lg text-display-lg text-on-surface tracking-tight">
+                Admin Panel
+            </h1>
+
+            <p class="font-body-lg text-body-lg text-on-surface-variant">
+                Manage projects — parallel run limit and LLM model are set per project.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+
+            <!-- LOGGED IN AS — v3.0 Faz 2. -->
+            <span
+                    id="adminLoggedInAs"
+                    class="hidden md:inline
+                           font-body-sm text-body-sm
+                           text-on-surface-variant
+                           mr-2"
+            ></span>
+
+            <button
+                    id="adminLogoutButton"
+                    class="flex items-center gap-2
+                           px-4 py-2 rounded-lg
+                           border border-outline-variant
+                           text-on-surface-variant
+                           hover:text-error
+                           hover:border-error/40
+                           hover:bg-error/10
+                           transition-colors"
+                    type="button"
+            >
+                <span class="material-symbols-outlined text-[18px]">logout</span>
+                Logout
+            </button>
+
+        </div>
+
+    </div>
+
+
+    <!-- GLOBAL GRID URL — v3.0 Faz 5. BİLİNÇLİ OLARAK ayrı bir sekme/sayfa DEĞİL, sekmelerin
+         (Projects|Users|LDAP) ÜSTÜNDE her zaman görünen tek bir alan (bkz. sohbet notu — proje
+         bazlı Grid URL alanı kaldırıldı, bunun YERİNE tüm sistem için TEK bir Grid URL). -->
+    <div
+            class="flex flex-col sm:flex-row sm:items-end gap-3
+                   bg-surface border border-outline-variant
+                   rounded-xl px-4 py-3"
+    >
+        <div class="flex-1 flex flex-col gap-1">
+            <label for="adminGlobalGridUrl" class="font-label-caps text-label-caps text-on-surface-variant">
+                Grid URL (all projects)
+            </label>
+            <input
+                    id="adminGlobalGridUrl"
+                    class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                           text-body-md text-on-surface focus:border-primary-container
+                           focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                    type="text"
+                    placeholder="http://localhost:4444"
+            />
+        </div>
+        <span
+                id="adminGlobalGridUrlSavedBadge"
+                class="hidden items-center gap-1 font-body-sm text-body-sm text-primary whitespace-nowrap pb-2.5"
+        >
+            ✓ Kaydedildi
+        </span>
+        <button
+                id="saveAdminGlobalGridUrlButton"
+                class="px-4 py-2 rounded-lg
+                       bg-primary-container
+                       hover:bg-primary-container/80
+                       text-on-primary-container
+                       transition-colors
+                       whitespace-nowrap"
+                type="button"
+        >
+            Save
+        </button>
+    </div>
+    <div
+            id="adminGlobalGridUrlError"
+            class="hidden font-body-sm text-body-sm text-error"
+    ></div>
+
+
+    <!-- TABS — v3.0 Faz 2.2/2.3. Projects | Users | LDAP. app.js switchAdminTab() görünürlüğü
+         toggler, veri sadece ilgili sekmeye ilk geçildiğinde yüklenir (bkz. dosya sonundaki tab
+         mantığı). -->
+    <div class="flex items-center gap-1 border-b border-outline-variant">
+        <button
+                id="adminTabProjectsButton"
+                class="adminTabButton
+                       px-4 py-2
+                       font-body-md text-body-md
+                       text-on-surface
+                       border-b-2 border-primary
+                       -mb-px"
+                type="button"
+        >
+            Projects
+        </button>
+        <button
+                id="adminTabUsersButton"
+                class="adminTabButton
+                       px-4 py-2
+                       font-body-md text-body-md
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       border-b-2 border-transparent
+                       -mb-px
+                       transition-colors"
+                type="button"
+        >
+            Users
+        </button>
+        <button
+                id="adminTabLdapButton"
+                class="adminTabButton
+                       px-4 py-2
+                       font-body-md text-body-md
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       border-b-2 border-transparent
+                       -mb-px
+                       transition-colors"
+                type="button"
+        >
+            LDAP
+        </button>
+    </div>
+
+
+    <!-- Oracle katmanı yapılandırılmamışsa (ORACLE_DB_HOST boşsa) burada gösterilecek uyarı —
+         her iki sekmede de anlamlı olduğu için tab section'ların DIŞINDA, ortak. -->
+    <div
+            id="adminOracleNotConfigured"
+            class="hidden
+                   flex items-start gap-3
+                   bg-error/5 border border-error/20
+                   rounded-lg px-4 py-3
+                   text-on-surface-variant"
+    >
+        <span class="material-symbols-outlined text-error text-[20px]">database_off</span>
+        <div class="font-body-sm text-body-sm">
+            Oracle veritabanı henüz yapılandırılmamış (backend <code>.env</code> dosyasında
+            <code>ORACLE_DB_HOST</code> eksik). Admin panel bu bağlantı olmadan çalışamaz.
+        </div>
+    </div>
+
+
+    <!-- ============================ PROJECTS TAB ============================ -->
+    <div id="adminProjectsSection" class="flex flex-col gap-lg">
+
+    <div class="flex justify-end gap-2">
+        <button
+                id="refreshProjectsButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-container-high
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">refresh</span>
+            Refresh
+        </button>
+
+        <button
+                id="newProjectButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       bg-primary-container
+                       hover:bg-primary-container/80
+                       text-on-primary-container
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">add</span>
+            New Project
+        </button>
+    </div>
+
+
+    <!-- DATA TABLE CARD -->
+    <div
+            class="bg-surface
+                   border border-outline-variant
+                   rounded-xl
+                   flex flex-col flex-1
+                   overflow-hidden
+                   shadow-[0_4px_20px_-10px_rgba(0,0,0,0.5)]"
+    >
+
+        <div class="overflow-x-auto">
+
+            <table class="w-full text-left border-collapse">
+
+                <thead
+                        class="bg-surface-container-highest
+                               border-b border-outline-variant
+                               font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+                <tr>
+                    <th class="px-md py-sm font-semibold">Project</th>
+                    <th class="px-md py-sm font-semibold">Max Parallel Runs</th>
+                    <th class="px-md py-sm font-semibold">LLM Model</th>
+                    <th class="px-md py-sm font-semibold">Created</th>
+                    <th class="px-md py-sm font-semibold text-right">Actions</th>
+                </tr>
+                </thead>
+
+                <tbody
+                        id="adminProjectsTableBody"
+                        class="font-body-md text-body-md
+                               divide-y divide-outline-variant/30"
+                >
+                <!-- REAL DATA WILL BE INSERTED HERE -->
+                </tbody>
+
+            </table>
+
+        </div>
+
+
+        <!-- EMPTY STATE -->
+        <div
+                id="adminProjectsEmptyState"
+                class="hidden
+                       flex flex-col items-center
+                       justify-center
+                       py-16 px-4
+                       text-center
+                       text-on-surface-variant"
+        >
+            <span class="material-symbols-outlined text-[42px] mb-3 opacity-60">folder_open</span>
+
+            <h3 class="font-headline-sm text-headline-sm text-on-surface">
+                No projects yet
+            </h3>
+
+            <p class="font-body-sm text-body-sm mt-1 max-w-md">
+                Create your first project to set its parallel run limit and LLM model.
+            </p>
+        </div>
+
+
+        <!-- LOADING STATE -->
+        <div
+                id="adminProjectsLoadingState"
+                class="flex items-center justify-center
+                       py-16 px-4
+                       text-on-surface-variant
+                       font-body-sm text-body-sm"
+        >
+            Loading projects...
+        </div>
+
+    </div>
+
+
+    <!-- PROJECT CREATE/EDIT MODAL — hem "New Project" hem "Edit" AYNI modalı, formu boş/dolu
+         doldurarak kullanır (bkz. app.js openProjectModal(project)). -->
+    <div
+            id="adminProjectModal"
+            class="fixed inset-0 z-[100]
+                   hidden items-center justify-center
+                   bg-black/60 backdrop-blur-sm
+                   px-4"
+    >
+        <div
+                class="w-full max-w-lg
+                       bg-surface-container
+                       border border-outline-variant
+                       rounded-xl
+                       shadow-2xl
+                       overflow-hidden"
+        >
+            <!-- HEADER -->
+            <div
+                    class="flex items-center justify-between
+                           px-5 py-4
+                           border-b border-outline-variant
+                           bg-surface-container-high"
+            >
+                <h3
+                        id="adminProjectModalTitle"
+                        class="font-headline-sm text-headline-sm text-on-surface"
+                >
+                    New Project
+                </h3>
+
+                <button
+                        id="closeAdminProjectModal"
+                        class="text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant
+                               p-2 rounded-lg
+                               transition-colors"
+                        type="button"
+                        aria-label="Close"
+                >
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <!-- FORM -->
+            <form id="adminProjectForm" class="p-5 flex flex-col gap-4">
+
+                <input type="hidden" id="adminProjectId" value="" />
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="adminProjectName"
+                            class="font-label-caps text-label-caps text-on-surface-variant"
+                    >
+                        Project Name *
+                    </label>
+                    <input
+                            id="adminProjectName"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-xs
+                                   text-body-md text-on-surface
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            type="text"
+                            maxlength="200"
+                            placeholder="ör. Checkout Regression"
+                            required
+                    />
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+
+                    <div class="flex flex-col gap-1">
+                        <label
+                                for="adminProjectMaxParallel"
+                                class="font-label-caps text-label-caps text-on-surface-variant"
+                        >
+                            Max Parallel Runs
+                        </label>
+                        <input
+                                id="adminProjectMaxParallel"
+                                class="w-full
+                                       bg-[#0F172A]
+                                       border border-[#334155]
+                                       rounded-lg
+                                       px-sm py-xs
+                                       text-body-md text-on-surface
+                                       focus:border-primary-container
+                                       focus:ring-2
+                                       focus:ring-primary-container/20
+                                       transition-all
+                                       outline-none"
+                                type="number"
+                                min="1"
+                                step="1"
+                                placeholder="ör. 3"
+                        />
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label
+                                for="adminProjectLlmModel"
+                                class="font-label-caps text-label-caps text-on-surface-variant"
+                        >
+                            LLM Model
+                        </label>
+                        <input
+                                id="adminProjectLlmModel"
+                                class="w-full
+                                       bg-[#0F172A]
+                                       border border-[#334155]
+                                       rounded-lg
+                                       px-sm py-xs
+                                       text-body-md text-on-surface
+                                       focus:border-primary-container
+                                       focus:ring-2
+                                       focus:ring-primary-container/20
+                                       transition-all
+                                       outline-none"
+                                type="text"
+                                maxlength="200"
+                                placeholder="ör. meta-llama/llama-3.3-70b-instruct:free"
+                        />
+                    </div>
+
+                </div>
+
+                <div
+                        id="adminProjectFormError"
+                        class="hidden font-body-sm text-body-sm text-error"
+                ></div>
+
+                <!-- FOOTER -->
+                <div class="flex justify-end gap-2 pt-2">
+                    <button
+                            id="cancelAdminProjectModal"
+                            class="px-4 py-2 rounded-lg
+                                   border border-outline-variant
+                                   text-on-surface-variant
+                                   hover:bg-surface-container-high
+                                   transition-colors"
+                            type="button"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                            id="saveAdminProjectButton"
+                            class="px-4 py-2 rounded-lg
+                                   bg-primary-container
+                                   hover:bg-primary-container/80
+                                   text-on-primary-container
+                                   transition-colors"
+                            type="submit"
+                    >
+                        Save
+                    </button>
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+    </div>
+    <!-- /adminProjectsSection -->
+
+
+    <!-- ============================ USERS TAB ============================ -->
+    <div id="adminUsersSection" class="hidden flex-col gap-lg">
+
+    <div class="flex justify-end gap-2">
+        <button
+                id="refreshUsersButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-container-high
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">refresh</span>
+            Refresh
+        </button>
+
+        <button
+                id="newUserButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       bg-primary-container
+                       hover:bg-primary-container/80
+                       text-on-primary-container
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">add</span>
+            Add User
+        </button>
+    </div>
+
+
+    <!-- DATA TABLE CARD -->
+    <div
+            class="bg-surface
+                   border border-outline-variant
+                   rounded-xl
+                   flex flex-col flex-1
+                   overflow-hidden
+                   shadow-[0_4px_20px_-10px_rgba(0,0,0,0.5)]"
+    >
+
+        <div class="overflow-x-auto">
+
+            <table class="w-full text-left border-collapse">
+
+                <thead
+                        class="bg-surface-container-highest
+                               border-b border-outline-variant
+                               font-label-caps text-label-caps
+                               text-on-surface-variant
+                               uppercase tracking-wider"
+                >
+                <tr>
+                    <th class="px-md py-sm font-semibold">Username</th>
+                    <th class="px-md py-sm font-semibold">Display Name</th>
+                    <th class="px-md py-sm font-semibold">Type</th>
+                    <th class="px-md py-sm font-semibold">Role</th>
+                    <th class="px-md py-sm font-semibold">Created</th>
+                    <th class="px-md py-sm font-semibold text-right">Actions</th>
+                </tr>
+                </thead>
+
+                <tbody
+                        id="adminUsersTableBody"
+                        class="font-body-md text-body-md
+                               divide-y divide-outline-variant/30"
+                >
+                <!-- REAL DATA WILL BE INSERTED HERE -->
+                </tbody>
+
+            </table>
+
+        </div>
+
+
+        <!-- EMPTY STATE -->
+        <div
+                id="adminUsersEmptyState"
+                class="hidden
+                       flex flex-col items-center
+                       justify-center
+                       py-16 px-4
+                       text-center
+                       text-on-surface-variant"
+        >
+            <span class="material-symbols-outlined text-[42px] mb-3 opacity-60">group_off</span>
+
+            <h3 class="font-headline-sm text-headline-sm text-on-surface">
+                No users yet
+            </h3>
+
+            <p class="font-body-sm text-body-sm mt-1 max-w-md">
+                Click "Add User" above to create a local user, or use <code>npm run create-admin</code>
+                from the terminal.
+            </p>
+        </div>
+
+
+        <!-- LOADING STATE -->
+        <div
+                id="adminUsersLoadingState"
+                class="hidden
+                       flex items-center justify-center
+                       py-16 px-4
+                       text-on-surface-variant
+                       font-body-sm text-body-sm"
+        >
+            Loading users...
+        </div>
+
+    </div>
+
+
+    <!-- ADD USER MODAL — v3.0 Faz 5.1. Sadece OLUŞTURMA için (bkz. sohbet notu "normal user
+         nereden ekleyeceğiz") — düzenleme YOK, mevcut kullanıcı için sadece rol değiştirme
+         (yukarıdaki toggleUserRoleButton) var, bu BİLİNÇLİ OLARAK ayrı tutuldu. Her zaman LOCAL
+         kullanıcı oluşturur — LDAP kullanıcıları buradan DEĞİL, ilk LDAP girişinde otomatik açılır. -->
+    <div
+            id="adminUserModal"
+            class="fixed inset-0 z-[100]
+                   hidden items-center justify-center
+                   bg-black/60 backdrop-blur-sm
+                   px-4"
+    >
+        <div
+                class="w-full max-w-lg
+                       bg-surface-container
+                       border border-outline-variant
+                       rounded-xl
+                       shadow-2xl
+                       overflow-hidden"
+        >
+            <!-- HEADER -->
+            <div
+                    class="flex items-center justify-between
+                           px-5 py-4
+                           border-b border-outline-variant
+                           bg-surface-container-high"
+            >
+                <h3 class="font-headline-sm text-headline-sm text-on-surface">
+                    Add User
+                </h3>
+
+                <button
+                        id="closeAdminUserModal"
+                        class="text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant
+                               p-2 rounded-lg
+                               transition-colors"
+                        type="button"
+                        aria-label="Close"
+                >
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <!-- FORM -->
+            <form id="adminUserForm" class="p-5 flex flex-col gap-4">
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="adminUserUsername"
+                            class="font-label-caps text-label-caps text-on-surface-variant"
+                    >
+                        Username *
+                    </label>
+                    <input
+                            id="adminUserUsername"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-xs
+                                   text-body-md text-on-surface
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            type="text"
+                            maxlength="100"
+                            placeholder="ör. ayca"
+                            required
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="adminUserDisplayName"
+                            class="font-label-caps text-label-caps text-on-surface-variant"
+                    >
+                        Display Name
+                    </label>
+                    <input
+                            id="adminUserDisplayName"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-xs
+                                   text-body-md text-on-surface
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            type="text"
+                            maxlength="200"
+                            placeholder="ör. Ayça Aktekin"
+                    />
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+
+                    <div class="flex flex-col gap-1">
+                        <label
+                                for="adminUserPassword"
+                                class="font-label-caps text-label-caps text-on-surface-variant"
+                        >
+                            Password *
+                        </label>
+                        <input
+                                id="adminUserPassword"
+                                class="w-full
+                                       bg-[#0F172A]
+                                       border border-[#334155]
+                                       rounded-lg
+                                       px-sm py-xs
+                                       text-body-md text-on-surface
+                                       focus:border-primary-container
+                                       focus:ring-2
+                                       focus:ring-primary-container/20
+                                       transition-all
+                                       outline-none"
+                                type="password"
+                                minlength="6"
+                                placeholder="En az 6 karakter"
+                                autocomplete="new-password"
+                                required
+                        />
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label
+                                for="adminUserRole"
+                                class="font-label-caps text-label-caps text-on-surface-variant"
+                        >
+                            Role
+                        </label>
+                        <select
+                                id="adminUserRole"
+                                class="w-full
+                                       bg-[#0F172A]
+                                       border border-[#334155]
+                                       rounded-lg
+                                       px-sm py-xs
+                                       text-body-md text-on-surface
+                                       focus:border-primary-container
+                                       focus:ring-2
+                                       focus:ring-primary-container/20
+                                       transition-all
+                                       outline-none"
+                        >
+                            <option value="MEMBER" selected>Member</option>
+                            <option value="ADMIN">Admin</option>
+                        </select>
+                    </div>
+
+                </div>
+
+                <div
+                        id="adminUserFormError"
+                        class="hidden font-body-sm text-body-sm text-error"
+                ></div>
+
+                <!-- FOOTER -->
+                <div class="flex justify-end gap-2 pt-2">
+                    <button
+                            id="cancelAdminUserModal"
+                            class="px-4 py-2 rounded-lg
+                                   border border-outline-variant
+                                   text-on-surface-variant
+                                   hover:bg-surface-container-high
+                                   transition-colors"
+                            type="button"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                            id="saveAdminUserButton"
+                            class="px-4 py-2 rounded-lg
+                                   bg-primary-container
+                                   hover:bg-primary-container/80
+                                   text-on-primary-container
+                                   transition-colors"
+                            type="submit"
+                    >
+                        Create User
+                    </button>
+                </div>
+
+            </form>
+
+        </div>
+    </div>
+
+    </div>
+    <!-- /adminUsersSection -->
+
+
+    <!-- ============================ LDAP TAB ============================ -->
+    <!-- v3.0 Faz 2.3 — sadece yapılandırmayı okur/kaydeder. Gerçek LDAP BIND doğrulaması (kullanıcı
+         girişinin buradaki bilgilerle gerçekten test edilmesi) BURADA YOK — Faz 2.4'te gelecek,
+         bu yüzden aşağıda bunu açıkça belirten bir bilgi notu var (bkz. #adminLdapInfoBanner). -->
+    <div id="adminLdapSection" class="hidden flex-col gap-lg">
+
+        <div
+                id="adminLdapInfoBanner"
+                class="flex items-start gap-3
+                       bg-primary/5 border border-primary/20
+                       rounded-lg px-4 py-3
+                       text-on-surface-variant"
+        >
+            <span class="material-symbols-outlined text-primary text-[20px]">info</span>
+            <div class="font-body-sm text-body-sm">
+                Bu ekran sadece LDAP bağlantı bilgilerini kaydeder. LDAP ile giriş yapma (gerçek
+                bağlantı testi) henüz bir sonraki adımda eklenecek.
+            </div>
+        </div>
+
+        <div
+                class="bg-surface
+                       border border-outline-variant
+                       rounded-xl
+                       flex flex-col
+                       overflow-hidden
+                       shadow-[0_4px_20px_-10px_rgba(0,0,0,0.5)]"
+        >
+
+            <form id="adminLdapForm" class="p-5 flex flex-col gap-4">
+
+                <div class="flex flex-col gap-1">
+                    <label for="adminLdapUrl" class="font-label-caps text-label-caps text-on-surface-variant">
+                        URL
+                    </label>
+                    <input
+                            id="adminLdapUrl"
+                            class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                   text-body-md text-on-surface focus:border-primary-container
+                                   focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                            type="text"
+                            placeholder="ldap://ldap.example.com:389"
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label for="adminLdapBaseDn" class="font-label-caps text-label-caps text-on-surface-variant">
+                        Base DN
+                    </label>
+                    <input
+                            id="adminLdapBaseDn"
+                            class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                   text-body-md text-on-surface focus:border-primary-container
+                                   focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                            type="text"
+                            placeholder="dc=example,dc=com"
+                    />
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+
+                    <div class="flex flex-col gap-1">
+                        <label for="adminLdapManagerDn" class="font-label-caps text-label-caps text-on-surface-variant">
+                            Manager DN
+                        </label>
+                        <input
+                                id="adminLdapManagerDn"
+                                class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                       text-body-md text-on-surface focus:border-primary-container
+                                       focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                                type="text"
+                                placeholder="cn=admin,dc=example,dc=com"
+                        />
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label for="adminLdapManagerPassword" class="font-label-caps text-label-caps text-on-surface-variant">
+                            Manager Password
+                        </label>
+                        <input
+                                id="adminLdapManagerPassword"
+                                class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                       text-body-md text-on-surface focus:border-primary-container
+                                       focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                                type="password"
+                                autocomplete="new-password"
+                                placeholder="••••••••"
+                        />
+                        <span id="adminLdapManagerPasswordHint" class="font-body-sm text-body-sm text-on-surface-variant">
+                            Henüz kayıtlı bir şifre yok.
+                        </span>
+                    </div>
+
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label for="adminLdapUserDnPattern" class="font-label-caps text-label-caps text-on-surface-variant">
+                        User DN Pattern
+                    </label>
+                    <input
+                            id="adminLdapUserDnPattern"
+                            class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                   text-body-md text-on-surface focus:border-primary-container
+                                   focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                            type="text"
+                            placeholder="uid={0},ou=people,dc=example,dc=com"
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label for="adminLdapUserSearchFilter" class="font-label-caps text-label-caps text-on-surface-variant">
+                        User Search Filter
+                    </label>
+                    <input
+                            id="adminLdapUserSearchFilter"
+                            class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                   text-body-md text-on-surface focus:border-primary-container
+                                   focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                            type="text"
+                            placeholder="(uid={0})"
+                    />
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+
+                    <div class="flex flex-col gap-1">
+                        <label for="adminLdapGroupSearchBase" class="font-label-caps text-label-caps text-on-surface-variant">
+                            Group Search Base
+                        </label>
+                        <input
+                                id="adminLdapGroupSearchBase"
+                                class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                       text-body-md text-on-surface focus:border-primary-container
+                                       focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                                type="text"
+                                placeholder="ou=groups,dc=example,dc=com"
+                        />
+                    </div>
+
+                    <div class="flex flex-col gap-1">
+                        <label for="adminLdapGroupSearchFilter" class="font-label-caps text-label-caps text-on-surface-variant">
+                            Group Search Filter
+                        </label>
+                        <input
+                                id="adminLdapGroupSearchFilter"
+                                class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                                       text-body-md text-on-surface focus:border-primary-container
+                                       focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                                type="text"
+                                placeholder="(member={0})"
+                        />
+                    </div>
+
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label for="adminLdapPasswordEncoderType" class="font-label-caps text-label-caps text-on-surface-variant">
+                        Password Encoder Type
+                    </label>
+                    <select
+                            id="adminLdapPasswordEncoderType"
+                            class="w-full bg-[#0F172A] border border-[#334155] text-on-surface text-sm
+                                   rounded-md px-2 py-2 focus:ring-1 focus:ring-primary"
+                    >
+                        <option value="NO">NO</option>
+                        <option value="PLAIN">PLAIN</option>
+                        <option value="SHA">SHA</option>
+                        <option value="LDAP_SHA">LDAP_SHA</option>
+                        <option value="MD4">MD4</option>
+                        <option value="MD5">MD5</option>
+                    </select>
+                </div>
+
+                <div
+                        id="adminLdapFormError"
+                        class="hidden font-body-sm text-body-sm text-error"
+                ></div>
+
+                <div
+                        id="adminLdapFormSuccess"
+                        class="hidden font-body-sm text-body-sm text-primary"
+                ></div>
+
+                <!-- FOOTER -->
+                <div class="flex justify-end gap-2 pt-2">
+                    <button
+                            id="saveAdminLdapButton"
+                            class="px-4 py-2 rounded-lg
+                                   bg-primary-container
+                                   hover:bg-primary-container/80
+                                   text-on-primary-container
+                                   transition-colors"
+                            type="submit"
+                    >
+                        Save
+                    </button>
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+    <!-- /adminLdapSection -->
+
+    </div>
+    <!-- /adminPanelContent -->
+
+</div>
