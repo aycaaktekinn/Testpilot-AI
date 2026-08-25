@@ -591,6 +591,39 @@ function initCreateTestPage() {
     const testNameInput =
         document.getElementById('testName');
 
+    // v3.0 Faz 6 — bkz. create-test.html "PROJECT" NOT: kullanıcı burada bir proje seçerse,
+    // backend'e LegacyGenerateAndRunInput.projectId olarak gönderilir ve bu run AYRICA (best-effort)
+    // Oracle veritabanına da (SCENARIOS + RUNS) yazılır. Boş bırakılırsa davranış eskisiyle aynıdır
+    // (sadece JSON dosyalarına kaydedilir).
+    const projectSelectInput =
+        document.getElementById('projectSelect');
+
+    // v3.0 Faz 6 — proje listesini bir kez, sayfa açılırken doldurur. Hata olursa sadece loglanır
+    // (bu alan OPSİYONEL — proje listesi yüklenemese bile Create Test sayfasının geri kalanı
+    // normal şekilde çalışmaya devam eder, bkz. GET /api/projects dosya başı NOT).
+    async function loadProjectsIntoSelect() {
+        if (!projectSelectInput) return;
+
+        try {
+            const response = await fetch('/api/projects');
+            if (!response.ok) return;
+
+            const result = await response.json();
+            const projects = result.projects || [];
+
+            for (const project of projects) {
+                const option = document.createElement('option');
+                option.value = String(project.id);
+                option.textContent = project.name;
+                projectSelectInput.appendChild(option);
+            }
+        } catch (error) {
+            console.error('Failed to load projects for Create Test page', error);
+        }
+    }
+
+    void loadProjectsIntoSelect();
+
 
     /* -----------------------------------------------------
        PENDING SUGGESTION HANDOFF (from the Scenario Suggestions page)
@@ -2164,6 +2197,13 @@ function initCreateTestPage() {
                     .trim() ||
                 '';
 
+            // v3.0 Faz 6 — bkz. initCreateTestPage() "PROJECT" NOT. Boşsa `undefined` gönderilir
+            // (backend'deki projectId alanı OPSİYONEL — bkz. generateAndRunSchema).
+            const selectedProjectId =
+                projectSelectInput?.value
+                    ? Number(projectSelectInput.value)
+                    : undefined;
+
 
             const selectedBrowser =
                 document.querySelector(
@@ -2293,6 +2333,9 @@ function initCreateTestPage() {
 
                                     secrets:
                                         collectedSecrets,
+
+                                    projectId:
+                                        selectedProjectId,
                                 }),
                         },
                     );
@@ -8790,10 +8833,11 @@ async function initAdminPanelPage() {
     refreshUsersButton.addEventListener('click', () => loadAdminUsers());
 
     /* -----------------------------------------------------
-       LDAP TAB — v3.0 Faz 2.3. Sadece yapılandırmayı okur/
-       kaydeder, gerçek LDAP bağlantı testi YOK (bkz.
-       admin-panel.html #adminLdapInfoBanner). Liste sekmesi
-       gibi sadece İLK geçişte fetch atılır.
+       LDAP TAB — v3.0 Faz 2.3. Burada yapılandırmayı okur/
+       kaydeder; gerçek LDAP BIND doğrulaması Faz 2.4'te
+       backend'e (auth.ts + ldapClient.ts) eklendi, normal
+       giriş ekranından çalışır. Liste sekmesi gibi sadece
+       İLK geçişte fetch atılır.
     ----------------------------------------------------- */
 
     function applyLdapPasswordHint(managerPasswordConfigured) {

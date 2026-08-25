@@ -5,6 +5,7 @@ import cors from 'cors';
 import { healthRouter } from './api/routes/health.js';
 import { runsRouter } from './api/routes/runs.js';
 import { legacyTestsRouter } from './api/routes/legacyTests.js';
+import { projectsRouter } from './api/routes/projects.js';
 import { settingsRouter } from './api/routes/settings.js';
 import { scenariosRouter } from './api/routes/scenarios.js';
 import { allureRouter } from './api/routes/allure.js';
@@ -48,6 +49,11 @@ export function createApp() {
 
   // Mevcut (korunan) frontend'in beklediği eski API sözleşmesi — bkz. LegacyTestService.
   app.use('/api', legacyTestsRouter);
+
+  // v3.0 Faz 6 — Create Test sayfasındaki proje seçici için salt-okunur proje listesi (bkz.
+  // projects.ts dosya başı NOT). requireAdmin İLE KORUNMAZ — herhangi bir giriş yapmış kullanıcı
+  // erişebilir, zaten yukarıdaki site geneli requireAuth arkasında.
+  app.use('/api', projectsRouter);
 
   // Yeni Settings sayfası için salt-okunur yapılandırma bilgisi.
   app.use('/api', settingsRouter);

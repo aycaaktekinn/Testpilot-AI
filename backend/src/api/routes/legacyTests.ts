@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { legacyTestService } from '../legacyTestServiceInstance.js';
+import type { RequestWithAuthUser } from '../middleware/requireAdmin.js';
 import { createLogger } from '../../config/logger.js';
 
 const log = createLogger('legacyTestsRoute');
@@ -38,6 +39,9 @@ const generateAndRunSchema = z.object({
   variables: z.record(z.string(), z.string()).optional().default({}),
   // Hassas değerler (şifre, token vb.) — variables'tan BİLEREK ayrı; bkz. LegacyGenerateAndRunInput.
   secrets: z.record(z.string(), z.string()).optional().default({}),
+  // v3.0 Faz 6 — bkz. LegacyGenerateAndRunInput.projectId dosya başı açıklaması. OPSİYONEL:
+  // kullanıcı Create Test'te proje seçmeden de test üretebilir (JSON akışı bundan etkilenmez).
+  projectId: z.coerce.number().int().positive().optional(),
 });
 
 const runExistingSchema = z.object({
@@ -69,7 +73,8 @@ legacyTestsRouter.post('/tests/generate-and-run', async (req, res) => {
   }
 
   try {
-    const result = await legacyTestService.generateAndRun(parsed.data);
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const result = await legacyTestService.generateAndRun(parsed.data, actingUserId);
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generate-and-run başarısız');
@@ -200,7 +205,8 @@ legacyTestsRouter.post('/generated-tests/run', async (req, res) => {
 
   try {
     const { fileName, ...overrides } = parsed.data;
-    const result = await legacyTestService.runGeneratedTest(fileName, overrides);
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const result = await legacyTestService.runGeneratedTest(fileName, overrides, actingUserId);
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests/run başarısız');
@@ -220,7 +226,8 @@ legacyTestsRouter.post('/generated-tests/replay', async (req, res) => {
 
   try {
     const { fileName, ...overrides } = parsed.data;
-    const result = await legacyTestService.replayGeneratedTest(fileName, overrides);
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const result = await legacyTestService.replayGeneratedTest(fileName, overrides, actingUserId);
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests/replay başarısız');
@@ -244,7 +251,8 @@ legacyTestsRouter.post('/generated-tests/run-batch', async (req, res) => {
   }
 
   try {
-    const results = await legacyTestService.runGeneratedTestsBatch(parsed.data.fileNames);
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const results = await legacyTestService.runGeneratedTestsBatch(parsed.data.fileNames, actingUserId);
     res.status(200).json({ results });
   } catch (err) {
     log.error({ err }, 'generated-tests/run-batch başarısız');

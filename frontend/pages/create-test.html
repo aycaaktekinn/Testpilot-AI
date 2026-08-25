@@ -39,6 +39,73 @@
 
                 <div class="flex flex-col gap-4">
 
+                    <!-- PROJECT (v3.0 Faz 6 — bkz. app.js initCreateTestPage NOT: bu seçim, backend'e
+                         LegacyGenerateAndRunInput.projectId olarak gider. OPSİYONELDİR — seçilmezse
+                         eskisi gibi sadece JSON dosyalarına kaydedilir; seçilirse AYRICA (best-effort)
+                         Oracle veritabanına (SCENARIOS + RUNS) da yazılır, bkz. LegacyTestService
+                         finalizeResult() dosya başı NOT.) -->
+                    <div class="flex flex-col gap-1">
+
+                        <div class="flex justify-between items-center">
+
+                            <label
+                                    for="projectSelect"
+                                    class="font-body-sm text-body-sm
+                                           text-on-surface-variant font-semibold"
+                            >
+                                Project
+                            </label>
+
+                            <span
+                                    class="font-label-caps text-label-caps
+                                           text-on-surface-variant/70
+                                           px-2 py-0.5 text-[10px]"
+                            >
+                                OPTIONAL
+                            </span>
+
+                        </div>
+
+                        <div
+                                class="flex items-center input-well
+                                       rounded-md overflow-hidden
+                                       transition-colors"
+                        >
+
+                            <span
+                                    class="px-3 text-on-surface-variant
+                                           bg-surface-container-high
+                                           border-r border-outline-variant/50
+                                           h-full flex items-center"
+                            >
+                                <span
+                                        class="material-symbols-outlined text-sm"
+                                >
+                                    folder
+                                </span>
+                            </span>
+
+                            <select
+                                    id="projectSelect"
+                                    class="w-full bg-transparent border-none
+                                           text-on-surface font-body-md
+                                           text-body-md p-2.5 focus:ring-0"
+                            >
+                                <option value="">No project (won't be saved to the database)</option>
+                            </select>
+
+                        </div>
+
+                        <div
+                                class="font-body-sm text-[12px]
+                                       text-on-surface-variant/70
+                                       italic mt-1"
+                        >
+                            Select a project to also save this run to the database. Leave blank to keep the old file-only behavior.
+                        </div>
+
+                    </div>
+
                     <!-- TEST NAME (v2.4 — bkz. app.js initCreateTestPage NOT: bu isim, backend'e
                          LegacyGenerateAndRunInput.testName olarak gider ve Generated Tests
                          listesinde otomatik üretilen dosya adı yerine görünen isim olur.) -->

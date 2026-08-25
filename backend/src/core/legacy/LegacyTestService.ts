@@ -17,6 +17,8 @@ import { buildBddSteps } from './buildBddSteps.js';
 import { TestRunStore } from './TestRunStore.js';
 import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore.js';
 import { AllureReportService } from './AllureReportService.js';
+import { createScenario } from '../../db/scenarioStore.js';
+import { createRun } from '../../db/runStore.js';
 import { ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import { runManager } from '../../api/runManager.js';
@@ -43,7 +45,12 @@ export class LegacyTestService {
 
   constructor(private readonly llmProvider: LlmProvider) {}
 
-  async generateAndRun(input: LegacyGenerateAndRunInput): Promise<LegacyTestResultResponse> {
+  async generateAndRun(
+    input: LegacyGenerateAndRunInput,
+    // v3.0 Faz 6 — SADECE Oracle'a (best-effort) yazarken SCENARIOS/RUNS.CREATED_BY/STARTED_BY
+    // için kullanılır (bkz. finalizeResult dosya başı NOT). JSON tabanlı akışı ETKİLEMEZ.
+    actingUserId?: number | null,
+  ): Promise<LegacyTestResultResponse> {
     if (this.activeLoop) {
       throw new ValidationError('Zaten çalışan bir test var. Önce mevcut testi durdurun.');
     }
@@ -92,6 +99,8 @@ export class LegacyTestService {
       (Date.now() - startedAtMs) / 1000,
       input.variables,
       input.testName,
+      input.projectId,
+      actingUserId,
     );
   }
 
@@ -166,23 +175,33 @@ export class LegacyTestService {
    * başı açıklaması — aynı gerekçe burada da geçerlidir (başka bir başarısızlık nedeni gerçek bir
    * test/site sorunu olabilir, körü körüne tekrar denemek yanlış bir izlenim verebilir).
    */
-  async runGeneratedTest(fileName: string, overrides: LegacyRunExistingOverrides): Promise<LegacyTestResultResponse> {
+  async runGeneratedTest(
+    fileName: string,
+    overrides: LegacyRunExistingOverrides,
+    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
+    actingUserId?: number | null,
+  ): Promise<LegacyTestResultResponse> {
     const meta = await this.generatedTestStore.getMeta(fileName);
     const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
     if (!hasReplay) {
       // Kayıtlı adım yok — tek seçenek zaten tam AI, eski davranışla birebir aynı.
-      return this.generateAndRun({
-        url: meta.url,
-        scenario: meta.scenario,
-        variables: meta.variables,
-        headed: overrides.headed ?? meta.headed,
-        browser: overrides.browser ?? meta.browser,
-        screenshot: overrides.screenshot ?? meta.screenshot,
-        video: overrides.video ?? meta.video,
-        trace: overrides.trace ?? meta.trace,
-        useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
-      });
+      return this.generateAndRun(
+        {
+          url: meta.url,
+          scenario: meta.scenario,
+          variables: meta.variables,
+          headed: overrides.headed ?? meta.headed,
+          browser: overrides.browser ?? meta.browser,
+          screenshot: overrides.screenshot ?? meta.screenshot,
+          video: overrides.video ?? meta.video,
+          trace: overrides.trace ?? meta.trace,
+          useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
+          // v3.0 Faz 6 — bu testin oluşturulduğu projeyi korur (bkz. LegacyGeneratedTestMeta.projectId).
+          projectId: meta.projectId,
+        },
+        actingUserId,
+      );
     }
 
     if (this.activeLoop) {
@@ -240,7 +259,15 @@ export class LegacyTestService {
       report = await runAttempt(undefined);
     }
 
-    return this.finalizeResult(report, options, (Date.now() - startedAtMs) / 1000, meta.variables);
+    return this.finalizeResult(
+      report,
+      options,
+      (Date.now() - startedAtMs) / 1000,
+      meta.variables,
+      undefined,
+      meta.projectId,
+      actingUserId,
+    );
   }
 
   /**
@@ -253,7 +280,12 @@ export class LegacyTestService {
    * bkz. runGeneratedTest() dosya başı açıklaması — o zaten replay'i otomatik önce dener). Bu
    * metod/endpoint (/generated-tests/replay) geriye dönük uyumluluk için olduğu gibi bırakıldı.
    */
-  async replayGeneratedTest(fileName: string, overrides: LegacyRunExistingOverrides): Promise<LegacyTestResultResponse> {
+  async replayGeneratedTest(
+    fileName: string,
+    overrides: LegacyRunExistingOverrides,
+    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
+    actingUserId?: number | null,
+  ): Promise<LegacyTestResultResponse> {
     if (this.activeLoop) {
       throw new ValidationError('Zaten çalışan bir test var. Önce mevcut testi durdurun.');
     }
@@ -297,7 +329,15 @@ export class LegacyTestService {
       this.activeRunId = null;
     }
 
-    return this.finalizeResult(report, options, (Date.now() - startedAtMs) / 1000, meta.variables);
+    return this.finalizeResult(
+      report,
+      options,
+      (Date.now() - startedAtMs) / 1000,
+      meta.variables,
+      undefined,
+      meta.projectId,
+      actingUserId,
+    );
   }
 
   /**
@@ -321,7 +361,11 @@ export class LegacyTestService {
    * denemesi DEĞİL) `persistBatchRunWhenFinished` ile geçmişe kaydedilir — aşağıda hiçbir değişiklik
    * gerekmedi, çünkü o zaten sadece gerçek 'run_finished' olayını dinliyor.
    */
-  async runGeneratedTestsBatch(fileNames: string[]): Promise<BatchRunStartResult[]> {
+  async runGeneratedTestsBatch(
+    fileNames: string[],
+    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
+    actingUserId?: number | null,
+  ): Promise<BatchRunStartResult[]> {
     const results: BatchRunStartResult[] = [];
 
     for (const fileName of fileNames) {
@@ -349,7 +393,7 @@ export class LegacyTestService {
           replaySteps: hasReplay ? meta.replaySteps : undefined,
         });
 
-        this.persistBatchRunWhenFinished(summary.runId, meta, options);
+        this.persistBatchRunWhenFinished(summary.runId, meta, options, actingUserId);
 
         results.push({ fileName, runId: summary.runId, mode: hasReplay ? 'replay' : 'run' });
       } catch (err) {
@@ -366,7 +410,12 @@ export class LegacyTestService {
    * (beklenmeyen çökme) durumunda elde bir RunReport olmadığından kaydedilecek bir şey yoktur —
    * bu, runManager'ın kendisinin de run_error'da rapor ÜRETMEMESİYLE tutarlıdır.
    */
-  private persistBatchRunWhenFinished(runId: string, meta: LegacyGeneratedTestMeta, options: RunOptions): void {
+  private persistBatchRunWhenFinished(
+    runId: string,
+    meta: LegacyGeneratedTestMeta,
+    options: RunOptions,
+    actingUserId?: number | null,
+  ): void {
     const startedAtMs = Date.now();
     const unsubscribe = runManager.subscribe(runId, (event) => {
       if (event.type !== 'run_finished' && event.type !== 'run_error') return;
@@ -377,7 +426,15 @@ export class LegacyTestService {
         return;
       }
 
-      void this.finalizeResult(event.report, options, (Date.now() - startedAtMs) / 1000, meta.variables).catch((err) => {
+      void this.finalizeResult(
+        event.report,
+        options,
+        (Date.now() - startedAtMs) / 1000,
+        meta.variables,
+        undefined,
+        meta.projectId,
+        actingUserId,
+      ).catch((err) => {
         log.error({ err, runId }, 'Toplu çalıştırma sonucu geçmişe kaydedilemedi');
       });
     });
@@ -394,10 +451,17 @@ export class LegacyTestService {
     // persistBatchRunWhenFinished) bunu BİLEREK GEÇMEZ — o testin zaten kendi kimliği/ismi vardır,
     // her tekrar çalıştırmada "düzenli" isim bilgisini rastgele bir şeyle EZMEMEK için.
     testName?: string,
+    // v3.0 Faz 6 — bkz. LegacyGenerateAndRunInput.projectId / scenarioStore.ts dosya başı NOT.
+    // Doluysa aşağıda SCENARIOS+RUNS'a best-effort bir Oracle yazımı da denenir.
+    projectId?: number,
+    actingUserId?: number | null,
   ): Promise<LegacyTestResultResponse> {
     const status = report.status === 'passed' ? 'passed' : 'failed';
     const createdAt = report.finishedAt ?? new Date().toISOString();
     const trimmedTestName = testName?.trim();
+    // Hem JSON kaydı (aşağıdaki generatedTestStore.save) hem Oracle RUNS.STEPS_JSON için TEK
+    // seferde hesaplanır (bkz. BddStepView dosya başı açıklaması).
+    const bddSteps = buildBddSteps(report);
 
     // Sentezlenen kodu + orijinal çalıştırma bağlamını diske kaydet (best-effort — başarısız
     // olursa yanıtı asla bozmaz, sadece loglanır).
@@ -426,16 +490,53 @@ export class LegacyTestService {
           replaySteps: report.replaySteps,
           // BDD/step bazlı görüntüleme için — replaySteps'in aksine PASS/FAIL fark etmeksizin
           // doldurulur (bkz. BddStepView, buildBddSteps.ts dosya başı açıklaması).
-          steps: buildBddSteps(report),
+          steps: bddSteps,
           // v2.4 — bkz. LegacyGeneratedTestMeta.displayName dosya başı açıklaması. Kullanıcı isim
           // vermediyse `undefined` kalır — frontend bu durumda otomatik üretilen `fileName`'i
           // gösterir (davranış eskisiyle birebir aynı, bkz. renderGeneratedTests).
           displayName: trimmedTestName || undefined,
+          // v3.0 Faz 6 — bkz. LegacyGeneratedTestMeta.projectId dosya başı açıklaması.
+          projectId,
         },
         code,
       );
     } catch (err) {
       log.error({ err, runId: report.runId }, 'Üretilen test dosyası kaydedilemedi (yanıt yine de döndürülüyor)');
+    }
+
+    // v3.0 Faz 6 — bkz. bu metodun `projectId` parametresi dosya başı NOT'u. TAMAMEN EK ve
+    // best-effort: projectId bilinmiyorsa (kullanıcı proje seçmeden test ürettiyse/eski bir testi
+    // tekrar çalıştırdıysa) bu blok HİÇ ÇALIŞMAZ — "sadece bundan sonrakiler DB'ye gitsin" kararı
+    // böylece doğal olarak sağlanır. Hata olursa sadece loglanır, yanıtı ASLA etkilemez (yukarıdaki
+    // JSON kaydı zaten tamamlanmış olur).
+    if (projectId) {
+      try {
+        const scenarioName = (trimmedTestName || report.scenario).slice(0, 200);
+        const scenario = await createScenario({
+          projectId,
+          scenarioName,
+          scenarioText: report.scenario,
+          targetUrl: report.url,
+          createdBy: actingUserId ?? null,
+        });
+        const finishedAtDate = new Date(createdAt);
+        const startedAtDate = new Date(finishedAtDate.getTime() - durationSeconds * 1000);
+        await createRun({
+          scenarioId: scenario.id,
+          projectId,
+          status,
+          browserEngine: options.browserEngine,
+          startedAt: startedAtDate,
+          finishedAt: finishedAtDate,
+          startedBy: actingUserId ?? null,
+          stepsJson: JSON.stringify(bddSteps),
+        });
+      } catch (err) {
+        log.error(
+          { err, runId: report.runId, projectId },
+          'Koşum Oracle veritabanına yazılamadı (JSON kaydı yine de başarılı, yanıt etkilenmedi)',
+        );
+      }
     }
 
     const exitCode = status === 'passed' ? 0 : 1;

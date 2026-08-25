@@ -866,24 +866,13 @@
 
 
     <!-- ============================ LDAP TAB ============================ -->
-    <!-- v3.0 Faz 2.3 — sadece yapılandırmayı okur/kaydeder. Gerçek LDAP BIND doğrulaması (kullanıcı
-         girişinin buradaki bilgilerle gerçekten test edilmesi) BURADA YOK — Faz 2.4'te gelecek,
-         bu yüzden aşağıda bunu açıkça belirten bir bilgi notu var (bkz. #adminLdapInfoBanner). -->
+    <!-- v3.0 Faz 2.3 — burada sadece yapılandırma CRUD'u var. Gerçek LDAP BIND doğrulaması (kullanıcı
+         girişinin buradaki bilgilerle gerçekten test edilmesi) Faz 2.4'te backend'e (auth.ts +
+         ldapClient.ts) eklendi — normal giriş ekranından yapılan bir girişte, kullanıcı LOCAL
+         değilse burada kaydedilen ayarlarla gerçekten LDAP sunucusuna bağlanılıp doğrulanıyor. Bu
+         yüzden BURADA ARTIK "henüz eklenmedi" tarzı bir uyarı YOK (eski bir uyarı vardı, kod
+         Faz 2.4'e geçince güncellenmediği için yanıltıcı hale gelmişti — kaldırıldı). -->
     <div id="adminLdapSection" class="hidden flex-col gap-lg">
-
-        <div
-                id="adminLdapInfoBanner"
-                class="flex items-start gap-3
-                       bg-primary/5 border border-primary/20
-                       rounded-lg px-4 py-3
-                       text-on-surface-variant"
-        >
-            <span class="material-symbols-outlined text-primary text-[20px]">info</span>
-            <div class="font-body-sm text-body-sm">
-                Bu ekran sadece LDAP bağlantı bilgilerini kaydeder. LDAP ile giriş yapma (gerçek
-                bağlantı testi) henüz bir sonraki adımda eklenecek.
-            </div>
-        </div>
 
         <div
                 class="bg-surface
