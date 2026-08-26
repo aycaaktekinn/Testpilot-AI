@@ -99,6 +99,11 @@ interface RawSearchRow {
 export class VectorCacheStore {
   private readonly milvus: MilvusClient;
   private readonly embeddingClient: EmbeddingClient;
+  // v3.2 — OKUMA (findSimilar) tarafı için AYRI, BİLEREK KISA süreli bir embedding istemcisi
+  // (bkz. env.ts VECTOR_CACHE_READ_EMBED_TIMEOUT_MS dosya başı NOT'u). `embeddingClient` (yukarıda,
+  // uzun/60sn varsayılan timeout'lu) SADECE yazma tarafında (recordDecision, findMostSimilarExisting
+  // dahil — o da yazmadan önceki bir kontrol) kullanılmaya devam eder.
+  private readonly readEmbeddingClient: EmbeddingClient;
   private collectionReady: Promise<void> | null = null;
 
   constructor(
@@ -108,9 +113,12 @@ export class VectorCacheStore {
     // v2.3 — .env'den (VECTOR_CACHE_EMBED_TIMEOUT_MS) gelir; buradaki varsayılan sadece bu
     // parametre verilmeden doğrudan çağrılan yerler (ör. testler) için bir geri düşüştür.
     embedTimeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
+    // v3.2 — .env'den (VECTOR_CACHE_READ_EMBED_TIMEOUT_MS) gelir; okuma tarafı için ayrı ve kısa.
+    readEmbedTimeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
   ) {
     this.milvus = new MilvusClient({ address: milvusUrl });
     this.embeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, embedTimeoutMs);
+    this.readEmbeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, readEmbedTimeoutMs);
   }
 
   /**
@@ -204,7 +212,10 @@ export class VectorCacheStore {
 
     const domain = safeHostname(situation.snapshot.url);
     const text = buildSituationText(situation);
-    const vector = await this.embeddingClient.embed(text);
+    // v3.2 — BİLEREK `readEmbeddingClient` (kısa timeout) — bkz. sınıf başı NOT ve
+    // env.ts VECTOR_CACHE_READ_EMBED_TIMEOUT_MS açıklaması: bu, run'ın kritik yolundaki bir
+    // KISAYOL DENEMESİdir, uzun süre beklemeye değmez.
+    const vector = await this.readEmbeddingClient.embed(text);
 
     const searchResult = await this.milvus.search({
       collection_name: COLLECTION_NAME,

@@ -161,6 +161,21 @@ const envSchema = z.object({
   // 60sn'ye çıkarıldı. Model bir kez belleğe yüklendikten sonra sonraki istekler çok daha hızlı olur.
   VECTOR_CACHE_EMBED_TIMEOUT_MS: z.coerce.number().default(60000),
 
+  // v3.2 — OKUMA tarafı (tryVectorCacheHit → findSimilar) için AYRI ve BİLEREK KISA bir embedding
+  // zaman aşımı. NEDEN yukarıdaki VECTOR_CACHE_EMBED_TIMEOUT_MS'ten (60sn, yazma tarafı) AYRI:
+  // yazma tarafı fire-and-forget'tır (bkz. AgentLoop.recordDecisionInCache — `void` ile çağrılır,
+  // run'ı hiç BEKLETMEZ), bu yüzden 60sn'ye kadar sabretmesi zararsızdır. Ama OKUMA tarafı HER
+  // adımda run'ın kritik yoluna girer (LLM'e sormadan ÖNCE awaitlenir) — canlı gözlemde
+  // (hepsiburada.com, kaynak sıkışıklığı altında yavaş bir Ollama ile) bu tek başına bir run'ı
+  // ~200 saniyeye kadar uzatabiliyordu, ÇÜNKÜ cache okuma denemesinin kendisi (embedding), asıl
+  // atlatmaya çalıştığı LLM çağrısından (genelde 2-5sn) çok daha YAVAŞ hale geliyordu — yani
+  // "optimizasyon" asıl işten daha pahalıya geliyordu. Cache okuma sonuçta sadece bir KISAYOL
+  // DENEMESİdir (bkz. AgentLoop.tryVectorCacheHit — herhangi bir hata/timeout'ta sessizce normal
+  // LLM akışına düşülür); bu yüzden burada makul bir süre içinde (varsayılan 5sn) yanıt gelmezse
+  // denemekten TAMAMEN vazgeçip doğrudan LLM'e gitmek, gereksiz yere onlarca saniye beklemekten
+  // her zaman daha iyidir.
+  VECTOR_CACHE_READ_EMBED_TIMEOUT_MS: z.coerce.number().default(5000),
+
   // Statik frontend dosyalarının bulunduğu klasör. Backend, kurulumu basitleştirmek için bu
   // klasörü de kendi üzerinden (aynı origin'den) sunar — böylece frontend'in kullandığı göreli
   // "/api/..." istekleri otomatik olarak bu backend'e gider (ayrı bir sunucuya/CORS ayarına gerek kalmaz).

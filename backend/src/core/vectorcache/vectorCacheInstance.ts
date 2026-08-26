@@ -16,5 +16,9 @@ export const vectorCacheStore: VectorCacheStore | null = env.VECTOR_CACHE_ENABLE
       env.OLLAMA_URL,
       env.OLLAMA_EMBEDDING_MODEL!,
       env.VECTOR_CACHE_EMBED_TIMEOUT_MS,
+      // v3.2 — bkz. env.ts VECTOR_CACHE_READ_EMBED_TIMEOUT_MS dosya başı NOT'u: okuma (findSimilar)
+      // ve yazma (recordDecision) taraflarının zaman aşımı ihtiyaçları BİLEREK farklı, bu yüzden
+      // ayrı bir parametre olarak geçiliyor.
+      env.VECTOR_CACHE_READ_EMBED_TIMEOUT_MS,
     )
   : null;

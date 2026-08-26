@@ -25,6 +25,15 @@
 # standalone şablonuna dayanır — https://milvus.io/docs/install_standalone-docker-compose.md
 # üzerinden güncel/kararlı etiketleri doğrulamanızı öneririz (GEMINI_MODEL/OLLAMA_EMBEDDING_MODEL'de
 # olduğu gibi, dış bir servisin sürüm adları zamanla değişebilir).
+#
+# v3.3 — CPU sınırları (`cpus:`): varsayılan olarak Docker, bir container'ın makinedeki TÜM
+# çekirdekleri kullanmasına izin verir. Bir test run'ı SIRASINDA (Chromium + Node + Ollama zaten
+# çalışırken) Milvus container'ları — özellikle "standalone" — kısa süreli CPU patlamaları
+# yapabiliyor; bu da aynı anda embedding üreten Ollama'nın (ve Chromium'un) çekirdek bulmasını
+# zorlaştırıp gecikmeleri artırabilir. Aşağıdaki sınırlar bunu ÖNLEMEK için eklendi — genel/kalıcı
+# bir düzeltmedir, tek bir siteye özgü değildir. `docker compose` (V2 CLI) bu alanı Swarm modu
+# OLMADAN da uygular. Makinenizin çekirdek sayısına göre değerleri ayarlayabilirsiniz; amaç Milvus'a
+# YETERLİ (ama sınırsız değil) pay ayırıp geri kalanını Ollama/Chromium için boş bırakmaktır.
 
 services:
   etcd:
@@ -43,6 +52,8 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    # v3.3 — bkz. dosya sonundaki "CPU sınırları" notu.
+    cpus: 0.5
 
   minio:
     container_name: milvus-minio
@@ -58,6 +69,7 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    cpus: 0.5
 
   standalone:
     container_name: milvus-standalone
@@ -83,6 +95,10 @@ services:
     depends_on:
       - etcd
       - minio
+    # En "ağır" Milvus servisi budur (arama/insert işlemleri burada yürür) — yine de 2 çekirdekle
+    # sınırlıyoruz ki bir test run'ı SIRASINDA Chromium + Ollama'nın ihtiyaç duyduğu çekirdekleri
+    # elinden almasın.
+    cpus: 2.0
 
   attu:
     container_name: milvus-attu
@@ -94,6 +110,8 @@ services:
       - '8000:3000'
     depends_on:
       - standalone
+    # Sadece siz tarayıcıdan bakarken kullanılan bir web arayüzü — sürekli iş yapmıyor.
+    cpus: 0.25
 
 networks:
   default:
