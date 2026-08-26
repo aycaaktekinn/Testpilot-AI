@@ -167,13 +167,17 @@ export class LegacyTestService {
   /**
    * v2.4 — TEK "Run" butonu: önceden ayrı bir "Replay (No AI)" butonu vardı, kullanıcı artık
    * bunu görmüyor — karar backend'e taşındı. Kayıtlı replaySteps varsa ÖNCE onunla (hızlı, LLM
-   * çağrısı yok) dener; SADECE 'replay_mismatch' ile başarısız olursa (kayıtlı adım artık sayfayla
-   * eşleşmiyor) OTOMATİK olarak, AYNI runId altında, tam AI moduna geçip yeniden dener. Kayıtlı
-   * adım hiç yoksa (ya da zaten tam AI'a düşüldüyse) davranış eskisiyle birebir aynıdır.
+   * çağrısı yok) dener; 'replay_mismatch' (kayıtlı adım artık sayfayla eşleşmiyor) VEYA
+   * 'replay_step_failed' (kayıtlı hedef hâlâ eşleşiyor ama ör. bir overlay/banner tıklamayı ANLIK
+   * olarak engelledi — bkz. AgentLoop.ts "isReplay && !actionResult.ok" NOT'u) ile başarısız
+   * olursa OTOMATİK olarak, AYNI runId altında, tam AI moduna geçip yeniden dener. Kayıtlı adım
+   * hiç yoksa (ya da zaten tam AI'a düşüldüyse) davranış eskisiyle birebir aynıdır.
    *
-   * NEDEN sadece 'replay_mismatch'te AI'a geçiliyor: bkz. RunManager.startRunWithAutoRetry dosya
-   * başı açıklaması — aynı gerekçe burada da geçerlidir (başka bir başarısızlık nedeni gerçek bir
-   * test/site sorunu olabilir, körü körüne tekrar denemek yanlış bir izlenim verebilir).
+   * NEDEN bu iki durumda (başka değil) AI'a geçiliyor: bkz. RunManager.startRunWithAutoRetry
+   * (isRecoverableReplayFailure) dosya başı açıklaması — aynı gerekçe ve AYNI koşul burada da
+   * geçerli (iki yer TUTARLI tutulmalı): ASSERTION_FAILED/loop_detected gibi başka bir başarısızlık
+   * nedeni gerçek bir test/site sorunu olabilir, körü körüne tekrar denemek yanlış bir izlenim
+   * verebilir — ama overlay kaynaklı geçici bir engel bu kategoriye girmez.
    */
   async runGeneratedTest(
     fileName: string,
@@ -246,10 +250,26 @@ export class LegacyTestService {
     const startedAtMs = Date.now();
     let report = await runAttempt(meta.replaySteps);
 
-    if (report.status === 'failed' && report.failureReason?.startsWith('replay_mismatch')) {
+    // v3.2 — AI'a düşme (fallback) koşulu GENİŞLETİLDİ: eskiden SADECE 'replay_mismatch' (kayıtlı
+    // hedef elementin sayfa yapısı değişmiş) durumunda AI'a düşülüyordu; 'replay_step_failed' (ör.
+    // element bulundu/eşleşti AMA bir overlay/banner tıklamayı ANLIK olarak engelledi — bkz.
+    // InterceptingOverlayHandler dosya başı NOT) durumunda replay hemen pes edip kullanıcıyı elle
+    // "Run (AI ile)"yi tekrar tetiklemeye zorluyordu. Oysa TAM OLARAK bu tür geçici/ortamsal
+    // engeller AI modunun (adaptif DOM yeniden-taraması + overlay kurtarma) iyi olduğu senaryo —
+    // canlı gözlem: hepsiburada.com'da bir replay adımı overlay yüzünden 'replay_step_failed' ile
+    // başarısız oluyordu, halbuki AYNI senaryo AI moduyla normalde başarıyla tamamlanıyordu. Sadece
+    // 'unknown_reference'/'loop_detected' gibi GERÇEKTEN "senaryo/sayfa bambaşka" anlamına gelen
+    // durumlar bu genişletmenin DIŞINDA bırakıldı (bkz. orijinal tasarım notu: "başka bir başarısızlık
+    // nedeni gerçek bir test/site sorunu olabilir" — ama TIMEOUT/ELEMENT_NOT_INTERACTABLE bu
+    // kategoriye girmez, tam tersine AI modunun rutin olarak başa çıktığı bir sınıftır).
+    const shouldFallbackToAi =
+      report.status === 'failed' &&
+      (report.failureReason?.startsWith('replay_mismatch') || report.failureReason?.startsWith('replay_step_failed'));
+
+    if (shouldFallbackToAi) {
       log.warn(
-        { fileName, runId },
-        'Replay (No AI) denemesi replay_mismatch ile başarısız oldu, otomatik olarak AI ile yeniden deneniyor',
+        { fileName, runId, failureReason: report.failureReason },
+        'Replay (No AI) denemesi başarısız oldu, otomatik olarak AI ile yeniden deneniyor',
       );
       runManager.publishExternalEvent(runId, {
         type: 'replay_retry_started',

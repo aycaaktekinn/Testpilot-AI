@@ -20,6 +20,18 @@ interface RunRecord {
 }
 
 /**
+ * Bir replay denemesinin failureReason'ı, AI moduna otomatik düşmeyi HAKLI çıkaran (yani sabit
+ * script'in kendi hatası değil, geçici/ortamsal bir engel olan) türden mi? bkz. startRunWithAutoRetry
+ * ve LegacyTestService.runGeneratedTest dosya başı NOT'ları — İKİ yerde de AYNI mantık kullanılır,
+ * bu yüzden tek bir yerde tutuluyor.
+ */
+function isRecoverableReplayFailure(failureReason: string | undefined): boolean {
+  return Boolean(
+    failureReason?.startsWith('replay_mismatch') || failureReason?.startsWith('replay_step_failed'),
+  );
+}
+
+/**
  * RunManager, sunucu belleğinde aktif/tamamlanmış run'ları tutar; her run için ayrı bir
  * AgentLoop örneği başlatır ve WebSocket abonelerine olayları yayınlar.
  *
@@ -99,10 +111,15 @@ class RunManager {
    * yerine, mevcut bağlantı üzerinden retry akışını şeffafça sürdürüyoruz — frontend sadece yeni
    * 'replay_retry_started' olay tipini tanıyıp run'ı henüz BİTMİŞ SAYMAMASI gerektiğini bilmeli.
    *
-   * NEDEN sadece 'replay_mismatch'te: Başka bir nedenle başarısız olursa (ör. TIMEOUT,
-   * ASSERTION_FAILED, loop_detected) bu gerçek bir test/site sorunu olabilir — körü körüne AI ile
-   * otomatik tekrar denemek yanlış bir "aslında geçti" izlenimi verebilir. SADECE replay_mismatch,
-   * "kayıtlı adım artık geçersiz, AI ile adapte olarak dene" anlamına gelir.
+   * NEDEN 'replay_mismatch' VE 'replay_step_failed'te: ASSERTION_FAILED/loop_detected/
+   * unknown_reference gibi durumlar gerçek bir test/site sorunu olabilir — körü körüne AI ile
+   * otomatik tekrar denemek yanlış bir "aslında geçti" izlenimi verebilir. Ama 'replay_step_failed'
+   * (ör. kayıtlı hedef element hâlâ eşleşiyor AMA bir overlay/banner tıklamayı ANLIK olarak
+   * engelledi — bkz. InterceptingOverlayHandler dosya başı NOT) BUNUN DIŞINDA: bu tam olarak AI
+   * modunun (adaptif DOM yeniden-taraması + overlay kurtarma) rutin olarak başa çıktığı geçici/
+   * ortamsal bir engel sınıfıdır — sabit replay'in tek denemede pes etmesi doğal, ama otomatik
+   * AI'a düşmemesi için hiçbir neden yok (bkz. LegacyTestService.runGeneratedTest — AYNI genişletme
+   * orada da yapıldı, iki yer TUTARLI kalmalı).
    */
   startRunWithAutoRetry(request: TestRunRequest): RunSummary {
     const isReplayAttempt = Boolean(request.replaySteps && request.replaySteps.length > 0);
@@ -132,7 +149,7 @@ class RunManager {
           !isRetryAttempt &&
           event.type === 'run_finished' &&
           event.status === 'failed' &&
-          event.report.failureReason?.startsWith('replay_mismatch');
+          isRecoverableReplayFailure(event.report.failureReason);
 
         if (isReplayMismatch) {
           // İlk (replay) denemenin gerçek 'run_finished'ını YAYINLAMIYORUZ — WS abonesi/geçmiş
@@ -165,7 +182,7 @@ class RunManager {
           // summary'yi GÜNCELLEMİYORUZ (az sonra ikinci denemenin sonucuyla üzerine yazılacak) —
           // aksi halde GET /api/runs/:id gibi düz okuma yolları geçici/yanlış bir "failed" görebilir.
           const isReplayMismatch =
-            !isRetryAttempt && report.status === 'failed' && report.failureReason?.startsWith('replay_mismatch');
+            !isRetryAttempt && report.status === 'failed' && isRecoverableReplayFailure(report.failureReason);
           if (isReplayMismatch) return;
 
           record.report = report;

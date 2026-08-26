@@ -28,6 +28,24 @@ const COLLECTION_NAME = 'testpilot_locator_cache';
 const DEDUP_MIN_SIMILARITY = 0.998;
 
 /**
+ * v3.2 — GÜNCELLEME (stale-update) eşiği: `DEDUP_MIN_SIMILARITY`'nin ("neredeyse birebir aynı,
+ * hiç yazma") ALTINDA ama yine de "muhtemelen AYNI mantıksal adım, sadece sayfa/locator biraz
+ * DEĞİŞMİŞ" diyebileceğimiz bir bant tanımlar (bkz. `recordDecision` — kullanıcı isteği: "aynıysa
+ * yazılmasın, değiştiyse yenisiyle güncellensin, boşa kalabalık yapmayalım"). Bu bandın içine
+ * düşen (VE aşağıdaki action/value TAM eşleşmesini de geçen) bir aday, koleksiyona İKİNCİ bir satır
+ * olarak eklenmek yerine SİLİNİP yeni kararla DEĞİŞTİRİLİR — aksi halde her küçük sayfa
+ * güncellemesinde eski/güncelliğini yitirmiş kayıtlar koleksiyonda sonsuza kadar birikir ve
+ * okuma tarafının (findSimilar) arama sonuçlarını gereksiz yere kalabalıklaştırır/bulanıklaştırır.
+ *
+ * 0.90 DEĞERİ TEMKİNLİ seçildi: buradaki asıl güvenlik kapısı zaten action+value'nun BİREBİR
+ * eşleşmesidir (aşağıya bkz.) — benzerlik eşiği SADECE "bu, action+value'su tesadüfen aynı olan
+ * ama site/bağlam açısından TAMAMEN alakasız başka bir adım olabilir mi" (ör. iki farklı sayfada
+ * "Tamam" yazan iki ayrı buton) riskini azaltmak için ikincil bir kontrol. 0.90'ın altına düşen
+ * bir benzerlik "muhtemelen farklı bir şey" sayılır ve dokunulmadan yeni bir satır olarak eklenir.
+ */
+const STALE_UPDATE_MIN_SIMILARITY = 0.9;
+
+/**
  * Bir kararı Milvus'a yazarken/ararken saklanan skaler (vektör-dışı) alanlar. `targetRef` BİLEREK
  * BURADA YOKTUR — ref'ler bir run'a özgü geçici numaralardır (ör. "e3"), başka bir sayfada/run'da
  * hiçbir anlamı yoktur. Bunun yerine elementin YAPISAL kimliği (tag/role/accessibleName) saklanır
@@ -52,6 +70,9 @@ export interface CachedCandidate extends CachedDecisionMetadata {
 
 /** Milvus'un arama sonucundaki HAM satır şekli — SDK'nın tam response tipini garanti edemediğimiz için gevşek tutulur (bkz. dosya başı NOT). */
 interface RawSearchRow {
+  // Milvus Int64 birincil anahtarları JS'in güvenli tamsayı sınırını aşabildiği için SDK bunu
+  // genelde STRING olarak döner (hassasiyet kaybını önlemek için) — bu yüzden number|string.
+  id?: string | number;
   action?: string;
   target_tag?: string;
   target_role?: string;
@@ -103,16 +124,38 @@ export class VectorCacheStore {
 
     await this.ensureCollection(vector.length);
 
-    // v2.1 — YAZMADAN ÖNCE tekrar kontrolü: `id` alanı autoID olduğu için her insert YENİ bir
-    // satırdır, var olan bir kaydın üzerine yazma/birleştirme YOKTUR — aynı senaryo tekrar tekrar
-    // koşulduğunda (kullanıcı gözlemi: "aynı şeyi tekrar çalıştırmada eklemesi mantıksız mı") koleksiyon
-    // gereksiz yere şişer. Bu yüzden neredeyse birebir aynısı zaten kayıtlıysa yazmayı atlıyoruz.
-    if (await this.isNearDuplicate(vector, metadata)) {
+    // v2.1 (v3.2'de genişletildi) — YAZMADAN ÖNCE tekrar/güncelleme kontrolü: `id` alanı autoID
+    // olduğu için her insert YENİ bir satırdır, var olan bir kaydın üzerine DOĞRUDAN yazma/
+    // birleştirme (upsert) Milvus'ta yoktur — bu yüzden burada elle "sil + yeniden ekle" ile
+    // taklit ediyoruz. Aynı domain'deki en benzer kaydı TEK bir aramayla buluyoruz, sonra üç
+    // olası duruma ayırıyoruz (action+value BİREBİR eşleşmesi HER İKİ dalda da zorunlu şart —
+    // aksi halde action/value farklı ama tesadüfen yapısal olarak benzer İKİ AYRI karar birbirine
+    // karışabilir; bkz. STALE_UPDATE_MIN_SIMILARITY dosya başı NOT'u):
+    //   1) similarity >= DEDUP_MIN_SIMILARITY  → neredeyse birebir aynı, HİÇBİR ŞEY YAPMA (kullanıcı
+    //      isteği: "aynıysa yazılmasın").
+    //   2) DEDUP_MIN_SIMILARITY > similarity >= STALE_UPDATE_MIN_SIMILARITY → muhtemelen AYNI
+    //      mantıksal adım ama locator/yapı değişmiş, ESKİYİ SİL + YENİYİ EKLE (kullanıcı isteği:
+    //      "değiştiyse yenisiyle güncellensin, boşa kalabalık yapmayalım").
+    //   3) Aksi halde (benzer bir şey yok, ya da action/value eşleşmiyor, ya da similarity çok
+    //      düşük) → GERÇEKTEN yeni bir durum, sadece ekle (aşağıdaki normal insert akışı).
+    const existing = await this.findMostSimilarExisting(vector, metadata.domain);
+    const isSameLogicalStep =
+      existing !== null && existing.action === metadata.action && (existing.value || '') === (metadata.value ?? '');
+
+    if (isSameLogicalStep && existing!.similarity >= DEDUP_MIN_SIMILARITY) {
       log.debug(
         { domain: metadata.domain, action: metadata.action },
         'Neredeyse birebir aynı karar zaten cache\'te var, tekrar yazılmadı (dedup)',
       );
       return;
+    }
+
+    if (isSameLogicalStep && existing!.similarity >= STALE_UPDATE_MIN_SIMILARITY) {
+      await this.deleteById(existing!.id);
+      log.debug(
+        { domain: metadata.domain, action: metadata.action, similarity: existing!.similarity },
+        'Aynı mantıksal adımın eski (güncelliğini yitirmiş) kaydı silindi, yenisiyle değiştiriliyor',
+      );
     }
 
     const insertResult = await this.milvus.insert({
@@ -192,40 +235,54 @@ export class VectorCacheStore {
   }
 
   /**
-   * `recordDecision`'ın yazmadan önce çağırdığı tekrar kontrolü (bkz. dosya başı DEDUP_MIN_SIMILARITY
-   * açıklaması). SADECE vektör benzerliği YETERLİ DEĞİLDİR — `buildSituationText` bir `fill`
-   * adımının GİRİLECEK DEĞERİNİ (ör. arama terimi) embed edilen metne KATMAZ (bkz. situationText.ts
-   * dosya başı NOT), yani yapısal olarak çok benzer ama value'su GERÇEKTEN farklı iki karar (ör. iki
-   * farklı arama terimi) yüksek benzerlik skoru üretebilir — bu yüzden en yakın adayın `action` ve
-   * `value` alanları da BİREBİR eşleşmezse tekrar sayılmaz, normal şekilde yazılır.
+   * `recordDecision`'ın yazmadan ÖNCE çağırdığı arama: bu domain'deki en benzer MEVCUT kaydı
+   * bulur (varsa) — sonucu hem "zaten var, tekrar yazma" (dedup) hem "muhtemelen aynı adım ama
+   * değişmiş, eskiyi sil yenisini yaz" (stale-update) kararları için TEK bir arama ile karşılar
+   * (bkz. dosya başı DEDUP_MIN_SIMILARITY / STALE_UPDATE_MIN_SIMILARITY açıklamaları).
    *
    * NOT: burada AYRICA bir `hasCollection` kontrolü YOKTUR — bu metod her zaman `ensureCollection()`
    * çağrısından SONRA çalışır (bkz. çağrı noktası), yani koleksiyonun VAR OLDUĞU zaten garantidir
    * (ya önceden vardı ya da az önce oluşturuldu). Koleksiyon az önce oluşturulmuşsa henüz hiç satırı
    * yoktur — `search` böyle bir koleksiyonda güvenle boş sonuç döner, ekstra bir kontrole gerek yok.
    */
-  private async isNearDuplicate(vector: number[], metadata: CachedDecisionMetadata): Promise<boolean> {
+  private async findMostSimilarExisting(
+    vector: number[],
+    domain: string,
+  ): Promise<{ id: string | number; similarity: number; action?: string; value?: string } | null> {
     const searchResult = await this.milvus.search({
       collection_name: COLLECTION_NAME,
       vector,
       limit: 1,
       metric_type: 'COSINE',
-      filter: `domain == "${metadata.domain}"`,
-      output_fields: ['action', 'value'],
+      filter: `domain == "${domain}"`,
+      output_fields: ['id', 'action', 'value'],
     });
 
     const rows: RawSearchRow[] = searchResult.results ?? [];
     const top = rows[0];
-    if (!top) {
-      return false;
+    if (!top || top.id === undefined) {
+      return null;
     }
 
-    const similarity = top.score ?? top.distance ?? 0;
-    return (
-      similarity >= DEDUP_MIN_SIMILARITY &&
-      top.action === metadata.action &&
-      (top.value || '') === (metadata.value ?? '')
-    );
+    return { id: top.id, similarity: top.score ?? top.distance ?? 0, action: top.action, value: top.value };
+  }
+
+  /**
+   * Belirtilen id'li satırı koleksiyondan siler — `recordDecision`'ın stale-update akışında,
+   * güncelliğini yitirmiş eski kaydı YENİSİYLE DEĞİŞTİRMEDEN ÖNCE çağrılır (bkz. dosya başı
+   * STALE_UPDATE_MIN_SIMILARITY NOT'u). Best-effort DEĞİLDİR — silme başarısız olursa fırlatır,
+   * çağıran taraf zaten `recordDecision`'ın genel best-effort sarmalayıcısı (AgentLoop.
+   * recordDecisionInCache) içinde çalışır, yani bir Milvus hatası burada da run'ı etkilemez.
+   */
+  private async deleteById(id: string | number): Promise<void> {
+    const deleteResult = await this.milvus.delete({
+      collection_name: COLLECTION_NAME,
+      filter: `id in [${id}]`,
+    });
+
+    if (deleteResult.status?.error_code && deleteResult.status.error_code !== 'Success') {
+      throw new Error(`Milvus delete başarısız: ${deleteResult.status.error_code} - ${deleteResult.status.reason}`);
+    }
   }
 
   /** Koleksiyon zaten varsa hemen döner; yoksa (ilk kullanımda) oluşturup index'ler ve yükler. */
