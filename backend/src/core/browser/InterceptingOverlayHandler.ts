@@ -1,5 +1,6 @@
 import type { Locator, Page } from 'playwright';
 import { recoverFromIntercept } from './interceptingOverlayBrowserScript.js';
+import { ACCEPT_TEXT_PATTERN } from './ConsentBannerHandler.js';
 import { createLogger } from '../../config/logger.js';
 
 const log = createLogger('InterceptingOverlayHandler');
@@ -23,10 +24,16 @@ const log = createLogger('InterceptingOverlayHandler');
  *      bkz. interceptingOverlayBrowserScript.ts) kontrol eder; bu öğe hedef elementin kendisi
  *      DEĞİLSE, bir şey onu engelliyor demektir.
  *   3) Engelleyici öğenin kendisinde veya yakın üst kapsayıcısında "kapat/dismiss" anlamına gelen
- *      AÇIK bir kontrol varsa (× sembolü, aria-label="close" vb.) TIKLANIR; yoksa Escape tuşuna
- *      basılır (pek çok modal/popup bunu dinler). Bu, ConsentBannerHandler'daki GÜVENLİK İLKESİYLE
- *      AYNIDIR: körü körüne "ilk görünen buton"a değil, sadece AÇIKÇA bir kapatma kontrolüne
- *      tıklanır — sayfanın alakasız bir yerindeki bir butona (ör. bir silme onayı) asla dokunulmaz.
+ *      AÇIK bir kontrol varsa (× sembolü, aria-label="close" vb.) TIKLANIR; bulunamazsa AYNI yerde
+ *      "kabul et/accept" anlamına gelen bir kontrol denenir (bkz. ConsentBannerHandler
+ *      ACCEPT_TEXT_PATTERN — burada güvenli çünkü arama GEOMETRİK olarak doğrulanmış gerçek
+ *      engelleyiciyle sınırlı); o da yoksa Escape tuşuna basılır (pek çok modal/popup bunu dinler).
+ *      Aday seçimi ETİKET TÜRÜNE (button/a/vb.) değil, "kendi metni kısa ve kalıpla eşleşiyor mu"
+ *      ölçütüne göre yapılır (bkz. interceptingOverlayBrowserScript.ts dosya başı NOT) — böylece
+ *      hiçbir semantik işareti olmayan düz bir `<div>`/`<span>` tabanlı kontrol de yakalanır. Bu,
+ *      ConsentBannerHandler'daki GÜVENLİK İLKESİYLE AYNIDIR: körü körüne "ilk görünen buton"a
+ *      değil, sadece GEOMETRİK olarak doğrulanmış gerçek engelleyicinin İÇİNDEKİ/YAKININDAKİ bir
+ *      kontrole tıklanır — sayfanın alakasız bir yerindeki bir butona asla dokunulmaz.
  *
  * Bu fonksiyon orijinal aksiyonu KENDİSİ tekrar denemez — sadece "engel olabilecek bir şeyi temizlemeyi
  * dene" işini yapar; asıl retry çağıran tarafta (ActionExecutor) olur. Best-effort: hiçbir zaman
@@ -85,6 +92,7 @@ export async function tryRecoverFromIntercept(page: Page, locator: Locator): Pro
         target: targetElementHandle,
         closeTextSrc: CLOSE_TEXT_PATTERN,
         closeAriaSrc: CLOSE_ARIA_PATTERN,
+        acceptTextSrc: ACCEPT_TEXT_PATTERN.source,
       });
     } finally {
       await targetElementHandle.dispose().catch(() => undefined);
