@@ -35,7 +35,7 @@ export interface RecoverFromInterceptResult {
   closed: boolean;
 }
 
-export function recoverFromIntercept(args: RecoverFromInterceptArgs): RecoverFromInterceptResult {
+export async function recoverFromIntercept(args: RecoverFromInterceptArgs): Promise<RecoverFromInterceptResult> {
   // KRİTİK POLYFILL — bkz. browserDiscoveryScript.ts'teki AYNI NOT (satır satır kopyalanmıştır):
   // `tsx` (esbuild) dev modunda bu fonksiyonun içindeki iç içe fonksiyonları otomatik olarak
   // `__name(fn, "isim")` ile sarıyor; o yardımcının tanımı modül seviyesinde kalırken Playwright
@@ -46,8 +46,32 @@ export function recoverFromIntercept(args: RecoverFromInterceptArgs): RecoverFro
 
   const { x, y, target, closeTextSrc, closeAriaSrc, acceptTextSrc } = args;
 
-  const blocker = document.elementFromPoint(x, y);
-  if (!blocker || blocker === target || target.contains(blocker) || blocker.contains(target)) {
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const findBlocker = (): Element | null => {
+    const el = document.elementFromPoint(x, y);
+    if (!el || el === target || target.contains(el) || el.contains(target)) return null;
+    return el;
+  };
+
+  // v3.2 — İKİ OKUMALI (debounced) engelleyici tespiti: canlı gözlemde (hepsiburada.com, arama
+  // kutusunu saran bir "initialComponent-*" hydration/geçiş kapsayıcısı) TEK bir anlık
+  // elementFromPoint okuması YANILTICI çıktı — çağıran taraf (InterceptingOverlayHandler)
+  // elementi viewport ortasına yeniden kaydırdıktan (`scrollIntoView`) hemen sonra yapılan
+  // İLK okuma "engel yok" dedi, AMA hemen ardından denenen gerçek tıklama yine de tam
+  // RETRY_TIMEOUT_CAP_MS boyunca AYNI öğe tarafından engellendi — yani engelleyici aslında
+  // ORADAYDI, sadece scroll sonrası kısa bir render/geçiş penceresinde anlık olarak "kayboldu"
+  // gibi göründü. Bu yüzden ilk okuma temiz çıksa bile, kısa bir bekleme sonrası İKİNCİ bir
+  // doğrulama okuması yapıyoruz — o da temizse gerçekten engelsiz kabul ediyoruz; öyle değilse
+  // (blocker geri geldiyse) normal engelleyici-kurtarma akışına devam ediyoruz. Toplam ek
+  // maliyet sadece ~200ms (yalnızca engel yokken de harcanır) — Node tarafındaki
+  // RETRY_TIMEOUT_CAP_MS bütçesinin küçük bir kısmı.
+  let blocker = findBlocker();
+  if (!blocker) {
+    await sleep(200);
+    blocker = findBlocker();
+  }
+  if (!blocker) {
     return { blocked: false, closed: false };
   }
 
