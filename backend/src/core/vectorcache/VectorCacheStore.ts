@@ -115,10 +115,14 @@ export class VectorCacheStore {
     embedTimeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
     // v3.2 — .env'den (VECTOR_CACHE_READ_EMBED_TIMEOUT_MS) gelir; okuma tarafı için ayrı ve kısa.
     readEmbedTimeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
+    // v3.3 — .env'den (VECTOR_CACHE_EMBED_NUM_THREAD) gelir; bkz. env.ts ve EmbeddingClient dosya
+    // başı NOT'ları. HEM yazma HEM okuma istemcisine AYNI şekilde uygulanır — ikisi de aynı Ollama
+    // sunucusuna/modeline konuşur, contention altında ikisi de aynı fayda görür.
+    embedNumThread?: number,
   ) {
     this.milvus = new MilvusClient({ address: milvusUrl });
-    this.embeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, embedTimeoutMs);
-    this.readEmbeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, readEmbedTimeoutMs);
+    this.embeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, embedTimeoutMs, embedNumThread);
+    this.readEmbeddingClient = new EmbeddingClient(ollamaUrl, embeddingModel, readEmbedTimeoutMs, embedNumThread);
   }
 
   /**

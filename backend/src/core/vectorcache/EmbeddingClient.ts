@@ -42,6 +42,10 @@ export class EmbeddingClient {
     private readonly baseUrl: string,
     private readonly model: string,
     private readonly timeoutMs: number = DEFAULT_EMBED_TIMEOUT_MS,
+    // v3.3 — .env'den (VECTOR_CACHE_EMBED_NUM_THREAD) gelir; bkz. env.ts dosya başı NOT'u. TANIMSIZSA
+    // Ollama'ya hiç `options` gönderilmez (kendi varsayılanını kullanır, davranış DEĞİŞMEZ) — bkz.
+    // aşağıdaki embedNow().
+    private readonly numThread?: number,
   ) {}
 
   async embed(text: string): Promise<number[]> {
@@ -71,7 +75,14 @@ export class EmbeddingClient {
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.model, prompt: text }),
+        body: JSON.stringify({
+          model: this.model,
+          prompt: text,
+          // v3.3 — bkz. constructor'daki numThread NOT'u: canlı bir run sırasında (CPU contention
+          // altında) daha AZ thread istemek paradoksal şekilde DAHA HIZLI tamamlanmayı sağlayabiliyor
+          // (canlıda doğrulandı — 72sn'den 6-12sn'ye düştü). TANIMSIZSA options hiç gönderilmez.
+          ...(this.numThread ? { options: { num_thread: this.numThread } } : {}),
+        }),
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {

@@ -176,6 +176,21 @@ const envSchema = z.object({
   // her zaman daha iyidir.
   VECTOR_CACHE_READ_EMBED_TIMEOUT_MS: z.coerce.number().default(5000),
 
+  // v3.3 — Ollama'ya HER embedding isteğinde options.num_thread olarak geçilir (bkz. EmbeddingClient
+  // dosya başı NOT). CANLI GÖZLEMDEN gelen bir bulgu: bir makinede (16 çekirdekli Intel Mac, Metal/GPU
+  // hızlandırması YOK — Ollama tamamen CPU'da çalışıyor) bir test run'ı SIRASINDA (Chromium+Node aynı
+  // anda çalışırken) TEK bir embedding isteği, Ollama'nın varsayılan thread sayısıyla 72 saniyeye
+  // kadar sürebiliyordu; aynı isteği num_thread=4 ile sınırlayınca süre 6-12 saniyeye indi (curl ile
+  // doğrulandı). Sebep: Ollama varsayılan olarak TÜM çekirdekleri (orada 16) tek bir isteğe ayırmaya
+  // çalışıyor; Chromium zaten birçok çekirdeği meşgul ederken bu, thread'lerin boş çekirdek için
+  // birbirini beklemesine (context-switch tıkanıklığı) yol açıyor — daha AZ thread istemek,
+  // paradoksal şekilde, YOĞUN zamanlarda daha HIZLI tamamlanmasını sağlıyor. TANIMSIZSA (varsayılan)
+  // Ollama'nın kendi varsayılanı kullanılır (davranış DEĞİŞMEZ) — bu değer MAKİNEYE ÖZGÜDÜR (çekirdek
+  // sayısı, GPU olup olmaması), bu yüzden sabit bir varsayılan KONULMADI; kendi makinenizde canlı bir
+  // run sırasında farklı num_thread değerleriyle bir curl karşılaştırması yaparak en iyi değeri
+  // bulmanız önerilir (ör. `time curl .../api/embeddings -d '{"model":"...","prompt":"...","options":{"num_thread":4}}'`).
+  VECTOR_CACHE_EMBED_NUM_THREAD: z.coerce.number().int().positive().optional(),
+
   // Statik frontend dosyalarının bulunduğu klasör. Backend, kurulumu basitleştirmek için bu
   // klasörü de kendi üzerinden (aynı origin'den) sunar — böylece frontend'in kullandığı göreli
   // "/api/..." istekleri otomatik olarak bu backend'e gider (ayrı bir sunucuya/CORS ayarına gerek kalmaz).

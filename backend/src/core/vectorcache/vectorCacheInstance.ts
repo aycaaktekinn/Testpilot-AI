@@ -20,5 +20,8 @@ export const vectorCacheStore: VectorCacheStore | null = env.VECTOR_CACHE_ENABLE
       // ve yazma (recordDecision) taraflarının zaman aşımı ihtiyaçları BİLEREK farklı, bu yüzden
       // ayrı bir parametre olarak geçiliyor.
       env.VECTOR_CACHE_READ_EMBED_TIMEOUT_MS,
+      // v3.3 — bkz. env.ts VECTOR_CACHE_EMBED_NUM_THREAD dosya başı NOT'u: canlı gözlemle doğrulanmış
+      // bir CPU-contention azaltma ayarı, tanımsızsa Ollama'nın kendi varsayılanı kullanılır.
+      env.VECTOR_CACHE_EMBED_NUM_THREAD,
     )
   : null;
