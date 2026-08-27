@@ -8901,6 +8901,58 @@ async function initAdminPanelPage() {
         saveLdapButton.disabled = true;
 
         try {
+            // ADIM 1: LDAP yapılandırmasını TEST et
+            const testUsername = window.prompt(
+                'LDAP yapılandırmasını test etmek için bir test kullanıcı adı girin:',
+                ''
+            );
+
+            if (!testUsername || testUsername.trim() === '') {
+                showToast('Test işlemi iptal edildi.', 'info');
+                return;
+            }
+
+            const testPassword = window.prompt(
+                'Test kullanıcısının şifresini girin:',
+                ''
+            );
+
+            if (!testPassword) {
+                showToast('Test işlemi iptal edildi.', 'info');
+                return;
+            }
+
+            // Test isteği gönder
+            const testResponse = await fetch('/api/admin/ldap-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    testUsername: testUsername.trim(),
+                    testPassword: testPassword,
+                }),
+            });
+
+            const testResult = await testResponse.json();
+
+            if (!testResponse.ok) {
+                // Test başarısız - kullanıcıya uyarı ver ve onay al
+                const errorMessage = testResult.error?.message || 'LDAP testi başarısız.';
+                ldapFormError.textContent = errorMessage;
+                ldapFormError.classList.remove('hidden');
+
+                const continueAnyway = window.confirm(
+                    `LDAP testi başarısız:\n\n${errorMessage}\n\n\nYine de yapılandırmayı kaydetmek ister misiniz?`
+                );
+
+                if (!continueAnyway) {
+                    return;
+                }
+            } else {
+                // Test başarılı
+                showToast(testResult.message || 'LDAP bağlantısı başarılı!', 'success');
+            }
+
+            // ADIM 2: Yapılandırmayı kaydet
             const response = await fetch('/api/admin/ldap-config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
