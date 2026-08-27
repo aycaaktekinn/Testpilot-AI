@@ -68,6 +68,7 @@ export class EmbeddingClient {
   private async embedNow(text: string): Promise<number[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const openAiStyle = this.isOpenAiStyleEndpoint();
 
     let response: Response;
     try {
@@ -75,25 +76,37 @@ export class EmbeddingClient {
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          prompt: text,
-          // v3.3 — bkz. constructor'daki numThread NOT'u: canlı bir run sırasında (CPU contention
-          // altında) daha AZ thread istemek paradoksal şekilde DAHA HIZLI tamamlanmayı sağlayabiliyor
-          // (canlıda doğrulandı — 72sn'den 6-12sn'ye düştü). TANIMSIZSA options hiç gönderilmez.
-          ...(this.numThread ? { options: { num_thread: this.numThread } } : {}),
-        }),
+        body: JSON.stringify(
+          openAiStyle
+            ? // OpenAI-uyumlu (ör. vLLM/TGI arkasında, şirket içi bir gateway üzerinden sunulan)
+              // embedding servisleri `input` alanı ve `data[].embedding` yanıt şekli kullanır —
+              // Ollama'nın kendi `prompt`/`embedding` sözleşmesinden TAMAMEN FARKLI (bkz. aşağıdaki
+              // isOpenAiStyleEndpoint() NOT'u). `num_thread` Ollama'ya özgü bir ayar olduğu için bu
+              // dalda HİÇ gönderilmez (hedef sunucu bunu tanımaz).
+              { model: this.model, input: text }
+            : {
+                model: this.model,
+                prompt: text,
+                // v3.3 — bkz. constructor'daki numThread NOT'u: canlı bir run sırasında (CPU contention
+                // altında) daha AZ thread istemek paradoksal şekilde DAHA HIZLI tamamlanmayı sağlayabiliyor
+                // (canlıda doğrulandı — 72sn'den 6-12sn'ye düştü). TANIMSIZSA options hiç gönderilmez.
+                ...(this.numThread ? { options: { num_thread: this.numThread } } : {}),
+              },
+        ),
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new Error(
-          `Ollama (${this.baseUrl}) ${this.timeoutMs}ms içinde yanıt vermedi. Ollama çalışıyor mu ` +
-            "kontrol edin ('ollama serve'). Süre yetersiz geliyorsa .env'de " +
-            'VECTOR_CACHE_EMBED_TIMEOUT_MS değerini artırabilirsiniz.',
+          openAiStyle
+            ? `Embedding servisi (${this.baseUrl}) ${this.timeoutMs}ms içinde yanıt vermedi. Süre ` +
+              "yetersiz geliyorsa .env'de VECTOR_CACHE_EMBED_TIMEOUT_MS değerini artırabilirsiniz."
+            : `Ollama (${this.baseUrl}) ${this.timeoutMs}ms içinde yanıt vermedi. Ollama çalışıyor mu ` +
+              "kontrol edin ('ollama serve'). Süre yetersiz geliyorsa .env'de " +
+              'VECTOR_CACHE_EMBED_TIMEOUT_MS değerini artırabilirsiniz.',
         );
       }
       throw new Error(
-        `Ollama'ya (${this.baseUrl}) bağlanılamadı: ${err instanceof Error ? err.message : String(err)}`,
+        `${openAiStyle ? 'Embedding servisine' : "Ollama'ya"} (${this.baseUrl}) bağlanılamadı: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
       clearTimeout(timer);
@@ -101,32 +114,62 @@ export class EmbeddingClient {
 
     if (!response.ok) {
       const text2 = await response.text().catch(() => '');
-      // En sık karşılaşılan durum: model hiç indirilmemiş (404 "model not found"). Kullanıcıya
-      // hangi komutu çalıştırması gerektiğini AÇIKÇA söylüyoruz — bkz. env.ts OLLAMA_EMBEDDING_MODEL
-      // dosya başı açıklaması (bilinçli olarak sabit bir varsayılan yok).
       throw new Error(
-        `Ollama embedding isteği başarısız (HTTP ${response.status}). Model "${this.model}" indirilmiş mi? ` +
-          `('ollama pull ${this.model}' ile indirebilirsiniz) ${truncate(text2, 300)}`,
+        openAiStyle
+          ? `Embedding isteği başarısız (HTTP ${response.status}): ${truncate(text2, 300)}`
+          : // En sık karşılaşılan durum: model hiç indirilmemiş (404 "model not found"). Kullanıcıya
+            // hangi komutu çalıştırması gerektiğini AÇIKÇA söylüyoruz — bkz. env.ts OLLAMA_EMBEDDING_MODEL
+            // dosya başı açıklaması (bilinçli olarak sabit bir varsayılan yok).
+            `Ollama embedding isteği başarısız (HTTP ${response.status}). Model "${this.model}" indirilmiş mi? ` +
+            `('ollama pull ${this.model}' ile indirebilirsiniz) ${truncate(text2, 300)}`,
       );
     }
 
-    const json = (await response.json().catch(() => null)) as OllamaEmbeddingResponse | null;
-    const vector = json?.embedding;
+    const json = await response.json().catch(() => null);
+    const vector = openAiStyle
+      ? (json as OpenAiEmbeddingResponse | null)?.data?.[0]?.embedding
+      : (json as OllamaEmbeddingResponse | null)?.embedding;
 
     if (!Array.isArray(vector) || vector.length === 0) {
-      throw new Error('Ollama beklenmeyen bir yanıt döndürdü (embedding alanı boş/eksik).');
+      throw new Error(
+        `${openAiStyle ? 'Embedding servisi' : 'Ollama'} beklenmeyen bir yanıt döndürdü (embedding alanı boş/eksik).`,
+      );
     }
 
     return vector;
   }
 
+  /**
+   * OLLAMA_URL iki tamamen farklı biçimde verilebilir:
+   *  1) Ollama'nın kendi varsayılanı gibi SADECE bir host:port (ör. http://localhost:11434) — bu
+   *     durumda Ollama'nın native `/api/embeddings` yolunu BİZ ekleriz, istek `prompt` alanı ve
+   *     düz `{embedding: [...]}` yanıtı kullanır (Ollama'nın kendi sözleşmesi).
+   *  2) Şirket içi bir gateway'in TAM, kullanıma hazır bir OpenAI-uyumlu endpoint'i (ör.
+   *     .../v1/embeddings) — VakıfBank'ın iç ağında barındırılan qwen3-embedding-8b gibi servisler
+   *     bu şekilde sunuluyor. Bu durumda (a) URL'e HİÇBİR ŞEY EKLEMEYİZ (zaten tam), (b) istek
+   *     `input` alanı, yanıt `data[0].embedding` şeklini kullanır — Ollama'nınkinden TAMAMEN FARKLI.
+   * Ayrım, baseUrl'in path'inde zaten "embeddings" geçip geçmediğine bakılarak yapılır — bu, mevcut
+   * bare-host (varsayılan) kullanıcılar için davranışı HİÇ DEĞİŞTİRMEZ (regresyon riski yok), yeni
+   * tam-URL veren kullanıcılar için ise doğru sözleşmeyi otomatik seçer.
+   */
+  private isOpenAiStyleEndpoint(): boolean {
+    return /\/embeddings\b/i.test(this.baseUrl);
+  }
+
   private endpoint(): string {
+    if (this.isOpenAiStyleEndpoint()) {
+      return this.baseUrl;
+    }
     return `${this.baseUrl.replace(/\/+$/, '')}/api/embeddings`;
   }
 }
 
 interface OllamaEmbeddingResponse {
   embedding?: number[];
+}
+
+interface OpenAiEmbeddingResponse {
+  data?: { embedding?: number[] }[];
 }
 
 function truncate(text: string, maxLength: number): string {
