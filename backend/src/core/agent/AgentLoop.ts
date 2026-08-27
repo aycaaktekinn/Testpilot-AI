@@ -90,6 +90,20 @@ export class AgentLoop {
     const history: HistoryEntry[] = [];
     let llmCallCount = 0;
 
+    // hepsiburada.com üzerinde canlı olarak gözlemlendi: sitenin üst navigasyon menüsü (ör.
+    // "Elektronik" linki) HER sayfada aynı şekilde bulunuyor. Cache okuma tarafı (bkz.
+    // tryVectorCacheHit) sadece hedef elementin (tag, role, accessibleName) üçlüsüne bakarak
+    // eşleşme yaptığı için, "Elektronik'e tıkla" kararı hem ana sayfada HEM DE zaten Elektronik
+    // kategori sayfasındayken tekrar tekrar öneriliyordu — tıklama sayfa durumunu değiştirmediği
+    // için LoopGuard birkaç adım sonra run'ı loop_detected ile durduruyordu. Bu Set, BU RUN
+    // içinde bir cache kararının (yapısal imzasıyla) daha önce kullanılıp kullanılmadığını takip
+    // eder — aynı imza ikinci kez gelirse cache SESSİZCE atlanır ve o adımda LLM'e danışılır
+    // (LLM, "sonraki sayfa" gibi meşru bir tekrar durumunda yine aynı elemente tıklamaya karar
+    // verebilir — burada hiçbir davranış YASAKLANMAZ, sadece ikinci kullanımda kör tekrar yerine
+    // gerçek bir karar verici devreye girer). Kalıcı cache veritabanına DOKUNULMAZ, sadece bu
+    // run'ın kendi belleğinde tutulur.
+    const usedCacheSignatures = new Set<string>();
+
     // "Replay (No AI)" modu: girdi olarak kayıtlı bir karar dizisi verilmişse LLM'e HİÇ danışılmaz
     // (bkz. AgentLoopInput.replaySteps dosya başı açıklaması). Normal (AI) modda ise, run PASSED
     // ile biterse bu run'ın adımlarından ileride replay için kullanılabilecek bir dizi burada
@@ -197,7 +211,7 @@ export class AgentLoop {
           // var mı diye bakılır (bkz. tryVectorCacheHit dosya başı açıklaması). BEST-EFFORT'tur —
           // `env.VECTOR_CACHE_READ_ENABLED=false` iken (varsayılan) veya herhangi bir Milvus/Ollama
           // sorununda `null` döner ve aşağıdaki normal LLM akışına sorunsuzca düşülür.
-          const cachedDecision = await this.tryVectorCacheHit(scenario, snapshot, stepIndex);
+          const cachedDecision = await this.tryVectorCacheHit(scenario, snapshot, stepIndex, usedCacheSignatures);
 
           if (cachedDecision) {
             decision = cachedDecision;
@@ -560,8 +574,19 @@ export class AgentLoop {
    * Adaylar benzerlikten azalan sırada denenir; İLK üç kapıyı da geçen aday kullanılır. Hiçbiri
    * geçemezse (ya da hiç aday yoksa) `null` döner — normal AI akışına düşülür, bu HER ZAMAN
    * güvenli bir sonuçtur (LLM'e danışmak, körü körüne yanlış bir aksiyon uygulamaktan iyidir).
+   *
+   * 4) (yeni) Adayın yapısal imzası (`action:tag:role:accessibleName:value`) BU RUN içinde daha
+   *    önce bir cache kararı olarak KULLANILMAMIŞ olmalı (bkz. `usedCacheSignatures` — çağıran
+   *    tarafın (run()) dosya başı açıklaması). Site-genel bir elementin (ör. üst menüdeki
+   *    "Elektronik" linki) farklı sayfalarda yeniden eşleşip aynı kararın sonsuza kadar tekrar
+   *    önerilmesini (ve bunun sonucunda LoopGuard'ın run'ı durdurmasını) engeller.
    */
-  private async tryVectorCacheHit(scenario: string, snapshot: PageSnapshot, stepIndex: number): Promise<AgentDecision | null> {
+  private async tryVectorCacheHit(
+    scenario: string,
+    snapshot: PageSnapshot,
+    stepIndex: number,
+    usedCacheSignatures: Set<string>,
+  ): Promise<AgentDecision | null> {
     if (!vectorCacheStore || !env.VECTOR_CACHE_READ_ENABLED) {
       return null;
     }
@@ -592,11 +617,20 @@ export class AgentLoop {
         continue;
       }
 
+      const signature = `${candidate.action}:${candidate.targetTag}:${candidate.targetRole}:${candidate.targetAccessibleName}:${candidate.value ?? ''}`;
+      if (usedCacheSignatures.has(signature)) {
+        // Bu run içinde bu YAPISAL karar zaten bir kez kullanıldı — körü körüne tekrar etmek
+        // yerine sonraki adaya bak; hiçbiri kalmazsa normal AI akışına düşülür (bkz. yukarıdaki
+        // "4)" notu).
+        continue;
+      }
+
       log.info(
         { stepIndex, similarity: candidate.similarity, action: candidate.action, sourceRunId: candidate.sourceRunId },
         'Vector cache eşleşmesi bulundu, LLM çağrısı atlanıyor',
       );
 
+      usedCacheSignatures.add(signature);
       return {
         action: candidate.action as ActionType,
         targetRef: matchedEl.ref,
