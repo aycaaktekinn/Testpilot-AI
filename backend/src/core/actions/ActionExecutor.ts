@@ -293,8 +293,23 @@ export class ActionExecutor {
    * kontrolü atlanarak tıklanır. Canlıda gözlemlenen zincir: aynı buton farklı ref adlarıyla (DOM her
    * adımda yeniden taranıp ref'ler yeniden atandığı için) 3 kez TIMEOUT ile başarısız olup sonunda
    * LoopGuard'ın "loop_detected" ile run'ı bitirmesiydi.
+   *
+   * SON CARE FORCE FALLBACK (yeni, "initialComponent-*" TITREYEN yukleme overlay'i regresyonu):
+   * bazi engelleyiciler ne kapatilabilir bir modal ne de kalici/sabit bir sticky bar'dir (bunlar
+   * persistentBlocker=true olarak yakalanir) - gecici, TITREYEN (flicker) bir hydration/yukleme
+   * overlay'idir. tryRecoverFromIntercept() kontrol ANINDA "engellenmiyor" gorebilir
+   * (persistentBlocker=false doner), ama asil retry tiklamasi sirasinda overlay geri gelmis olabilir
+   * ve retry AYNI "intercepts pointer events" hatasiyla tekrar basarisiz olur. Bu durumda - VE SADECE
+   * bu durumda (retry hatasi acikca "intercepts pointer events" iceriyorsa VE force zaten
+   * denenmediyse) - COK KISA bir butceyle (FORCE_FALLBACK_TIMEOUT_MS) son bir kez force:true ile
+   * denenir. FARKLI bir elemente tiklamaz; InterceptingOverlayHandler zaten hedefin dogru konumda
+   * oldugunu dogrulamisti. Diger hata turlerinde (element gercekten yok, navigasyon hatasi vb.) bu
+   * fallback DEVREYE GIRMEZ. Zaman butcesi: en kotu senaryoya en fazla ~1500ms ekler, 15000ms'lik dis
+   * limitin altinda guvenli bir marj birakir (bkz. yukaridaki RETRY_TIMEOUT_CAP_MS notu).
    */
   private static readonly RETRY_TIMEOUT_CAP_MS = 3000;
+  private static readonly FORCE_FALLBACK_TIMEOUT_MS = 1500;
+  private static readonly INTERCEPT_ERROR_PATTERN = /intercepts pointer events/i;
 
   private async runInteractionWithOverlayRecovery(
     page: Page,
@@ -316,19 +331,33 @@ export class ActionExecutor {
       const recovery = await tryRecoverFromIntercept(page, locator);
       if (!recovery.attempted) return classified;
 
+      const alreadyForced = recovery.persistentBlocker;
       try {
         const retryTimeoutMs = Math.min(timeoutMs, ActionExecutor.RETRY_TIMEOUT_CAP_MS);
         // `|| undefined`: force'u SADECE gerçekten gerekliyken (persistentBlocker) açıkça true
         // gönderiyoruz; aksi halde undefined bırakıyoruz ki Playwright'ın kendi varsayılanıyla
         // (force:false) davransın — "force:false" açıkça geçmekle "hiç geçmemek" işlevsel olarak
         // aynı olsa da, ikincisi test/log çıktısında daha net (gereksiz bir "force" alanı yok).
-        await attempt(retryTimeoutMs, recovery.persistentBlocker || undefined);
+        await attempt(retryTimeoutMs, alreadyForced || undefined);
         log.debug(
-          { forced: recovery.persistentBlocker },
+          { forced: alreadyForced },
           'Engelleyici öğe kurtarma denemesi sonrası aksiyon başarılı oldu',
         );
         return ok(successMessage);
       } catch (retryErr) {
+        const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        const isRepeatedIntercept = ActionExecutor.INTERCEPT_ERROR_PATTERN.test(retryMessage);
+
+        if (!alreadyForced && isRepeatedIntercept) {
+          try {
+            await attempt(ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS, true);
+            log.debug('Tekrarlayan engelleyici sonrasi son care force:true denemesi basarili oldu');
+            return ok(successMessage);
+          } catch (forceErr) {
+            return this.classifyError(forceErr);
+          }
+        }
+
         return this.classifyError(retryErr);
       }
     }
