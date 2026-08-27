@@ -171,6 +171,180 @@ function showToast(message, type = 'info') {
     );
 }
 
+/**
+ * Maskelenmiş şifre girişi için özel modal prompt.
+ * window.prompt() şifreyi açık metin olarak gösterdiği için,
+ * şifre girişi gerektiren durumlarda bu fonksiyon kullanılır.
+ * @param {string} message - Kullanıcıya gösterilecek mesaj
+ * @param {string} placeholder - Input placeholder metni
+ * @returns {Promise<string|null>} Girilen şifre veya iptal edilirse null
+ */
+async function promptPassword(message, placeholder = 'Şifre') {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.id = 'passwordPromptModal';
+        modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]';
+
+        modal.innerHTML = `
+            <div class="bg-surface-container p-6 rounded-lg shadow-xl w-full max-w-md border border-outline-variant">
+                <h3 class="font-headline-md text-on-surface mb-4">${escapeHtml(message)}</h3>
+                <input
+                    type="password"
+                    id="passwordPromptInput"
+                    class="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent mb-4"
+                    placeholder="${escapeHtml(placeholder)}"
+                    autocomplete="off"
+                />
+                <div class="flex justify-end gap-2">
+                    <button
+                        id="passwordPromptCancel"
+                        class="px-4 py-2 rounded-md border border-outline-variant text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                    >
+                        İptal
+                    </button>
+                    <button
+                        id="passwordPromptOk"
+                        class="px-4 py-2 rounded-md bg-primary-container text-on-primary-container hover:bg-inverse-primary transition-colors font-bold"
+                    >
+                        Tamam
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const input = modal.querySelector('#passwordPromptInput');
+        const cancelBtn = modal.querySelector('#passwordPromptCancel');
+        const okBtn = modal.querySelector('#passwordPromptOk');
+
+        setTimeout(() => input?.focus(), 10);
+
+        function cleanup() {
+            cancelBtn?.removeEventListener('click', cancelHandler);
+            okBtn?.removeEventListener('click', okHandler);
+            modal.removeEventListener('keydown', keyHandler);
+            modal.remove();
+        }
+
+        function cancelHandler() {
+            cleanup();
+            resolve(null);
+        }
+
+        function okHandler() {
+            const value = input?.value || '';
+            cleanup();
+            resolve(value || null);
+        }
+
+        function keyHandler(e) {
+            if (e.key === 'Escape') {
+                cancelHandler();
+            } else if (e.key === 'Enter') {
+                okHandler();
+            }
+        }
+
+        cancelBtn?.addEventListener('click', cancelHandler);
+        okBtn?.addEventListener('click', okHandler);
+        modal.addEventListener('keydown', keyHandler);
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                cancelHandler();
+            }
+        });
+    });
+}
+
+/**
+ * Kullanıcı adı girişi için özel modal prompt.
+ * window.prompt() yerine tutarlı UI sağlamak için kullanılır.
+ * @param {string} message - Kullanıcıya gösterilecek mesaj
+ * @param {string} placeholder - Input placeholder metni
+ * @param {string} defaultValue - Varsayılan değer
+ * @returns {Promise<string|null>} Girilen kullanıcı adı veya iptal edilirse null
+ */
+async function promptUsername(message, placeholder = 'Kullanıcı Adı', defaultValue = '') {
+    return new Promise((resolve) => {
+        const modal = document.createElement('div');
+        modal.id = 'usernamePromptModal';
+        modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]';
+
+        modal.innerHTML = `
+            <div class="bg-surface-container p-6 rounded-lg shadow-xl w-full max-w-md border border-outline-variant">
+                <h3 class="font-headline-md text-on-surface mb-4">${escapeHtml(message)}</h3>
+                <input
+                    type="text"
+                    id="usernamePromptInput"
+                    class="w-full bg-surface-container-low border border-outline-variant rounded-md px-3 py-2 text-on-surface focus:ring-2 focus:ring-primary focus:border-transparent mb-4"
+                    placeholder="${escapeHtml(placeholder)}"
+                    value="${escapeHtml(defaultValue)}"
+                    autocomplete="off"
+                />
+                <div class="flex justify-end gap-2">
+                    <button
+                        id="usernamePromptCancel"
+                        class="px-4 py-2 rounded-md border border-outline-variant text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                    >
+                        İptal
+                    </button>
+                    <button
+                        id="usernamePromptOk"
+                        class="px-4 py-2 rounded-md bg-primary-container text-on-primary-container hover:bg-inverse-primary transition-colors font-bold"
+                    >
+                        Tamam
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const input = modal.querySelector('#usernamePromptInput');
+        const cancelBtn = modal.querySelector('#usernamePromptCancel');
+        const okBtn = modal.querySelector('#usernamePromptOk');
+
+        setTimeout(() => input?.focus(), 10);
+
+        function cleanup() {
+            cancelBtn?.removeEventListener('click', cancelHandler);
+            okBtn?.removeEventListener('click', okHandler);
+            modal.removeEventListener('keydown', keyHandler);
+            modal.remove();
+        }
+
+        function cancelHandler() {
+            cleanup();
+            resolve(null);
+        }
+
+        function okHandler() {
+            const value = input?.value || '';
+            cleanup();
+            resolve(value || null);
+        }
+
+        function keyHandler(e) {
+            if (e.key === 'Escape') {
+                cancelHandler();
+            } else if (e.key === 'Enter') {
+                okHandler();
+            }
+        }
+
+        cancelBtn?.addEventListener('click', cancelHandler);
+        okBtn?.addEventListener('click', okHandler);
+        modal.addEventListener('keydown', keyHandler);
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                cancelHandler();
+            }
+        });
+    });
+}
 
 /* =========================================================
    APPLICATION STATE
@@ -2329,13 +2503,13 @@ function initCreateTestPage() {
                                     useSeleniumGridOption.checked,
 
                                     variables:
-                                        collectedVariables,
+                                    collectedVariables,
 
                                     secrets:
-                                        collectedSecrets,
+                                    collectedSecrets,
 
                                     projectId:
-                                        selectedProjectId,
+                                    selectedProjectId,
                                 }),
                         },
                     );
@@ -2976,10 +3150,10 @@ function initScenarioSuggestionsPage() {
                                 ${escapeHtml(suggestion.title)}
                             </div>
                             ${
-                                suggestion.custom
-                                    ? '<span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[11px] shrink-0">Custom</span>'
-                                    : ''
-                            }
+                    suggestion.custom
+                        ? '<span class="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant font-body-sm text-[11px] shrink-0">Custom</span>'
+                        : ''
+                }
                         </div>
 
                         <div class="font-body-sm text-body-sm text-on-surface-variant flex-1">
@@ -5296,19 +5470,19 @@ async function initGeneratedTestsPage() {
                                             <span
                                                 class="
                                                     ${
-                                                        displayName
-                                                            ? 'font-body-sm'
-                                                            : 'font-mono'
-                                                    }
+                        displayName
+                            ? 'font-body-sm'
+                            : 'font-mono'
+                    }
                                                     text-sm
                                                     text-primary-fixed
                                                     break-all
                                                 "
                                                 ${
-                                                    displayName
-                                                        ? `title="${escapeHtml(fileName)}"`
-                                                        : ''
-                                                }
+                        displayName
+                            ? `title="${escapeHtml(fileName)}"`
+                            : ''
+                    }
                                             >
                                                 ${escapeHtml(displayName || fileName)}
                                             </span>
@@ -5579,18 +5753,18 @@ async function initGeneratedTestsPage() {
                         >
                             <td colspan="5" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
                                 ${
-                                    isLive &&
-                                    steps.length === 0
-                                        ? `
+                                isLive &&
+                                steps.length === 0
+                                    ? `
                                 <p class="font-body-sm text-body-sm text-on-surface-variant italic py-sm">
                                     Running — waiting for the first step...
                                 </p>
                                 `
-                                        : `
+                                    : `
                                 <ol class="flex flex-col gap-1 py-sm border-l-2 border-outline-variant/40 pl-md">
                                     ${steps
-                                    .map(
-                                        (step) => `
+                                        .map(
+                                            (step) => `
                                     <li class="flex items-start gap-sm">
                                         <span
                                             class="
@@ -5621,11 +5795,11 @@ async function initGeneratedTestsPage() {
                                         </span>
                                     </li>
                                     `,
-                                    )
-                                    .join('')}
+                                        )
+                                        .join('')}
                                 </ol>
                                 `
-                                }
+                            }
                             </td>
                         </tr>
                         `
@@ -7103,9 +7277,10 @@ async function renameGeneratedTest(
 ) {
 
     const nextName =
-        window.prompt(
+        await promptUsername(
             'Bu test için bir isim girin (boş bırakırsan otomatik oluşturulan dosya adı gösterilir):',
-            currentName,
+            'Test İsmi',
+            currentName
         );
 
     // Kullanıcı iptal ettiyse (Cancel/Esc) prompt() null döner — hiçbir şey yapma. Boş string
@@ -8902,8 +9077,9 @@ async function initAdminPanelPage() {
 
         try {
             // ADIM 1: LDAP yapılandırmasını TEST et
-            const testUsername = window.prompt(
+            const testUsername = await promptUsername(
                 'LDAP yapılandırmasını test etmek için bir test kullanıcı adı girin:',
+                'Kullanıcı Adı',
                 ''
             );
 
@@ -8912,9 +9088,10 @@ async function initAdminPanelPage() {
                 return;
             }
 
-            const testPassword = window.prompt(
-                'Test kullanıcısının şifresini girin:',
-                ''
+            // Şifre için özel maskelenmiş input kullanan modal oluştur
+            const testPassword = await promptPassword(
+                'LDAP yapılandırmasını test etmek için test kullanıcının şifresini girin:',
+                'Şifre'
             );
 
             if (!testPassword) {
