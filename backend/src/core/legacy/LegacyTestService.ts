@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import type { ReplayStep, RunArtifacts, RunOptions, RunReport } from '../../domain/types.js';
 import type {
   BatchRunStartResult,
+  CallerContext,
   LegacyGenerateAndRunInput,
   LegacyGeneratedTestMeta,
   LegacyRunExistingOverrides,
@@ -19,11 +20,25 @@ import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore
 import { AllureReportService } from './AllureReportService.js';
 import { createScenario } from '../../db/scenarioStore.js';
 import { createRun } from '../../db/runStore.js';
-import { ValidationError } from '../../domain/errors.js';
+import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import { runManager } from '../../api/runManager.js';
 
 const log = createLogger('LegacyTestService');
+
+/**
+ * v3.1 — kullanıcı bazlı görünürlük kuralı (bkz. CallerContext, LegacyRunRecord.ownerId dosya
+ * başı açıklamaları). Hem liste filtrelemede (`.filter(r => isVisibleTo(r.ownerId, caller))`) hem
+ * TEK bir kayda erişim kontrolünde (silme/yeniden adlandırma/çalıştırma öncesi) AYNI fonksiyon
+ * kullanılır — iki yerin TUTARLI kalması için tek bir yerde tutulur.
+ *
+ * Kural: ADMIN her şeyi görür/yönetir. MEMBER SADECE `ownerId`'si kendi `userId`'siyle eşleşen
+ * kayıtlara erişebilir — `ownerId` `null`/`undefined` olan (bu alan eklenmeden ÖNCE üretilmiş
+ * "sahipsiz" eski) kayıtlar MEMBER'a HİÇ gösterilmez/erişilemez, sadece ADMIN görür.
+ */
+function isVisibleTo(ownerId: number | null | undefined, caller: CallerContext): boolean {
+  return caller.role === 'ADMIN' || (ownerId != null && ownerId === caller.userId);
+}
 
 /**
  * Mevcut (korunan) frontend'in eski API sözleşmesini (POST /api/tests/generate-and-run,
@@ -70,7 +85,7 @@ export class LegacyTestService {
     // registerExternalRun() dosya başı açıklaması). AgentLoop'a verilen onEvent callback'i her
     // olayı doğrudan runManager'a yayınlar — böylece frontend, bu istek daha sonuçlanmadan CANLI
     // adım adım ilerlemeyi WebSocket üzerinden izleyebilir.
-    runManager.registerExternalRun(runId, input.url, input.scenario);
+    runManager.registerExternalRun(runId, input.url, input.scenario, actingUserId);
     const loop = new AgentLoop(this.llmProvider, (event) => runManager.publishExternalEvent(runId, event));
     this.activeLoop = loop;
     this.activeRunId = runId;
@@ -122,30 +137,40 @@ export class LegacyTestService {
     return this.activeRunId;
   }
 
-  async listTestRuns(): Promise<{ runs: LegacyRunRecord[] }> {
-    return { runs: await this.testRunStore.list() };
+  async listTestRuns(caller: CallerContext): Promise<{ runs: LegacyRunRecord[] }> {
+    const all = await this.testRunStore.list();
+    return { runs: all.filter((r) => isVisibleTo(r.ownerId, caller)) };
   }
 
-  async deleteTestRun(id: string): Promise<{ id: string }> {
+  async deleteTestRun(id: string, caller: CallerContext): Promise<{ id: string }> {
+    await this.assertRunAccess(id, caller);
     await this.testRunStore.delete(id);
     return { id };
   }
 
-  async clearTestRuns(): Promise<{ count: number }> {
-    const count = await this.testRunStore.clear();
+  async clearTestRuns(caller: CallerContext): Promise<{ count: number }> {
+    // ADMIN: predicate YOK — eski davranış (hepsini temizle) AYNEN korunur. MEMBER: sadece kendi
+    // koşumlarını hedefleyen bir predicate (bkz. TestRunStore.clear() dosya başı NOT'u).
+    const count =
+      caller.role === 'ADMIN'
+        ? await this.testRunStore.clear()
+        : await this.testRunStore.clear((r) => r.ownerId === caller.userId);
     return { count };
   }
 
-  async listGeneratedTests(): Promise<{ tests: LegacyGeneratedTestMeta[] }> {
-    return { tests: await this.generatedTestStore.list() };
+  async listGeneratedTests(caller: CallerContext): Promise<{ tests: LegacyGeneratedTestMeta[] }> {
+    const all = await this.generatedTestStore.list();
+    return { tests: all.filter((t) => isVisibleTo(t.ownerId, caller)) };
   }
 
-  async getGeneratedTestCode(fileName: string): Promise<{ code: string; fileName: string }> {
+  async getGeneratedTestCode(fileName: string, caller: CallerContext): Promise<{ code: string; fileName: string }> {
+    await this.assertGeneratedTestAccess(fileName, caller);
     const code = await this.generatedTestStore.getCode(fileName);
     return { code, fileName };
   }
 
-  async deleteGeneratedTest(fileName: string): Promise<{ fileName: string }> {
+  async deleteGeneratedTest(fileName: string, caller: CallerContext): Promise<{ fileName: string }> {
+    await this.assertGeneratedTestAccess(fileName, caller);
     await this.generatedTestStore.delete(fileName);
     return { fileName };
   }
@@ -155,13 +180,38 @@ export class LegacyTestService {
    * LegacyGeneratedTestMeta.displayName dosya başı açıklaması) — diskteki .spec.ts dosyasının
    * gerçek adı (`fileName`, Test Runs geçmişindeki birincil anahtar) DEĞİŞMEZ.
    */
-  async renameGeneratedTest(fileName: string, displayName: string): Promise<LegacyGeneratedTestMeta> {
+  async renameGeneratedTest(fileName: string, displayName: string, caller: CallerContext): Promise<LegacyGeneratedTestMeta> {
+    await this.assertGeneratedTestAccess(fileName, caller);
     return this.generatedTestStore.rename(fileName, displayName);
   }
 
-  async clearGeneratedTests(): Promise<{ count: number }> {
-    const count = await this.generatedTestStore.clear();
+  async clearGeneratedTests(caller: CallerContext): Promise<{ count: number }> {
+    const count =
+      caller.role === 'ADMIN'
+        ? await this.generatedTestStore.clear()
+        : await this.generatedTestStore.clear((t) => t.ownerId === caller.userId);
     return { count };
+  }
+
+  /** bkz. isVisibleTo() dosya başı NOT'u — member kendine ait olmayan/sahipsiz bir run'a erişmeye
+   * çalışırsa, kaydın varlığını ifşa etmemek için (bkz. auth.ts'teki aynı felsefe) NotFoundError
+   * fırlatılır — "yetkisiz" ile "hiç yok" arasında kasıtlı olarak ayrım yapılmaz. */
+  private async assertRunAccess(id: string, caller: CallerContext): Promise<void> {
+    if (caller.role === 'ADMIN') return;
+    const all = await this.testRunStore.list();
+    const record = all.find((r) => r.id === id);
+    if (!record || !isVisibleTo(record.ownerId, caller)) {
+      throw new NotFoundError(`Koşum bulunamadı: ${id}`);
+    }
+  }
+
+  /** bkz. assertRunAccess() dosya başı NOT'u — AYNI mantık, üretilmiş testler için. */
+  private async assertGeneratedTestAccess(fileName: string, caller: CallerContext): Promise<void> {
+    if (caller.role === 'ADMIN') return;
+    const meta = await this.generatedTestStore.getMeta(fileName);
+    if (!isVisibleTo(meta.ownerId, caller)) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
   }
 
   /**
@@ -182,10 +232,14 @@ export class LegacyTestService {
   async runGeneratedTest(
     fileName: string,
     overrides: LegacyRunExistingOverrides,
-    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
-    actingUserId?: number | null,
+    // v3.1 — bkz. isVisibleTo() dosya başı NOT'u. Aşağıda hem erişim kontrolü hem de (eskiden
+    // actingUserId ile yapılan) Oracle CREATED_BY/STARTED_BY etiketlemesi için kullanılır.
+    caller: CallerContext,
   ): Promise<LegacyTestResultResponse> {
     const meta = await this.generatedTestStore.getMeta(fileName);
+    if (!isVisibleTo(meta.ownerId, caller)) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
     const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
     if (!hasReplay) {
@@ -204,7 +258,7 @@ export class LegacyTestService {
           // v3.0 Faz 6 — bu testin oluşturulduğu projeyi korur (bkz. LegacyGeneratedTestMeta.projectId).
           projectId: meta.projectId,
         },
-        actingUserId,
+        caller.userId,
       );
     }
 
@@ -223,7 +277,7 @@ export class LegacyTestService {
       useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
     };
 
-    runManager.registerExternalRun(runId, meta.url, meta.scenario);
+    runManager.registerExternalRun(runId, meta.url, meta.scenario, caller.userId);
 
     // NEDEN aynı runId'yi iki denemede de koruyoruz: `getActiveRunId()`'ı poll edip
     // `/ws/runs/:runId`'ye bağlanmış olabilecek bir istemci varsa, bağlantısını hiç değiştirmeden
@@ -286,7 +340,7 @@ export class LegacyTestService {
       meta.variables,
       undefined,
       meta.projectId,
-      actingUserId,
+      caller.userId,
     );
   }
 
@@ -303,14 +357,17 @@ export class LegacyTestService {
   async replayGeneratedTest(
     fileName: string,
     overrides: LegacyRunExistingOverrides,
-    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
-    actingUserId?: number | null,
+    // v3.1 — bkz. runGeneratedTest() dosya başı NOT (aynı gerekçe).
+    caller: CallerContext,
   ): Promise<LegacyTestResultResponse> {
     if (this.activeLoop) {
       throw new ValidationError('Zaten çalışan bir test var. Önce mevcut testi durdurun.');
     }
 
     const meta = await this.generatedTestStore.getMeta(fileName);
+    if (!isVisibleTo(meta.ownerId, caller)) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
     if (!meta.replaySteps || meta.replaySteps.length === 0) {
       throw new ValidationError(
         'Bu test için AI\'sız tekrar oynatma verisi kayıtlı değil (orijinal koşum başarısız olmuş ya da daha eski bir sürümde üretilmiş olabilir). "Run" ile AI kullanarak çalıştırabilirsiniz.',
@@ -328,7 +385,7 @@ export class LegacyTestService {
       useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
     };
 
-    runManager.registerExternalRun(runId, meta.url, meta.scenario);
+    runManager.registerExternalRun(runId, meta.url, meta.scenario, caller.userId);
     const loop = new AgentLoop(this.llmProvider, (event) => runManager.publishExternalEvent(runId, event));
     this.activeLoop = loop;
     this.activeRunId = runId;
@@ -356,7 +413,7 @@ export class LegacyTestService {
       meta.variables,
       undefined,
       meta.projectId,
-      actingUserId,
+      caller.userId,
     );
   }
 
@@ -383,14 +440,17 @@ export class LegacyTestService {
    */
   async runGeneratedTestsBatch(
     fileNames: string[],
-    // v3.0 Faz 6 — bkz. generateAndRun() dosya başı NOT (aynı gerekçe).
-    actingUserId?: number | null,
+    // v3.1 — bkz. runGeneratedTest() dosya başı NOT (aynı gerekçe).
+    caller: CallerContext,
   ): Promise<BatchRunStartResult[]> {
     const results: BatchRunStartResult[] = [];
 
     for (const fileName of fileNames) {
       try {
         const meta = await this.generatedTestStore.getMeta(fileName);
+        if (!isVisibleTo(meta.ownerId, caller)) {
+          throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+        }
 
         const options: RunOptions = {
           ...defaultRunOptions,
@@ -405,15 +465,18 @@ export class LegacyTestService {
         // "Mümkünse Replay (No AI), yoksa Run" — bkz. TestRunRequest.replaySteps dosya başı NOT.
         const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
-        const summary = runManager.startRunWithAutoRetry({
-          url: meta.url,
-          scenario: meta.scenario,
-          variables: meta.variables,
-          options,
-          replaySteps: hasReplay ? meta.replaySteps : undefined,
-        });
+        const summary = runManager.startRunWithAutoRetry(
+          {
+            url: meta.url,
+            scenario: meta.scenario,
+            variables: meta.variables,
+            options,
+            replaySteps: hasReplay ? meta.replaySteps : undefined,
+          },
+          caller.userId,
+        );
 
-        this.persistBatchRunWhenFinished(summary.runId, meta, options, actingUserId);
+        this.persistBatchRunWhenFinished(summary.runId, meta, options, caller.userId);
 
         results.push({ fileName, runId: summary.runId, mode: hasReplay ? 'replay' : 'run' });
       } catch (err) {
@@ -517,6 +580,8 @@ export class LegacyTestService {
           displayName: trimmedTestName || undefined,
           // v3.0 Faz 6 — bkz. LegacyGeneratedTestMeta.projectId dosya başı açıklaması.
           projectId,
+          // v3.1 — bkz. LegacyGeneratedTestMeta.ownerId / isVisibleTo() dosya başı açıklamaları.
+          ownerId: actingUserId ?? null,
         },
         code,
       );
@@ -576,6 +641,8 @@ export class LegacyTestService {
       error: status === 'failed' ? message : undefined,
       errorOutput: status === 'failed' ? buildErrorOutput(report) : undefined,
       exitCode,
+      // v3.1 — bkz. LegacyRunRecord.ownerId / isVisibleTo() dosya başı açıklamaları.
+      ownerId: actingUserId ?? null,
     };
 
     try {

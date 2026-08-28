@@ -120,14 +120,21 @@ export class GeneratedTestStore {
 
   /**
    * "Clear All" — listedeki her .spec.ts dosyasını diskten silmeyi dener (best-effort, tek
-   * dosya başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır. Silinen kayıt
-   * sayısını döner (frontend'in "X test silindi" gibi bir geri bildirim vermesi için).
+   * dosya başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır (ya da `predicate`
+   * verildiyse SADECE ona uyan kayıtları). Silinen kayıt sayısını döner (frontend'in "X test
+   * silindi" gibi bir geri bildirim vermesi için).
+   *
+   * v3.1 — bkz. TestRunStore.clear() dosya başı NOT'u — AYNI opsiyonel `predicate` deseni,
+   * member'ın "Clear All"da sadece kendi testlerini temizleyebilmesi için.
    */
-  async clear(): Promise<number> {
+  async clear(predicate?: (test: LegacyGeneratedTestMeta) => boolean): Promise<number> {
     const all = await this.list();
+    const toDelete = predicate ? all.filter(predicate) : all;
+
+    if (toDelete.length === 0) return 0;
 
     await Promise.all(
-      all.map(async (test) => {
+      toDelete.map(async (test) => {
         try {
           await unlink(path.join(this.dir, test.fileName));
         } catch (err) {
@@ -138,9 +145,15 @@ export class GeneratedTestStore {
       }),
     );
 
-    await this.persistIndex([]);
+    if (predicate) {
+      const deleteNames = new Set(toDelete.map((t) => t.fileName));
+      const remaining = all.filter((t) => !deleteNames.has(t.fileName));
+      await this.persistIndex(remaining);
+    } else {
+      await this.persistIndex([]);
+    }
 
-    return all.length;
+    return toDelete.length;
   }
 
   private async persistIndex(all: LegacyGeneratedTestMeta[]): Promise<void> {

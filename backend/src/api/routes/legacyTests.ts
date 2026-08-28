@@ -2,11 +2,23 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { legacyTestService } from '../legacyTestServiceInstance.js';
 import type { RequestWithAuthUser } from '../middleware/requireAdmin.js';
+import type { CallerContext } from '../../domain/legacyTypes.js';
 import { createLogger } from '../../config/logger.js';
 
 const log = createLogger('legacyTestsRoute');
 
 export const legacyTestsRouter = Router();
+
+/**
+ * v3.1 — bkz. CallerContext dosya başı açıklaması (legacyTypes.ts). Bu router zaten site geneli
+ * requireAuth arkasında (bkz. app.ts) — yani `req.authUser` HER ZAMAN dolu gelir; `!` ile
+ * non-null assertion bu garantiye dayanır (requireAdmin.ts'in `(req as RequestWithAuthUser)
+ * .authUser = payload` ataması ile AYNI varsayım).
+ */
+function getCaller(req: RequestWithAuthUser): CallerContext {
+  const authUser = req.authUser!;
+  return { userId: authUser.userId, role: authUser.role };
+}
 
 /**
  * Bu router, mevcut (korunan) frontend'in beklediği ESKİ API sözleşmesini uygular
@@ -99,9 +111,9 @@ legacyTestsRouter.post('/tests/stop', async (_req, res) => {
   }
 });
 
-legacyTestsRouter.get('/test-runs', async (_req, res) => {
+legacyTestsRouter.get('/test-runs', async (req, res) => {
   try {
-    const result = await legacyTestService.listTestRuns();
+    const result = await legacyTestService.listTestRuns(getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'test-runs listelenemedi');
@@ -112,9 +124,9 @@ legacyTestsRouter.get('/test-runs', async (_req, res) => {
 // NOT: Bu route, '/test-runs/:id' route'undan ÖNCE tanımlanmasa da sorun olmaz — Express, farklı
 // segment sayısına sahip path'leri (parametresiz vs. :id'li) yapısal olarak ayırt eder, sıralama
 // sadece AYNI şekle sahip route'lar arasında önem taşır (bkz. '/generated-tests' ile aynı NOT).
-legacyTestsRouter.delete('/test-runs', async (_req, res) => {
+legacyTestsRouter.delete('/test-runs', async (req, res) => {
   try {
-    const result = await legacyTestService.clearTestRuns();
+    const result = await legacyTestService.clearTestRuns(getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'test-runs temizlenemedi');
@@ -124,16 +136,16 @@ legacyTestsRouter.delete('/test-runs', async (_req, res) => {
 
 legacyTestsRouter.delete('/test-runs/:id', async (req, res) => {
   try {
-    const result = await legacyTestService.deleteTestRun(req.params.id);
+    const result = await legacyTestService.deleteTestRun(req.params.id, getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     res.status(404).json({ message: errorMessage(err, 'Koşum silinemedi.') });
   }
 });
 
-legacyTestsRouter.get('/generated-tests', async (_req, res) => {
+legacyTestsRouter.get('/generated-tests', async (req, res) => {
   try {
-    const result = await legacyTestService.listGeneratedTests();
+    const result = await legacyTestService.listGeneratedTests(getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests listelenemedi');
@@ -143,7 +155,10 @@ legacyTestsRouter.get('/generated-tests', async (_req, res) => {
 
 legacyTestsRouter.get('/generated-tests/:fileName', async (req, res) => {
   try {
-    const result = await legacyTestService.getGeneratedTestCode(req.params.fileName);
+    const result = await legacyTestService.getGeneratedTestCode(
+      req.params.fileName,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json(result);
   } catch (err) {
     res.status(404).json({ message: errorMessage(err, 'Test kodu alınamadı.') });
@@ -153,9 +168,9 @@ legacyTestsRouter.get('/generated-tests/:fileName', async (req, res) => {
 // NOT: Bu route, '/generated-tests/:fileName' route'undan ÖNCE tanımlanmasa da sorun olmaz —
 // Express, farklı segment sayısına sahip path'leri (parametresiz vs. :fileName'li) yapısal
 // olarak ayırt eder, sıralama sadece AYNI şekle sahip route'lar arasında önem taşır.
-legacyTestsRouter.delete('/generated-tests', async (_req, res) => {
+legacyTestsRouter.delete('/generated-tests', async (req, res) => {
   try {
-    const result = await legacyTestService.clearGeneratedTests();
+    const result = await legacyTestService.clearGeneratedTests(getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests temizlenemedi');
@@ -165,7 +180,10 @@ legacyTestsRouter.delete('/generated-tests', async (_req, res) => {
 
 legacyTestsRouter.delete('/generated-tests/:fileName', async (req, res) => {
   try {
-    const result = await legacyTestService.deleteGeneratedTest(req.params.fileName);
+    const result = await legacyTestService.deleteGeneratedTest(
+      req.params.fileName,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json(result);
   } catch (err) {
     res.status(404).json({ message: errorMessage(err, 'Test silinemedi.') });
@@ -184,7 +202,11 @@ legacyTestsRouter.patch('/generated-tests/:fileName/name', async (req, res) => {
   }
 
   try {
-    const result = await legacyTestService.renameGeneratedTest(req.params.fileName, parsed.data.displayName);
+    const result = await legacyTestService.renameGeneratedTest(
+      req.params.fileName,
+      parsed.data.displayName,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests/:fileName/name başarısız');
@@ -205,8 +227,11 @@ legacyTestsRouter.post('/generated-tests/run', async (req, res) => {
 
   try {
     const { fileName, ...overrides } = parsed.data;
-    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
-    const result = await legacyTestService.runGeneratedTest(fileName, overrides, actingUserId);
+    const result = await legacyTestService.runGeneratedTest(
+      fileName,
+      overrides,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests/run başarısız');
@@ -226,8 +251,11 @@ legacyTestsRouter.post('/generated-tests/replay', async (req, res) => {
 
   try {
     const { fileName, ...overrides } = parsed.data;
-    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
-    const result = await legacyTestService.replayGeneratedTest(fileName, overrides, actingUserId);
+    const result = await legacyTestService.replayGeneratedTest(
+      fileName,
+      overrides,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'generated-tests/replay başarısız');
@@ -251,8 +279,10 @@ legacyTestsRouter.post('/generated-tests/run-batch', async (req, res) => {
   }
 
   try {
-    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
-    const results = await legacyTestService.runGeneratedTestsBatch(parsed.data.fileNames, actingUserId);
+    const results = await legacyTestService.runGeneratedTestsBatch(
+      parsed.data.fileNames,
+      getCaller(req as RequestWithAuthUser),
+    );
     res.status(200).json({ results });
   } catch (err) {
     log.error({ err }, 'generated-tests/run-batch başarısız');

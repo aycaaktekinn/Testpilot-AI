@@ -25,3 +25,17 @@ export interface ProjectInput {
    * yoksayılır, PROJECTS.CREATED_BY ilk oluşturmadan sonra bir daha DEĞİŞMEZ. */
   createdBy?: number;
 }
+
+/**
+ * v3.1 — Admin Panel / Proje Üye Ataması. PROJECT_MEMBERS + USERS JOIN'inin camelCase karşılığı
+ * (bkz. projectStore.listProjectMembers). MEMBER rolündeki bir kullanıcının hangi projeleri
+ * görebildiğini belirleyen tablo budur (bkz. projectStore.listProjectsForUser /
+ * projects.ts dosya başı NOT — "admin hepsini görür, member sadece kendine atananı görür").
+ */
+export interface ProjectMember {
+  id: number;
+  username: string;
+  displayName: string | null;
+  role: 'ADMIN' | 'MEMBER';
+  assignedAt: string;
+}

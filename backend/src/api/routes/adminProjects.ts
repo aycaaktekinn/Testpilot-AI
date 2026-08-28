@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { createProject, deleteProject, listProjects, updateProject } from '../../db/projectStore.js';
+import {
+  addProjectMember,
+  createProject,
+  deleteProject,
+  listProjectMembers,
+  listProjects,
+  removeProjectMember,
+  updateProject,
+} from '../../db/projectStore.js';
 import { requireAdmin, type RequestWithAuthUser } from '../middleware/requireAdmin.js';
 import { env } from '../../config/env.js';
 import { createLogger } from '../../config/logger.js';
@@ -110,6 +118,71 @@ adminProjectsRouter.delete('/admin/projects/:id', async (req, res, next) => {
 
   try {
     await deleteProject(id);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * v3.1 — Admin Panel / Proje Üye Ataması (bkz. sohbet notu: "admin panelden proje ataması
+ * yapacağız nasıl yapalım" → kullanıcı ile netleştirme: UI Projects sekmesinde satır başına
+ * "Members" butonu, listede ADMIN'ler de dahil olacak şekilde). Bu üç route dosya başındaki AYNI
+ * Oracle-yapılandırılmamış 503 + requireAdmin middleware zincirinin arkasında.
+ */
+const addProjectMemberSchema = z.object({
+  userId: z.coerce.number().int('Geçersiz kullanıcı id'),
+});
+
+adminProjectsRouter.get('/admin/projects/:id/members', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Geçersiz proje id' } });
+    return;
+  }
+
+  try {
+    const members = await listProjectMembers(id);
+    res.status(200).json({ members });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminProjectsRouter.post('/admin/projects/:id/members', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Geçersiz proje id' } });
+    return;
+  }
+
+  const parsed = addProjectMemberSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: formatZodError(parsed.error) } });
+    return;
+  }
+
+  try {
+    await addProjectMember(id, parsed.data.userId);
+    // Ekledikten sonra güncel üye listesini döndürüyoruz — frontend ayrıca bir GET atmasın diye
+    // (bkz. app.js openProjectMembersModal, tek response'la tabloyu tazeler).
+    const members = await listProjectMembers(id);
+    res.status(200).json({ members });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminProjectsRouter.delete('/admin/projects/:id/members/:userId', async (req, res, next) => {
+  const id = Number(req.params.id);
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(id) || !Number.isInteger(userId)) {
+    res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Geçersiz proje veya kullanıcı id' } });
+    return;
+  }
+
+  try {
+    await removeProjectMember(id, userId);
     res.status(204).send();
   } catch (err) {
     next(err);

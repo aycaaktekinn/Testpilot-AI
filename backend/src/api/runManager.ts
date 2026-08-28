@@ -43,7 +43,7 @@ class RunManager {
   private readonly runs = new Map<string, RunRecord>();
   private readonly llmProvider = createLlmProvider();
 
-  startRun(request: TestRunRequest): RunSummary {
+  startRun(request: TestRunRequest, ownerId?: number | null): RunSummary {
     const runId = nanoid(12);
     const options = { ...defaultRunOptions, ...request.options };
 
@@ -54,6 +54,8 @@ class RunManager {
       scenario: request.scenario,
       startedAt: new Date().toISOString(),
       currentStep: 0,
+      // v3.1 — bkz. RunSummary.ownerId dosya başı açıklaması.
+      ownerId: ownerId ?? null,
     };
 
     // Yerel bir değişkende tutuyoruz (record.loop üzerinden değil): RunRecord.loop artık opsiyonel
@@ -121,11 +123,11 @@ class RunManager {
    * AI'a düşmemesi için hiçbir neden yok (bkz. LegacyTestService.runGeneratedTest — AYNI genişletme
    * orada da yapıldı, iki yer TUTARLI kalmalı).
    */
-  startRunWithAutoRetry(request: TestRunRequest): RunSummary {
+  startRunWithAutoRetry(request: TestRunRequest, ownerId?: number | null): RunSummary {
     const isReplayAttempt = Boolean(request.replaySteps && request.replaySteps.length > 0);
     if (!isReplayAttempt) {
       // Zaten tam AI ile başlıyor — retry mantığına gerek yok, normal startRun ile birebir aynı.
-      return this.startRun(request);
+      return this.startRun(request, ownerId);
     }
 
     const runId = nanoid(12);
@@ -138,6 +140,8 @@ class RunManager {
       scenario: request.scenario,
       startedAt: new Date().toISOString(),
       currentStep: 0,
+      // v3.1 — bkz. RunSummary.ownerId dosya başı açıklaması.
+      ownerId: ownerId ?? null,
     };
 
     const record: RunRecord = { summary, listeners: new Set() };
@@ -239,7 +243,7 @@ class RunManager {
    * bloklayan istek olarak tasarlanmış eski frontend akışına, sözleşmeyi hiç bozmadan canlı
    * ilerleme görünürlüğü eklemenin yolu budur.
    */
-  registerExternalRun(runId: string, url: string, scenario: string): void {
+  registerExternalRun(runId: string, url: string, scenario: string, ownerId?: number | null): void {
     if (this.runs.has(runId)) return; // idempotent — aynı runId ile iki kez çağrılırsa yok say.
 
     const summary: RunSummary = {
@@ -249,6 +253,8 @@ class RunManager {
       scenario,
       startedAt: new Date().toISOString(),
       currentStep: 0,
+      // v3.1 — bkz. RunSummary.ownerId dosya başı açıklaması.
+      ownerId: ownerId ?? null,
     };
 
     this.runs.set(runId, { summary, listeners: new Set() });

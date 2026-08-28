@@ -1,6 +1,6 @@
 import oracledb from 'oracledb';
 import { withConnection } from './oracleClient.js';
-import type { Project, ProjectInput } from '../domain/adminTypes.js';
+import type { Project, ProjectInput, ProjectMember } from '../domain/adminTypes.js';
 import { NotFoundError, ValidationError } from '../domain/errors.js';
 
 /**
@@ -50,6 +50,25 @@ export async function listProjects(): Promise<Project[]> {
       `SELECT PROJECT_ID, PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_AT, CREATED_BY
        FROM PROJECTS
        ORDER BY CREATED_AT DESC`,
+    );
+    return (result.rows ?? []).map(mapRow);
+  });
+}
+
+/**
+ * v3.1 — MEMBER rolündeki kullanıcılar için: sadece PROJECT_MEMBERS'ta kendisine atanmış
+ * projeleri döner (bkz. projects.ts route'undaki dosya başı NOT — ADMIN hâlâ `listProjects()` ile
+ * hepsini görür, bu fonksiyon SADECE MEMBER için kullanılır).
+ */
+export async function listProjectsForUser(userId: number): Promise<Project[]> {
+  return withConnection(async (connection) => {
+    const result = await connection.execute<ProjectRow>(
+      `SELECT p.PROJECT_ID, p.PROJECT_NAME, p.MAX_PARALLEL_RUNS, p.LLM_MODEL, p.CREATED_AT, p.CREATED_BY
+       FROM PROJECTS p
+       INNER JOIN PROJECT_MEMBERS pm ON pm.PROJECT_ID = p.PROJECT_ID
+       WHERE pm.USER_ID = :userId
+       ORDER BY p.CREATED_AT DESC`,
+      { userId },
     );
     return (result.rows ?? []).map(mapRow);
   });
@@ -151,6 +170,88 @@ export async function deleteProject(id: number): Promise<void> {
 
     if (!result.rowsAffected) {
       throw new NotFoundError(`Proje bulunamadı: ${id}`);
+    }
+  });
+}
+
+/**
+ * v3.1 — Admin Panel / Proje Üye Ataması (bkz. sohbet notu: "admin panelden proje ataması
+ * yapacağız"). PROJECT_MEMBERS o güne kadar hiçbir kod tarafından yazılmıyordu (bkz. dosya başı
+ * NOT — "ileride Faz 4/5'te ... JOIN'ler eklenince" öngörüsü, işte o Faz). Bu üç fonksiyon
+ * PROJECT_MEMBERS için TEK CRUD katmanı — adminProjects.ts route'u da (Project CRUD'daki gibi)
+ * DOĞRUDAN Oracle SQL'i görmez.
+ */
+interface ProjectMemberRow {
+  USER_ID: number;
+  USERNAME: string;
+  DISPLAY_NAME: string | null;
+  ROLE: 'ADMIN' | 'MEMBER';
+  ASSIGNED_AT: Date;
+}
+
+function mapMemberRow(row: ProjectMemberRow): ProjectMember {
+  return {
+    id: row.USER_ID,
+    username: row.USERNAME,
+    displayName: row.DISPLAY_NAME,
+    role: row.ROLE,
+    assignedAt: row.ASSIGNED_AT.toISOString(),
+  };
+}
+
+/** ADMIN dahil TÜM kullanıcılar üye olarak eklenebilir (bkz. sohbet notu: "Hepsi listelensin
+ * (ADMIN dahil)") — ADMIN zaten listProjects()'le her projeyi gördüğü için bu satırın
+ * görünürlüğe pratik bir etkisi yok, sadece admin panelinde kimin "resmi olarak" atanmış
+ * göründüğünü belirler. */
+export async function listProjectMembers(projectId: number): Promise<ProjectMember[]> {
+  return withConnection(async (connection) => {
+    const result = await connection.execute<ProjectMemberRow>(
+      `SELECT u.USER_ID, u.USERNAME, u.DISPLAY_NAME, u.ROLE, pm.ASSIGNED_AT
+       FROM PROJECT_MEMBERS pm
+       INNER JOIN USERS u ON u.USER_ID = pm.USER_ID
+       WHERE pm.PROJECT_ID = :projectId
+       ORDER BY pm.ASSIGNED_AT DESC`,
+      { projectId },
+    );
+    return (result.rows ?? []).map(mapMemberRow);
+  });
+}
+
+/** Zaten üye olan bir kullanıcı tekrar eklenmeye çalışılırsa (ORA-00001 — PROJECT_MEMBERS'ın
+ * PROJECT_ID+USER_ID birleşik PK'si ihlal edilir) sessizce no-op sayılır: idempotent davranış,
+ * frontend'in ayrıca "zaten ekli mi" kontrolü yapmasına gerek bırakmaz. Proje ya da kullanıcı id'si
+ * geçersizse (ORA-02291, FK ihlali) NotFoundError'a çevrilir. */
+export async function addProjectMember(projectId: number, userId: number): Promise<void> {
+  return withConnection(async (connection) => {
+    try {
+      await connection.execute(`INSERT INTO PROJECT_MEMBERS (PROJECT_ID, USER_ID) VALUES (:projectId, :userId)`, {
+        projectId,
+        userId,
+      });
+      await connection.commit();
+    } catch (err) {
+      const oraError = err as { errorNum?: number };
+      if (oraError.errorNum === 1) {
+        return;
+      }
+      if (oraError.errorNum === 2291) {
+        throw new NotFoundError('Proje veya kullanıcı bulunamadı.');
+      }
+      throw err as Error;
+    }
+  });
+}
+
+export async function removeProjectMember(projectId: number, userId: number): Promise<void> {
+  return withConnection(async (connection) => {
+    const result = await connection.execute(
+      `DELETE FROM PROJECT_MEMBERS WHERE PROJECT_ID = :projectId AND USER_ID = :userId`,
+      { projectId, userId },
+    );
+    await connection.commit();
+
+    if (!result.rowsAffected) {
+      throw new NotFoundError('Kullanıcı bu projeye zaten üye değil.');
     }
   });
 }

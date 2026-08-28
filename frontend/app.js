@@ -90,6 +90,17 @@ const closeSidebarButton = document.getElementById('closeSidebarButton');
    UTILITIES
 ========================================================= */
 
+// v3.1 — bir adımın kararının NEREDEN geldiğini gösteren kısa etiket (bkz. backend
+// AgentDecision.decisionSource dosya başı NOT'u). Modül-seviyesinde tanımlı — hem Create Test
+// sayfasının canlı Execution Log'u (formatLiveStepLine) HEM Generated Tests sayfasının adım listesi
+// AYNI etiketi kullansın diye (bkz. sohbet notu: "execution logta vector db den mi yoksa llmden
+// mi onu da görelim").
+const DECISION_SOURCE_LABELS = {
+    llm: 'LLM',
+    vector_cache: 'Cache',
+    replay: 'Replay',
+};
+
 // LLM'den ya da kullanıcıdan gelen metni innerHTML ile basarken kullanılıyor — detached bir div'e
 // .textContent atayıp .innerHTML olarak geri okumak, tarayıcının kendi HTML escape mantığını
 // kullanmanın en güvenilir yolu (XSS'e karşı).
@@ -1939,19 +1950,38 @@ function initCreateTestPage() {
     let liveLogConnected = false;
 
 
+    // v3.1 — BDD-stil, insan-okunur satır (bkz. backend BddStepView/buildBddSteps.ts dosya başı
+    // açıklaması ve trackBatchRuns()'taki AYNI alan seçimi — "Aynı şekil buildBddSteps() ile
+    // birebir eşleşsin diye" notu burada da geçerli). ÖNCEDEN ham/teknik bir format kullanılıyordu
+    // (ör. "[Step 1] click -> e12 | OK: ..."), artık AI'nın o adım için verdiği doğal dil
+    // gerekçesi/özeti gösteriliyor (ör. "Step 1: Arama kısmına tıklandı") — sohbet notu: "step 1
+    // arama kısmına tıklandı ... gibi stepler olsun istiyorum".
+    //
+    // [LLM]/[Cache]/[Replay] etiketi için bkz. dosya başındaki GLOBAL ELEMENTS bölümünde tanımlı
+    // DECISION_SOURCE_LABELS (Generated Tests sayfasının adım listesiyle AYNI etiketi kullansın
+    // diye modül-seviyesinde, bu closure'a özel DEĞİL).
     function formatLiveStepLine(step) {
 
-        const target =
-            step.decision?.targetRef
-                ? ` -> ${step.decision.targetRef}`
+        const description =
+            step.decision?.summary?.trim() ||
+            step.decision?.reasoning ||
+            step.decision?.action ||
+            '';
+
+        const sourceLabel =
+            DECISION_SOURCE_LABELS[step.decision?.decisionSource] || '';
+
+        const sourceSuffix =
+            sourceLabel
+                ? ` [${sourceLabel}]`
                 : '';
 
-        const status =
-            step.actionResult?.ok
-                ? 'OK'
-                : 'FAIL';
+        const failSuffix =
+            step.actionResult?.ok === false
+                ? ' — BAŞARISIZ'
+                : '';
 
-        return `[Step ${step.stepIndex + 1}] ${step.decision?.action}${target} | ${status}: ${step.actionResult?.message}`;
+        return `Step ${step.stepIndex + 1}: ${description}${sourceSuffix}${failSuffix}`;
     }
 
 
@@ -5782,6 +5812,30 @@ async function initGeneratedTestsPage() {
                                         <span class="font-body-sm text-body-sm text-on-surface flex-1">
                                             ${escapeHtml(step.description)}
                                         </span>
+                                        ${
+                                        step.decisionSource
+                                            ? `
+                                        <span
+                                                class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 mt-[2px] ${
+                                            step.decisionSource === 'vector_cache'
+                                                ? 'bg-primary/15 text-primary'
+                                                : step.decisionSource === 'replay'
+                                                    ? 'bg-secondary/15 text-secondary'
+                                                    : 'bg-surface-container-high text-on-surface-variant'
+                                        }"
+                                                title="${
+                                            step.decisionSource === 'vector_cache'
+                                                ? 'Vector cache — LLM’e hiç danışılmadı'
+                                                : step.decisionSource === 'replay'
+                                                    ? 'Replay (No AI)'
+                                                    : 'Gerçek LLM çağrısı'
+                                        }"
+                                        >
+                                            ${escapeHtml(DECISION_SOURCE_LABELS[step.decisionSource] || step.decisionSource)}
+                                        </span>
+                                        `
+                                            : ''
+                                    }
                                         <span
                                             class="
                                                 font-mono text-[10px]
@@ -6467,6 +6521,8 @@ async function initGeneratedTestsPage() {
                                 ok: Boolean(
                                     data.step?.actionResult?.ok,
                                 ),
+                                // v3.1 — bkz. formatLiveStepLine() dosya başı NOT'u (DECISION_SOURCE_LABELS).
+                                decisionSource: data.step?.decision?.decisionSource,
                             });
 
                             liveStepsByFile.set(
@@ -8390,6 +8446,17 @@ async function initAdminPanelPage() {
     const maxParallelInput = document.getElementById('adminProjectMaxParallel');
     const llmModelInput = document.getElementById('adminProjectLlmModel');
 
+    // v3.1 — Proje Üye Ataması modalı (bkz. openProjectMembersModal aşağıda).
+    const membersModal = document.getElementById('adminProjectMembersModal');
+    const membersModalTitle = document.getElementById('adminProjectMembersModalTitle');
+    const closeMembersModalButton = document.getElementById('closeAdminProjectMembersModal');
+    const doneMembersModalButton = document.getElementById('doneAdminProjectMembersModal');
+    const membersListEl = document.getElementById('adminProjectMembersList');
+    const membersEmptyEl = document.getElementById('adminProjectMembersEmpty');
+    const addMemberSelect = document.getElementById('addProjectMemberSelect');
+    const addMemberButton = document.getElementById('addProjectMemberButton');
+    let membersModalProjectId = null;
+
     // Bu sayfaya özel, küçük bir tarih biçimlendirici — formatDate() diğer sayfaların kendi
     // closure'ları içinde tanımlı (ör. Generated Tests), global değil, bu yüzden burada ayrıca
     // (kasıtlı olarak minimal) bir kopyası var.
@@ -8464,6 +8531,21 @@ async function initAdminPanelPage() {
                 <td class="py-sm px-md text-right">
                     <div class="flex justify-end gap-sm">
                         <button
+                                class="membersProjectButton
+                                       inline-flex items-center justify-center
+                                       text-on-surface-variant hover:text-on-surface
+                                       p-[6px] rounded-lg
+                                       border border-outline-variant
+                                       transition-colors"
+                                data-id="${project.id}"
+                                title="Members"
+                                aria-label="Manage members of ${escapeHtml(project.name)}"
+                                type="button"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">group</span>
+                        </button>
+
+                        <button
                                 class="editProjectButton
                                        inline-flex items-center justify-center
                                        text-on-surface-variant hover:text-on-surface
@@ -8503,6 +8585,16 @@ async function initAdminPanelPage() {
     }
 
     function wireProjectRowButtons() {
+
+        document.querySelectorAll('.membersProjectButton').forEach((button) => {
+            button.addEventListener('click', () => {
+                const id = Number(button.getAttribute('data-id'));
+                const project = currentProjects.find((p) => p.id === id);
+                if (project) {
+                    openProjectMembersModal(project);
+                }
+            });
+        });
 
         document.querySelectorAll('.editProjectButton').forEach((button) => {
             button.addEventListener('click', () => {
@@ -8547,6 +8639,189 @@ async function initAdminPanelPage() {
             });
         });
     }
+
+    /* -----------------------------------------------------
+       PROJE ÜYE ATAMASI — v3.1. "Members" butonuyla açılır,
+       PROJECT_MEMBERS'a kullanıcı ekler/çıkarır (bkz. sohbet
+       notu: "admin panelden proje ataması yapacağız"). ADMIN
+       dahil TÜM kullanıcılar listede görünür (bkz. sohbet
+       notu — MEMBER görünürlüğüne pratik etkisi yok, sadece
+       "resmi" atamayı gösterir); MEMBER rolündeki kullanıcılar
+       için projects.ts/listProjectsForUser bu tabloyu okuyarak
+       gerçek görünürlüğü belirler.
+    ----------------------------------------------------- */
+
+    function openProjectMembersModal(project) {
+        membersModalProjectId = project.id;
+        membersModalTitle.textContent = `Members — ${project.name}`;
+        membersModal.classList.remove('hidden');
+        membersModal.classList.add('flex');
+        refreshProjectMembersModal();
+    }
+
+    function closeProjectMembersModal() {
+        membersModal.classList.add('hidden');
+        membersModal.classList.remove('flex');
+        membersModalProjectId = null;
+    }
+
+    function renderProjectMembersList(members) {
+        if (!members.length) {
+            membersListEl.innerHTML = '';
+            membersEmptyEl.classList.remove('hidden');
+            return;
+        }
+
+        membersEmptyEl.classList.add('hidden');
+
+        membersListEl.innerHTML = members.map((member) => {
+            const isAdmin = member.role === 'ADMIN';
+            const label = member.displayName ? member.displayName : member.username;
+
+            return `
+            <div class="flex items-center justify-between gap-sm py-xs px-sm rounded-lg bg-surface-container-high/60">
+                <div class="flex items-center gap-2 min-w-0">
+                    <span class="font-body-sm text-body-sm text-on-surface font-semibold truncate">${escapeHtml(label)}</span>
+                    <span class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'bg-primary/15 text-primary' : 'bg-surface-container-high text-on-surface-variant'}">
+                        ${escapeHtml(member.role)}
+                    </span>
+                </div>
+                <button
+                        class="removeProjectMemberButton
+                               inline-flex items-center justify-center
+                               text-on-surface-variant hover:text-error
+                               hover:bg-error/10
+                               p-[4px] rounded-lg
+                               transition-colors"
+                        data-user-id="${member.id}"
+                        title="Remove"
+                        aria-label="Remove ${escapeHtml(label)}"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined text-[16px]">close</span>
+                </button>
+            </div>
+            `;
+        }).join('');
+
+        document.querySelectorAll('.removeProjectMemberButton').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const userId = button.getAttribute('data-user-id');
+                button.disabled = true;
+                try {
+                    const response = await fetch(`/api/admin/projects/${membersModalProjectId}/members/${userId}`, {
+                        method: 'DELETE',
+                    });
+                    if (!response.ok && response.status !== 204) {
+                        const result = await response.json().catch(() => ({}));
+                        throw new Error(result.error?.message || 'Failed to remove member.');
+                    }
+                    showToast('Member removed.', 'success');
+                    await refreshProjectMembersModal();
+                } catch (error) {
+                    console.error(error);
+                    showToast(error instanceof Error ? error.message : 'Failed to remove member.', 'error');
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    /** Modal her açıldığında/değiştiğinde HEM güncel üye listesini HEM TÜM kullanıcıları
+     * (zaten üye olanlar "add" dropdown'ından hariç tutulacak şekilde) yeniden çeker — Users
+     * sekmesindeki `usersLoadedOnce` gibi bir cache burada BİLİNÇLİ OLARAK yok, çünkü modal nadiren
+     * açılır ve her zaman en güncel atamayı göstermesi daha önemli. */
+    async function refreshProjectMembersModal() {
+        if (membersModalProjectId == null) {
+            return;
+        }
+
+        addMemberButton.disabled = true;
+        addMemberSelect.disabled = true;
+        addMemberSelect.innerHTML = '<option value="">Loading...</option>';
+
+        try {
+            const [membersResponse, usersResponse] = await Promise.all([
+                fetch(`/api/admin/projects/${membersModalProjectId}/members`),
+                fetch('/api/admin/users'),
+            ]);
+
+            if (membersResponse.status === 401 || usersResponse.status === 401) {
+                showLoginGate();
+                return;
+            }
+
+            const membersResult = await membersResponse.json();
+            const usersResult = await usersResponse.json();
+
+            if (!membersResponse.ok) {
+                throw new Error(membersResult.error?.message || 'Failed to load members.');
+            }
+            if (!usersResponse.ok) {
+                throw new Error(usersResult.error?.message || 'Failed to load users.');
+            }
+
+            const members = membersResult.members || [];
+            const allUsers = usersResult.users || [];
+
+            renderProjectMembersList(members);
+
+            const memberIds = new Set(members.map((m) => m.id));
+            const assignable = allUsers.filter((u) => !memberIds.has(u.id));
+
+            if (!assignable.length) {
+                addMemberSelect.innerHTML = '<option value="">No more users to add</option>';
+                addMemberSelect.disabled = true;
+                addMemberButton.disabled = true;
+                return;
+            }
+
+            addMemberSelect.innerHTML = assignable.map((u) => {
+                const label = u.displayName ? `${u.displayName} (${u.username})` : u.username;
+                return `<option value="${u.id}">${escapeHtml(label)} — ${escapeHtml(u.role)}</option>`;
+            }).join('');
+            addMemberSelect.disabled = false;
+            addMemberButton.disabled = false;
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load project members.', 'error');
+        }
+    }
+
+    closeMembersModalButton.addEventListener('click', closeProjectMembersModal);
+    doneMembersModalButton.addEventListener('click', closeProjectMembersModal);
+
+    addMemberButton.addEventListener('click', async () => {
+        const userId = addMemberSelect.value;
+        if (!userId || membersModalProjectId == null) {
+            return;
+        }
+
+        addMemberButton.disabled = true;
+
+        try {
+            const response = await fetch(`/api/admin/projects/${membersModalProjectId}/members`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: Number(userId) }),
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to add member.');
+            }
+
+            showToast('Member added.', 'success');
+            await refreshProjectMembersModal();
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to add member.', 'error');
+            addMemberButton.disabled = false;
+        }
+    });
 
     async function loadAdminProjects() {
 

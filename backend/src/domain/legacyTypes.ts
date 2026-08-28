@@ -8,6 +8,17 @@ import type { ActionType, BrowserEngine, ReplayStep } from './types.js';
 
 export type LegacyStatus = 'passed' | 'failed';
 
+/**
+ * v3.1 — kullanıcı bazlı görünürlük (Test Runs/Generated Tests/Projects sayfaları): her isteğin
+ * kimin adına yapıldığını taşır. `role === 'ADMIN'` olan her şeyi görür/yönetir; `MEMBER` sadece
+ * kendi `ownerId`'siyle etiketlenmiş kayıtlara erişebilir. Bu, requireAuth middleware'inin zaten
+ * doldurduğu `req.authUser`'dan (userId + role) birebir türetilir — bkz. legacyTests.ts NOT'u.
+ */
+export interface CallerContext {
+  userId: number;
+  role: 'ADMIN' | 'MEMBER';
+}
+
 /** Frontend'in "Generate & Run" / "Run existing test" çağrılarından beklediği yanıt şekli. */
 export interface LegacyTestResultResponse {
   generatedCode: string;
@@ -38,6 +49,13 @@ export interface LegacyRunRecord {
   error?: string;
   errorOutput?: string;
   exitCode: number;
+  /**
+   * v3.1 — bu koşumu başlatan kullanıcının USER_ID'si (bkz. CallerContext, LegacyTestService
+   * finalizeResult). OPSİYONEL: bu alan eklenmeden ÖNCE üretilmiş eski kayıtlarda bulunmaz —
+   * bu durumda kayıt "sahipsiz" sayılır ve SADECE admin rolündeki kullanıcılara gösterilir (bkz.
+   * LegacyTestService.isVisibleTo dosya başı NOT'u).
+   */
+  ownerId?: number | null;
 }
 
 /**
@@ -53,6 +71,15 @@ export interface BddStepView {
   /** AI'nın bu adım için verdiği doğal dil gerekçesi (ör. "Arama kutusuna 'kablosuz kulaklık' yazıldı"). */
   description: string;
   ok: boolean;
+  /**
+   * v3.1 — bu adımın kararı NEREDEN geldi (bkz. AgentDecision.decisionSource dosya başı NOT'u):
+   * 'llm' gerçek bir model çağrısı, 'vector_cache' geçmiş benzer bir karardan LLM'e HİÇ
+   * danışılmadan yeniden kullanıldı, 'replay' kullanıcının "Replay (No AI)" ile kaydedilmiş bir
+   * adımı yeniden oynatması. Sohbet notu: "execution logta vector db den mi yoksa llmden mi onu
+   * da görelim" — kullanıcı her adımın gerçek bir AI kararı mı yoksa önbellekten mi geldiğini
+   * ayırt edebilsin diye eklendi. Eski (bu alan eklenmeden ÖNCE üretilmiş) kayıtlarda bulunmaz.
+   */
+  decisionSource?: 'llm' | 'vector_cache' | 'replay';
 }
 
 /** GET /api/generated-tests listesindeki + index.json'da saklanan tek bir kayıt. */
@@ -104,6 +131,13 @@ export interface LegacyGeneratedTestMeta {
    * SCENARIOS.PROJECT_ID veritabanında NOT NULL'dur.
    */
   projectId?: number;
+  /**
+   * v3.1 — bu testi üreten koşumu başlatan kullanıcının USER_ID'si (bkz. CallerContext,
+   * LegacyRunRecord.ownerId dosya başı açıklaması — AYNI mantık burada da geçerli). OPSİYONEL:
+   * bu alan eklenmeden ÖNCE üretilmiş eski kayıtlarda bulunmaz — "sahipsiz" sayılır, SADECE admin
+   * görür.
+   */
+  ownerId?: number | null;
 }
 
 /**

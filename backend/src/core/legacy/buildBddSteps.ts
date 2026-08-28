@@ -17,5 +17,6 @@ export function buildBddSteps(report: RunReport): BddStepView[] {
     // adımlarda `reasoning` zaten AI'nın o anki eylemi için verdiği doğal dil gerekçesidir.
     description: step.decision.summary?.trim() || step.decision.reasoning,
     ok: step.actionResult.ok,
+    decisionSource: step.decision.decisionSource,
   }));
 }

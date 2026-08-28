@@ -270,4 +270,11 @@ export interface RunSummary {
   currentStep: number;
   /** v2.2 — bkz. RunReport.seleniumGridLiveViewUrl dosya başı açıklaması. Run SÜRERKEN asıl değerini kazanır. */
   seleniumGridLiveViewUrl?: string;
+  /**
+   * v3.1 — bu run'ı başlatan kullanıcının USER_ID'si (bkz. CallerContext, LegacyRunRecord.ownerId
+   * ile AYNI mantık). runManager bellek-içi olduğu için (her süreç yeniden başlatmasında sıfırlanır)
+   * bu alan eklenmeden ÖNCE başlatılmış "sahipsiz" eski canlı run'lar PRATİKTE hiç oluşmaz — yine de
+   * defansif olarak opsiyonel bırakılır ve `null`/`undefined` "sadece admin görsün" olarak ele alınır.
+   */
+  ownerId?: number | null;
 }

@@ -63,17 +63,32 @@ export class TestRunStore {
 
   /**
    * "Clear All" — listedeki her run'ın detay dosyasını/artefaktlarını silmeyi dener (best-effort,
-   * tek run başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır. Silinen kayıt
-   * sayısını döner (frontend'in "X koşum silindi" gibi bir geri bildirim vermesi için).
+   * tek run başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır (ya da `predicate`
+   * verildiyse SADECE ona uyan kayıtları). Silinen kayıt sayısını döner (frontend'in "X koşum
+   * silindi" gibi bir geri bildirim vermesi için).
+   *
+   * v3.1 — `predicate` OPSİYONEL: verilmezse eski davranış (hepsini sil) AYNEN korunur — admin
+   * için "Clear All" hâlâ gerçekten her şeyi temizler. Member için LegacyTestService, sadece
+   * kendi `ownerId`'siyle eşleşen kayıtları hedefleyen bir predicate geçer — bu sayede "Clear All"
+   * butonu member'da SADECE kendi koşumlarını temizler, başkalarının kayıtlarına dokunmaz.
    */
-  async clear(): Promise<number> {
+  async clear(predicate?: (record: LegacyRunRecord) => boolean): Promise<number> {
     const records = await this.list();
+    const toDelete = predicate ? records.filter(predicate) : records;
 
-    await Promise.all(records.map((r) => this.deleteRunFiles(r.id)));
+    if (toDelete.length === 0) return 0;
 
-    await this.persist([]);
+    await Promise.all(toDelete.map((r) => this.deleteRunFiles(r.id)));
 
-    return records.length;
+    if (predicate) {
+      const deleteIds = new Set(toDelete.map((r) => r.id));
+      const remaining = records.filter((r) => !deleteIds.has(r.id));
+      await this.persist(remaining);
+    } else {
+      await this.persist([]);
+    }
+
+    return toDelete.length;
   }
 
   private async deleteRunFiles(id: string): Promise<void> {
