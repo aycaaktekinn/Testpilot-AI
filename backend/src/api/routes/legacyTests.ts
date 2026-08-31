@@ -77,6 +77,37 @@ const renameSchema = z.object({
   displayName: z.string().max(120, 'İsim en fazla 120 karakter olabilir'),
 });
 
+// v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması (legacyTypes.ts). `days` en az 1 öğe
+// içermelidir — 0 öğeli bir zamanlama hiçbir zaman tetiklenmez, bu kullanıcı hatasını erken
+// (kayıt anında, sessizce hiç çalışmayan bir cron job kurmak yerine) yakalamak içindir.
+const scheduleSchema = z.object({
+  enabled: z.boolean(),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Saat HH:MM formatında olmalı (ör. 23:30)'),
+  days: z.array(z.number().int().min(0).max(6)).min(1, 'En az bir gün seçilmeli'),
+});
+
+// v3.2 — bkz. sohbet notu: "hiç çalıştırmadan girdiğimiz senaryoyu gece çalıştırsa". Kullanıcı
+// senaryoyu HİÇ elle çalıştırmadan sadece kaydedip ilk koşumunun da zamanlanan saatte
+// gerçekleşmesini istiyor. `secrets` BİLİNÇLİ OLARAK bu şemada YOK (generateAndRunSchema'nın
+// aksine) — SecretsVault hiçbir zaman diske yazmaz (bkz. LegacyGenerateAndRunInput.secrets dosya
+// başı açıklaması), bu yüzden gece kimsenin girmediği bir çalıştırmada secret'lar KULLANILAMAZ;
+// bu alanı şemadan çıkarmak, bir kullanıcının secret gerektiren bir senaryoyu yanlışlıkla böyle
+// zamanlayıp sessizce başarısız bir koşumla karşılaşmasını YAPISAL olarak engeller.
+const scheduleOnlySchema = z.object({
+  url: z.string().url('Geçerli bir URL giriniz'),
+  scenario: z.string().min(3, 'Senaryo en az 3 karakter olmalı').max(8000),
+  testName: z.string().max(120, 'İsim en fazla 120 karakter olabilir').optional().default(''),
+  headed: z.boolean().optional().default(false),
+  browser: browserEngineSchema.optional().default('chromium'),
+  screenshot: z.boolean().optional().default(false),
+  video: z.boolean().optional().default(false),
+  trace: z.boolean().optional().default(false),
+  useSeleniumGrid: z.boolean().optional().default(false),
+  variables: z.record(z.string(), z.string()).optional().default({}),
+  projectId: z.coerce.number().int().positive().optional(),
+  schedule: scheduleSchema,
+});
+
 legacyTestsRouter.post('/tests/generate-and-run', async (req, res) => {
   const parsed = generateAndRunSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -211,6 +242,64 @@ legacyTestsRouter.patch('/generated-tests/:fileName/name', async (req, res) => {
   } catch (err) {
     log.error({ err }, 'generated-tests/:fileName/name başarısız');
     res.status(404).json({ message: errorMessage(err, 'Test yeniden adlandırılamadı.') });
+  }
+});
+
+// v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması. Hem Create Test sayfası (test
+// üretildikten HEMEN sonra, ayrı bir takip isteğiyle) hem Generated Tests sayfası (var olan bir
+// testi sonradan zamanlamak/düzenlemek için) AYNI bu endpoint'i kullanır.
+legacyTestsRouter.put('/generated-tests/:fileName/schedule', async (req, res) => {
+  const parsed = scheduleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const result = await legacyTestService.setGeneratedTestSchedule(
+      req.params.fileName,
+      parsed.data,
+      getCaller(req as RequestWithAuthUser),
+    );
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/:fileName/schedule (PUT) başarısız');
+    res.status(404).json({ message: errorMessage(err, 'Zamanlama kaydedilemedi.') });
+  }
+});
+
+legacyTestsRouter.delete('/generated-tests/:fileName/schedule', async (req, res) => {
+  try {
+    const result = await legacyTestService.setGeneratedTestSchedule(
+      req.params.fileName,
+      null,
+      getCaller(req as RequestWithAuthUser),
+    );
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/:fileName/schedule (DELETE) başarısız');
+    res.status(404).json({ message: errorMessage(err, 'Zamanlama kaldırılamadı.') });
+  }
+});
+
+// v3.2 — bkz. scheduleOnlySchema dosya başı açıklaması. Senaryoyu HİÇ çalıştırmadan, sadece bir
+// "generated test" kaydı olarak (koddan/replaySteps'ten yoksun bir placeholder olarak) diske
+// yazar ve zamanlamasını kurar — ilk gerçek koşum, zamanlanan saatte TestScheduler tarafından
+// tetiklenir. Diğer eski uçların AKSİNE bu YENİ bir yüzeydir, normal HTTP durum kodları kullanılır.
+legacyTestsRouter.post('/generated-tests/schedule-only', async (req, res) => {
+  const parsed = scheduleOnlySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const result = await legacyTestService.saveScheduledScenario(parsed.data, actingUserId);
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/schedule-only başarısız');
+    res.status(500).json({ message: errorMessage(err, 'Senaryo zamanlanamadı.') });
   }
 });
 

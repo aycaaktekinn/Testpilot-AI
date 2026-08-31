@@ -565,4 +565,133 @@
 
     </div>
 
+    <!-- SCHEDULE MODAL (v3.2 — bkz. app.js initGeneratedTestsPage NOT: "gece test koşumu"
+         zamanlaması. Bir test satırındaki alarm ikonuna tıklanınca açılır, mevcut zamanlama
+         varsa önceden doldurulmuş olarak.) -->
+    <div
+            id="generatedTestScheduleModal"
+            class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]"
+    >
+        <div class="bg-surface-container p-6 rounded-lg shadow-xl w-full max-w-md border border-outline-variant">
+
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="generatedTestScheduleModalTitle" class="font-headline-md text-on-surface">
+                    Schedule Test
+                </h3>
+
+                <button
+                        id="closeGeneratedTestScheduleModal"
+                        class="text-on-surface-variant hover:text-on-surface"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <div class="flex flex-col gap-4">
+
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input
+                            id="generatedTestScheduleEnabled"
+                            class="rounded bg-surface-container border-outline-variant text-primary"
+                            type="checkbox"
+                    />
+
+                    <span class="font-body-sm text-body-sm text-on-surface">
+                        Run automatically
+                    </span>
+                </label>
+
+                <div id="generatedTestScheduleOptions" class="hidden flex-col gap-3">
+
+                    <div class="flex items-center gap-3">
+                        <label
+                                for="generatedTestScheduleTime"
+                                class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                        >
+                            Time
+                        </label>
+
+                        <input
+                                id="generatedTestScheduleTime"
+                                type="time"
+                                value="23:00"
+                                class="bg-surface-container border border-outline-variant
+                                       rounded px-2 py-1 font-body-sm text-body-sm text-on-surface"
+                        />
+
+                        <span class="font-body-sm text-[12px] text-on-surface-variant/70 italic">
+                            Server's local time
+                        </span>
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-body-sm text-body-sm text-on-surface-variant font-semibold mr-1">
+                                Days
+                            </span>
+
+                            <button
+                                    id="generatedTestScheduleQuickWeekdays"
+                                    type="button"
+                                    class="font-body-sm text-[12px] px-2 py-1 rounded
+                                           border border-outline-variant hover:bg-surface-variant
+                                           transition-colors"
+                            >
+                                Weekdays
+                            </button>
+
+                            <button
+                                    id="generatedTestScheduleQuickEveryDay"
+                                    type="button"
+                                    class="font-body-sm text-[12px] px-2 py-1 rounded
+                                           border border-outline-variant hover:bg-surface-variant
+                                           transition-colors"
+                            >
+                                Every day
+                            </button>
+                        </div>
+
+                        <div id="generatedTestScheduleDaysContainer" class="flex items-center gap-1 flex-wrap">
+                            <!-- createScheduleDayToggles() ile app.js'ten dinamik doldurulur. -->
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="flex justify-between items-center gap-2 mt-6">
+                <button
+                        id="removeGeneratedTestScheduleButton"
+                        class="hidden text-error hover:text-error/80 font-body-sm text-body-sm"
+                        type="button"
+                >
+                    Remove schedule
+                </button>
+
+                <div class="flex gap-2 ml-auto">
+                    <button
+                            id="cancelGeneratedTestScheduleButton"
+                            class="px-4 py-2 rounded-md font-body-sm text-body-sm
+                                   text-on-surface-variant hover:bg-surface-variant transition-colors"
+                            type="button"
+                    >
+                        Cancel
+                    </button>
+
+                    <button
+                            id="saveGeneratedTestScheduleButton"
+                            class="px-4 py-2 rounded-md font-body-sm text-body-sm
+                                   bg-primary text-on-primary hover:bg-primary/90 transition-colors"
+                            type="button"
+                    >
+                        Save
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
 </div>

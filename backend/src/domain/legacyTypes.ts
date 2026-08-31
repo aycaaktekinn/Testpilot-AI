@@ -82,6 +82,21 @@ export interface BddStepView {
   decisionSource?: 'llm' | 'vector_cache' | 'replay';
 }
 
+/**
+ * v3.2 — bir generated test'in gece/otomatik koşum zamanlaması (bkz. sohbet notu: "gece test
+ * koşumu yapabilmemiz için zamanlayıcı"). `time` 24 saatlik "HH:MM" formatındadır (yerel sunucu
+ * saatine göre yorumlanır — bkz. TestScheduler.ts dosya başı NOT); `days` 0 (Pazar) - 6 (Cumartesi)
+ * arası, cron'un gün-of-week alanıyla AYNI sayı sistemi, en az bir gün içermelidir. `enabled: false`
+ * iken TestScheduler bu kayıt için hiçbir cron job KURMAZ — kullanıcı zamanlamayı silmeden geçici
+ * olarak kapatabilsin diye (ör. "bu hafta çalıştırma ama ayarları kaybetme") `enabled` alanı BİLİNÇLİ
+ * OLARAK schedule'ı komple silmekten (`schedule: undefined`) ayrı tutuldu.
+ */
+export interface GeneratedTestSchedule {
+  enabled: boolean;
+  time: string;
+  days: number[];
+}
+
 /** GET /api/generated-tests listesindeki + index.json'da saklanan tek bir kayıt. */
 export interface LegacyGeneratedTestMeta {
   fileName: string;
@@ -138,6 +153,9 @@ export interface LegacyGeneratedTestMeta {
    * görür.
    */
   ownerId?: number | null;
+  /** v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması. OPSİYONEL: hiç zamanlanmamış bir
+   * testte bu alan hiç yoktur (frontend'de "Zamanlanmadı" olarak gösterilir). */
+  schedule?: GeneratedTestSchedule;
 }
 
 /**
@@ -186,6 +204,29 @@ export interface LegacyGenerateAndRunInput {
   secrets?: Record<string, string>;
   /** v3.0 Faz 6 — bkz. LegacyGeneratedTestMeta.projectId dosya başı açıklaması. OPSİYONEL. */
   projectId?: number;
+}
+
+/**
+ * v3.2 — bkz. sohbet notu: "hiç çalıştırmadan girdiğimiz senaryoyu gece çalıştırsa". POST
+ * /generated-tests/schedule-only gövdesi. `LegacyGenerateAndRunInput`'un neredeyse birebir aynısı,
+ * SADECE İKİ farkla: `secrets` alanı hiç YOK (bkz. LegacyTestService.saveScheduledScenario dosya
+ * başı açıklaması — SecretsVault hiçbir zaman diske yazmaz, bu yüzden kimsenin izlemediği bir
+ * gece koşumunda secret KULLANILAMAZ) ve `schedule` ZORUNLUDUR (bu uç bir zamanlama OLMADAN
+ * anlamsızdır — zamanlamasız kayıt için zaten `generateAndRun` + ayrı PUT .../schedule akışı var).
+ */
+export interface LegacyScheduleOnlyInput {
+  url: string;
+  scenario: string;
+  testName?: string;
+  headed: boolean;
+  browser: BrowserEngine;
+  screenshot: boolean;
+  video: boolean;
+  trace: boolean;
+  useSeleniumGrid: boolean;
+  variables: Record<string, string>;
+  projectId?: number;
+  schedule: GeneratedTestSchedule;
 }
 
 export interface LegacyRunExistingOverrides {

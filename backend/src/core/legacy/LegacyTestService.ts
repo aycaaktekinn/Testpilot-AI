@@ -4,9 +4,11 @@ import type { ReplayStep, RunArtifacts, RunOptions, RunReport } from '../../doma
 import type {
   BatchRunStartResult,
   CallerContext,
+  GeneratedTestSchedule,
   LegacyGenerateAndRunInput,
   LegacyGeneratedTestMeta,
   LegacyRunExistingOverrides,
+  LegacyScheduleOnlyInput,
   LegacyRunRecord,
   LegacyTestResultResponse,
 } from '../../domain/legacyTypes.js';
@@ -17,6 +19,7 @@ import { synthesizeTestCode } from './codeSynthesizer.js';
 import { buildBddSteps } from './buildBddSteps.js';
 import { TestRunStore } from './TestRunStore.js';
 import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore.js';
+import { applySchedule } from './TestScheduler.js';
 import { AllureReportService } from './AllureReportService.js';
 import { createScenario } from '../../db/scenarioStore.js';
 import { createRun } from '../../db/runStore.js';
@@ -183,6 +186,104 @@ export class LegacyTestService {
   async renameGeneratedTest(fileName: string, displayName: string, caller: CallerContext): Promise<LegacyGeneratedTestMeta> {
     await this.assertGeneratedTestAccess(fileName, caller);
     return this.generatedTestStore.rename(fileName, displayName);
+  }
+
+  /**
+   * v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması (legacyTypes.ts) ve TestScheduler.ts
+   * dosya başı NOT'u. `schedule: null` zamanlamayı komple kaldırır. Kaydettikten SONRA
+   * `applySchedule()` çağrılır — bu sayede değişiklik sunucu yeniden başlatılmadan HEMEN etkin
+   * olur (ör. kullanıcı saati değiştirdiğinde eski cron job otomatik durdurulup yenisi kurulur).
+   */
+  async setGeneratedTestSchedule(
+    fileName: string,
+    schedule: GeneratedTestSchedule | null,
+    caller: CallerContext,
+  ): Promise<LegacyGeneratedTestMeta> {
+    await this.assertGeneratedTestAccess(fileName, caller);
+    const updated = await this.generatedTestStore.setSchedule(fileName, schedule);
+    applySchedule(fileName, updated.schedule, () => this.runScheduledTest(fileName));
+    return updated;
+  }
+
+  /**
+   * Sunucu başlangıcında (bkz. index.ts) BİR KEZ çağrılır — disk üzerindeki TÜM generated
+   * testleri tarayıp `enabled: true` zamanlaması olan her biri için bir cron job kurar. Süreç
+   * yeniden başladığında önceki job'lar (bellek-içi, bkz. TestScheduler.ts dosya başı NOT) zaten
+   * yok olmuş olur — bu yüzden bu tarama ZORUNLUDUR, aksi halde tüm zamanlamalar sessizce
+   * çalışmaz duruma düşer.
+   */
+  async initSchedules(): Promise<void> {
+    const all = await this.generatedTestStore.list();
+    const scheduled = all.filter((t) => t.schedule?.enabled);
+    for (const meta of scheduled) {
+      applySchedule(meta.fileName, meta.schedule, () => this.runScheduledTest(meta.fileName));
+    }
+    log.info({ count: scheduled.length }, 'Zamanlanmış testler yüklendi');
+  }
+
+  /**
+   * v3.2 — bkz. LegacyScheduleOnlyInput dosya başı açıklaması (legacyTypes.ts) ve sohbet notu:
+   * "hiç çalıştırmadan girdiğimiz senaryoyu gece çalıştırsa". `generateAndRun`'ın AKSİNE burada
+   * AgentLoop HİÇ çalıştırılmaz — senaryo doğrudan bir "generated test" kaydı olarak (kod/
+   * replaySteps'ten yoksun bir PLACEHOLDER olarak) diske yazılır. İlk gerçek koşum, zamanlanan
+   * saatte TestScheduler -> runScheduledTest() -> runGeneratedTestsBatch() zinciriyle tetiklenir;
+   * `runGeneratedTestsBatch` zaten `replaySteps` yoksa otomatik tam AI koşumuna düşer (bkz. dosya
+   * başı NOT), bu yüzden burada AYRI bir tetikleme mantığına gerek YOKTUR — sadece kaydet + zamanla.
+   */
+  async saveScheduledScenario(
+    input: LegacyScheduleOnlyInput,
+    actingUserId?: number | null,
+  ): Promise<LegacyGeneratedTestMeta> {
+    const runId = nanoid(12);
+    const trimmedTestName = input.testName?.trim();
+    const fileName = buildGeneratedFileName(trimmedTestName || input.scenario, runId);
+    const placeholderCode =
+      `// v3.2 — bu dosya HENÜZ çalıştırılmadı; sadece zamanlanmış bir senaryo kaydıdır.\n` +
+      `// İlk koşum, aşağıdaki zamanlamada TestScheduler tarafından otomatik olarak tetiklenecek.\n` +
+      `// Senaryo: ${input.scenario}\n`;
+
+    const meta: LegacyGeneratedTestMeta = {
+      fileName,
+      createdAt: new Date().toISOString(),
+      url: input.url,
+      scenario: input.scenario,
+      variables: input.variables,
+      browser: input.browser,
+      headed: input.headed,
+      screenshot: input.screenshot,
+      video: input.video,
+      trace: input.trace,
+      useSeleniumGrid: input.useSeleniumGrid,
+      // BİLİNÇLİ OLARAK yok: replaySteps/steps — bu test hiç çalıştırılmadı, henüz üretilecek bir
+      // sonuç/BDD adımı yok. `runGeneratedTestsBatch` bunu `hasReplay: false` olarak görüp ilk
+      // tetiklemede otomatik tam AI koşumu yapacak.
+      displayName: trimmedTestName || undefined,
+      projectId: input.projectId,
+      ownerId: actingUserId ?? null,
+      schedule: input.schedule,
+    };
+
+    await this.generatedTestStore.save(meta, placeholderCode);
+    applySchedule(fileName, input.schedule, () => this.runScheduledTest(fileName));
+    return meta;
+  }
+
+  /**
+   * TestScheduler'ın cron tetiklemesinde çağırdığı callback. `role: 'ADMIN'` BİLİNÇLİ OLARAK
+   * kullanılır: bu bir "sistem" tetiklemesidir, gerçek bir oturum açmış kullanıcı yoktur — ADMIN
+   * rolü isVisibleTo() kontrolünü her zaman geçer (bkz. dosya başı NOT), sahipsiz (ownerId: null)
+   * eski testler için bile zamanlamanın çalışabilmesini sağlar. `userId` testin KENDİ sahibinden
+   * (`meta.ownerId`) alınır — sadece görünürlük kontrolü İÇİN değil, ortaya çıkan Test Run
+   * kaydının doğru kişiye atfedilmesi için de (bkz. runGeneratedTestsBatch -> finalizeResult
+   * `actingUserId` kullanımı) — sabit bir "sistem kullanıcısı" ID'si YERİNE bu tercih edildi.
+   * Test artık bulunamıyorsa (silinmiş) burada sadece loglanır; TestScheduler.applySchedule()
+   * zaten onTrigger'ı try/catch ile sarmalıyor, o yüzden burada AYRICA sarmalamaya gerek yok.
+   */
+  private runScheduledTest(fileName: string): void {
+    void this.generatedTestStore
+      .getMeta(fileName)
+      .then((meta) => this.runGeneratedTestsBatch([fileName], { userId: meta.ownerId ?? 0, role: 'ADMIN' }))
+      .catch((err) => log.error({ err, fileName }, 'Zamanlanmış test için meta okunamadı, koşum başlatılamadı'));
   }
 
   async clearGeneratedTests(caller: CallerContext): Promise<{ count: number }> {

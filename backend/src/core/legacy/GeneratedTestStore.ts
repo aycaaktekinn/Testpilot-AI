@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { LegacyGeneratedTestMeta } from '../../domain/legacyTypes.js';
+import type { GeneratedTestSchedule, LegacyGeneratedTestMeta } from '../../domain/legacyTypes.js';
 import { env } from '../../config/env.js';
 import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
@@ -112,6 +112,28 @@ export class GeneratedTestStore {
 
     const trimmed = displayName.trim();
     const updated: LegacyGeneratedTestMeta = { ...existing, displayName: trimmed || undefined };
+    all[index] = updated;
+
+    await this.persistIndex(all);
+    return updated;
+  }
+
+  /**
+   * v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması. `schedule: null` verilirse zamanlama
+   * TAMAMEN KALDIRILIR (rename()'deki boş-isim-kaldırır deseniyle AYNI mantık) — kullanıcı
+   * zamanlamayı komple silip testi tekrar "zamanlanmamış" duruma döndürebilsin diye.
+   */
+  async setSchedule(fileName: string, schedule: GeneratedTestSchedule | null): Promise<LegacyGeneratedTestMeta> {
+    assertSafeFileName(fileName);
+
+    const all = await this.list();
+    const index = all.findIndex((t) => t.fileName === fileName);
+    const existing = all[index];
+    if (index === -1 || !existing) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
+
+    const updated: LegacyGeneratedTestMeta = { ...existing, schedule: schedule ?? undefined };
     all[index] = updated;
 
     await this.persistIndex(all);

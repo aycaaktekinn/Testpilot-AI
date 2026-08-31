@@ -28,6 +28,7 @@
     "express": "^4.19.2",
     "ldapts": "^8.1.8",
     "nanoid": "^5.0.7",
+    "node-cron": "^3.0.3",
     "oracledb": "^6.6.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",

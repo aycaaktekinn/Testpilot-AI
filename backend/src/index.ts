@@ -4,6 +4,7 @@ import { attachRunSocket } from './api/ws/runSocket.js';
 import { env } from './config/env.js';
 import { createLogger } from './config/logger.js';
 import { initOraclePool, closeOraclePool } from './db/oracleClient.js';
+import { legacyTestService } from './api/legacyTestServiceInstance.js';
 
 const log = createLogger('server');
 
@@ -19,6 +20,15 @@ async function main() {
     } catch (err) {
       log.error({ err }, 'Oracle bağlantı havuzu açılamadı — admin panel uçları çalışmayacak, geri kalan uygulama etkilenmeyecek');
     }
+  }
+
+  // v3.2 — "gece test koşumu" zamanlaması (bkz. TestScheduler.ts dosya başı NOT). Oracle gibi
+  // BİLİNÇLİ OLARAK best-effort: bir generated test'in index.json kaydı bozuksa/okunamazsa süreç
+  // ÇÖKMEZ, sadece o zamanlama kurulamamış olur ve loglanır — geri kalan uygulama etkilenmez.
+  try {
+    await legacyTestService.initSchedules();
+  } catch (err) {
+    log.error({ err }, 'Zamanlanmış testler yüklenemedi — sunucu yine de başlatılıyor');
   }
 
   const app = createApp();

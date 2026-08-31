@@ -115,6 +115,109 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// v3.2 — "gece test koşumu" zamanlaması (bkz. sohbet notu). Modül-seviyesinde tanımlı — hem
+// Create Test sayfası (initCreateTestPage) hem Generated Tests sayfasının zamanlama modalı
+// (initGeneratedTestsPage) AYNI gün-toggle UI'ını ve backend sözleşmesini paylaşsın diye
+// (bkz. backend GeneratedTestSchedule: days 0=Pazar..6=Cumartesi, cron'un day-of-week alanıyla AYNI).
+const SCHEDULE_DAY_LABELS = [
+    { value: 1, label: 'Mon' },
+    { value: 2, label: 'Tue' },
+    { value: 3, label: 'Wed' },
+    { value: 4, label: 'Thu' },
+    { value: 5, label: 'Fri' },
+    { value: 6, label: 'Sat' },
+    { value: 0, label: 'Sun' },
+];
+
+/** 7 gün toggle butonunu verilen container'a doldurur (boş halde başlar, seçili günler için
+ * bkz. setSelectedScheduleDays). Her buton `data-day` özniteliğinde cron gün numarasını taşır. */
+function createScheduleDayToggles(container) {
+    container.innerHTML = SCHEDULE_DAY_LABELS.map(({ value, label }) => `
+        <button
+            type="button"
+            data-day="${value}"
+            class="scheduleDayToggle font-body-sm text-[12px] w-9 h-9 rounded-full
+                   border border-outline-variant text-on-surface-variant
+                   hover:bg-surface-variant transition-colors"
+        >${label}</button>
+    `).join('');
+
+    container.querySelectorAll('.scheduleDayToggle').forEach((button) => {
+        button.addEventListener('click', () => {
+            button.classList.toggle('bg-primary');
+            button.classList.toggle('text-on-primary');
+            button.classList.toggle('border-primary');
+        });
+    });
+}
+
+/** Verilen cron gün numaraları (0-6) dışındaki her toggle'ı temizler, verilenleri işaretler. */
+function setSelectedScheduleDays(container, days) {
+    const daySet = new Set(days);
+    container.querySelectorAll('.scheduleDayToggle').forEach((button) => {
+        const isSelected = daySet.has(Number(button.dataset.day));
+        button.classList.toggle('bg-primary', isSelected);
+        button.classList.toggle('text-on-primary', isSelected);
+        button.classList.toggle('border-primary', isSelected);
+    });
+}
+
+/** Şu an işaretli toggle'ların cron gün numaralarını (sırasız) döner. */
+function getSelectedScheduleDays(container) {
+    return Array.from(container.querySelectorAll('.scheduleDayToggle.bg-primary'))
+        .map((button) => Number(button.dataset.day));
+}
+
+/** Bir schedule'ı "23:00 · Mon, Tue, Fri" gibi kısa, okunur bir özete çevirir (satır ikonunun
+ * title'ında ve Generated Tests zamanlama modalının başlığında kullanılır). */
+function formatScheduleSummary(schedule) {
+    if (!schedule?.enabled) return 'Not scheduled';
+
+    const dayOrder = SCHEDULE_DAY_LABELS.map((d) => d.value);
+    const labelByValue = new Map(SCHEDULE_DAY_LABELS.map((d) => [d.value, d.label]));
+    const days = [...(schedule.days || [])]
+        .sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b))
+        .map((value) => labelByValue.get(value) || '?')
+        .join(', ');
+
+    return `${schedule.time} · ${days || 'no days'}`;
+}
+
+/**
+ * Bir generated test için zamanlamayı kaydeder/günceller. `schedule: null` zamanlamayı komple
+ * kaldırır (bkz. backend GeneratedTestStore.setSchedule dosya başı NOT). Best-effort: hata
+ * olursa bir toast gösterir ama çağıran taraf akışı BLOKLAMAZ — testin kendisi (generate-and-run
+ * ya da düzenleme) zaten tamamlanmış/kaydedilmiş olur, sadece zamanlama eklenememiş olur.
+ */
+async function saveGeneratedTestSchedule(fileName, schedule) {
+    try {
+        const response = await fetch(
+            `/api/generated-tests/${encodeURIComponent(fileName)}/schedule`,
+            schedule
+                ? {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(schedule),
+                }
+                : { method: 'DELETE' },
+        );
+
+        if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.message || 'Failed to save schedule.');
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('Failed to save generated test schedule', error);
+        showToast(
+            error instanceof Error ? error.message : 'Failed to save schedule.',
+            'error',
+        );
+        return null;
+    }
+}
+
 
 /* =========================================================
    TOAST NOTIFICATIONS
@@ -808,6 +911,65 @@ function initCreateTestPage() {
     }
 
     void loadProjectsIntoSelect();
+
+
+    /* -----------------------------------------------------
+       SCHEDULE (v3.2 — bkz. sohbet notu: "gece test koşumu yapabilmemiz için zamanlayıcı".
+       Burada sadece FORM state'i toplanır; asıl kayıt generate-and-run BAŞARIYLA sonuçlanıp bir
+       fileName elde edildikten SONRA, aşağıdaki generateRunButton click handler'ının içinde
+       ayrı bir PUT /api/generated-tests/:fileName/schedule isteğiyle yapılır (bkz.
+       scheduleGeneratedTestFromCreatePage). Aynı gün-toggle deseni (0=Pazar..6=Cumartesi, cron'un
+       day-of-week alanıyla AYNI) Generated Tests sayfasındaki zamanlama modalıyla PAYLAŞILIR
+       (bkz. createScheduleDayToggles / collectSelectedScheduleDays, initGeneratedTestsPage).
+    ----------------------------------------------------- */
+    const scheduleEnabledInput =
+        document.getElementById('scheduleEnabled');
+
+    const scheduleOptionsContainer =
+        document.getElementById('scheduleOptions');
+
+    const scheduleTimeInput =
+        document.getElementById('scheduleTime');
+
+    const scheduleDaysContainer =
+        document.getElementById('scheduleDaysContainer');
+
+    const scheduleQuickWeekdaysButton =
+        document.getElementById('scheduleQuickWeekdays');
+
+    const scheduleQuickEveryDayButton =
+        document.getElementById('scheduleQuickEveryDay');
+
+    // v3.2 — bkz. sohbet notu: "hiç çalıştırmadan girdiğimiz senaryoyu gece çalıştırsa mesela
+    // generate and runa basmadan nasıl olur o kısım". "Generate & Run"ın AKSİNE bu buton
+    // AgentLoop'u HİÇ çalıştırmaz — senaryoyu POST /api/generated-tests/schedule-only ile
+    // sadece kaydedip zamanlar; ilk gerçek koşum TestScheduler tarafından zamanlanan saatte
+    // tetiklenir (bkz. saveScheduledScenario dosya başı açıklaması, backend).
+    const saveScheduleOnlyButton =
+        document.getElementById('saveScheduleOnlyButton');
+
+    if (scheduleDaysContainer) {
+        createScheduleDayToggles(scheduleDaysContainer);
+    }
+
+    if (scheduleEnabledInput && scheduleOptionsContainer) {
+        scheduleEnabledInput.addEventListener('change', () => {
+            scheduleOptionsContainer.classList.toggle('hidden', !scheduleEnabledInput.checked);
+            scheduleOptionsContainer.classList.toggle('flex', scheduleEnabledInput.checked);
+        });
+    }
+
+    if (scheduleQuickWeekdaysButton && scheduleDaysContainer) {
+        scheduleQuickWeekdaysButton.addEventListener('click', () => {
+            setSelectedScheduleDays(scheduleDaysContainer, [1, 2, 3, 4, 5]);
+        });
+    }
+
+    if (scheduleQuickEveryDayButton && scheduleDaysContainer) {
+        scheduleQuickEveryDayButton.addEventListener('click', () => {
+            setSelectedScheduleDays(scheduleDaysContainer, [0, 1, 2, 3, 4, 5, 6]);
+        });
+    }
 
 
     /* -----------------------------------------------------
@@ -2574,6 +2736,30 @@ function initCreateTestPage() {
                     null;
 
 
+                // v3.2 — "gece test koşumu" zamanlaması (bkz. sohbet notu). generate-and-run
+                // BAŞARIYLA bir fileName döndürdüyse (pass/fail farketmeksizin — backend her
+                // durumda dosyayı kaydeder, bkz. LegacyTestService.finalizeResult) VE kullanıcı
+                // "Run automatically" kutusunu işaretlediyse, ayrı bir PUT isteğiyle zamanlamayı
+                // kaydeder. Bloklamaz (await YOK) — zamanlama kaydı testin kendi akışını GECİKTİRMEZ.
+                if (
+                    result.testFile &&
+                    scheduleEnabledInput?.checked
+                ) {
+                    const selectedDays = getSelectedScheduleDays(scheduleDaysContainer);
+                    if (selectedDays.length === 0) {
+                        showToast('Schedule not saved: pick at least one day.', 'error');
+                    } else {
+                        void saveGeneratedTestSchedule(result.testFile, {
+                            enabled: true,
+                            time: scheduleTimeInput.value || '23:00',
+                            days: selectedDays,
+                        }).then((saved) => {
+                            if (saved) showToast('Schedule saved.', 'success');
+                        });
+                    }
+                }
+
+
                 executionLogOutput.textContent =
                     `${
                         result.result?.output ||
@@ -2661,6 +2847,105 @@ function initCreateTestPage() {
             }
         },
     );
+
+
+    /* -----------------------------------------------------
+       SAVE & SCHEDULE — ÇALIŞTIRMADAN KAYDET (v3.2, bkz. sohbet notu yukarıda)
+       generate-and-run'ın çoğu alan/validasyonunu tekrar eder ama AgentLoop'u hiç tetiklemez.
+    ----------------------------------------------------- */
+    if (saveScheduleOnlyButton) {
+        saveScheduleOnlyButton.addEventListener('click', async () => {
+            const url = targetUrlInput.value.trim();
+            const scenario = testScenarioInput.value.trim();
+            const testName = testNameInput?.value.trim() || '';
+            const selectedProjectId = projectSelectInput?.value ? Number(projectSelectInput.value) : undefined;
+            const selectedBrowser = document.querySelector('input[name="browser"]:checked')?.value || 'chromium';
+
+            if (!url || !scenario) {
+                showToast('You must fill in the URL and test scenario fields.', 'info');
+                return;
+            }
+
+            try {
+                new URL(url);
+            } catch {
+                showToast('Please enter a valid URL.', 'info');
+                return;
+            }
+
+            if (!scheduleEnabledInput?.checked) {
+                showToast('Check "Run automatically" first and set a time/days.', 'info');
+                return;
+            }
+
+            const selectedDays = getSelectedScheduleDays(scheduleDaysContainer);
+            if (selectedDays.length === 0) {
+                showToast('Pick at least one day for the schedule.', 'error');
+                return;
+            }
+
+            const { variables: collectedVariables, secrets: collectedSecrets } = collectVariablesAndSecrets();
+
+            // v3.2 — bkz. scheduleOnlySchema dosya başı açıklaması (backend, legacyTests.ts):
+            // secrets asla diske yazılmaz, bu yüzden bu uç secrets'ı HİÇ kabul etmez. Kullanıcı bir
+            // secret girdiyse burada erkenden, net bir mesajla durdurulur — sessizce yok sayılıp
+            // gece başarısız bir koşumla karşılaşmasındansa.
+            if (Object.keys(collectedSecrets).length > 0) {
+                showToast(
+                    'Scenarios with Secrets can\'t be scheduled without a first manual run — use "Generate & Run" with the schedule checked instead.',
+                    'error',
+                );
+                return;
+            }
+
+            saveScheduleOnlyButton.disabled = true;
+            const originalLabel = saveScheduleOnlyButton.innerHTML;
+            saveScheduleOnlyButton.innerHTML = '<span class="spinner"></span> Saving...';
+
+            try {
+                const response = await fetch('/api/generated-tests/schedule-only', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url,
+                        scenario,
+                        testName,
+                        headed: headedModeInput.checked,
+                        browser: selectedBrowser,
+                        screenshot: screenshotOption.checked,
+                        video: videoOption.checked,
+                        trace: traceOption.checked,
+                        useSeleniumGrid: useSeleniumGridOption.checked,
+                        variables: collectedVariables,
+                        projectId: selectedProjectId,
+                        schedule: {
+                            enabled: true,
+                            time: scheduleTimeInput.value || '23:00',
+                            days: selectedDays,
+                        },
+                    }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to save the scheduled scenario.');
+                }
+
+                appState.lastGeneratedFile = result.fileName || null;
+                showToast('Saved — this scenario will run for the first time at the scheduled time.', 'success');
+            } catch (error) {
+                console.error(error);
+                showToast(
+                    error instanceof Error ? error.message : 'Failed to save the scheduled scenario.',
+                    'error',
+                );
+            } finally {
+                saveScheduleOnlyButton.disabled = false;
+                saveScheduleOnlyButton.innerHTML = originalLabel;
+            }
+        });
+    }
 
 
     /* -----------------------------------------------------
@@ -4864,6 +5149,135 @@ async function initGeneratedTestsPage() {
             'runSelectedGeneratedTestsButton',
         );
 
+    // v3.2 — "gece test koşumu" zamanlaması (bkz. sohbet notu ve pages/generated-tests.html
+    // "SCHEDULE MODAL" NOT'u).
+    const generatedTestScheduleModal =
+        document.getElementById('generatedTestScheduleModal');
+    const generatedTestScheduleModalTitle =
+        document.getElementById('generatedTestScheduleModalTitle');
+    const closeGeneratedTestScheduleModalButton =
+        document.getElementById('closeGeneratedTestScheduleModal');
+    const cancelGeneratedTestScheduleButton =
+        document.getElementById('cancelGeneratedTestScheduleButton');
+    const saveGeneratedTestScheduleButton =
+        document.getElementById('saveGeneratedTestScheduleButton');
+    const removeGeneratedTestScheduleButton =
+        document.getElementById('removeGeneratedTestScheduleButton');
+    const generatedTestScheduleEnabledInput =
+        document.getElementById('generatedTestScheduleEnabled');
+    const generatedTestScheduleOptionsContainer =
+        document.getElementById('generatedTestScheduleOptions');
+    const generatedTestScheduleTimeInput =
+        document.getElementById('generatedTestScheduleTime');
+    const generatedTestScheduleDaysContainer =
+        document.getElementById('generatedTestScheduleDaysContainer');
+    const generatedTestScheduleQuickWeekdaysButton =
+        document.getElementById('generatedTestScheduleQuickWeekdays');
+    const generatedTestScheduleQuickEveryDayButton =
+        document.getElementById('generatedTestScheduleQuickEveryDay');
+
+    let scheduleModalFileName = null;
+
+    if (generatedTestScheduleDaysContainer) {
+        createScheduleDayToggles(generatedTestScheduleDaysContainer);
+    }
+
+    function toggleScheduleOptionsVisibility() {
+        const isEnabled = generatedTestScheduleEnabledInput.checked;
+        generatedTestScheduleOptionsContainer.classList.toggle('hidden', !isEnabled);
+        generatedTestScheduleOptionsContainer.classList.toggle('flex', isEnabled);
+    }
+
+    function openScheduleModal(fileName, existingSchedule) {
+        scheduleModalFileName = fileName;
+        generatedTestScheduleModalTitle.textContent = `Schedule: ${fileName}`;
+        generatedTestScheduleEnabledInput.checked = Boolean(existingSchedule?.enabled);
+        generatedTestScheduleTimeInput.value = existingSchedule?.time || '23:00';
+        setSelectedScheduleDays(generatedTestScheduleDaysContainer, existingSchedule?.days || []);
+        removeGeneratedTestScheduleButton.classList.toggle('hidden', !existingSchedule);
+        toggleScheduleOptionsVisibility();
+        generatedTestScheduleModal.classList.remove('hidden');
+    }
+
+    function closeScheduleModal() {
+        scheduleModalFileName = null;
+        generatedTestScheduleModal.classList.add('hidden');
+    }
+
+    if (generatedTestScheduleEnabledInput) {
+        generatedTestScheduleEnabledInput.addEventListener('change', toggleScheduleOptionsVisibility);
+    }
+
+    if (generatedTestScheduleQuickWeekdaysButton) {
+        generatedTestScheduleQuickWeekdaysButton.addEventListener('click', () => {
+            setSelectedScheduleDays(generatedTestScheduleDaysContainer, [1, 2, 3, 4, 5]);
+        });
+    }
+
+    if (generatedTestScheduleQuickEveryDayButton) {
+        generatedTestScheduleQuickEveryDayButton.addEventListener('click', () => {
+            setSelectedScheduleDays(generatedTestScheduleDaysContainer, [0, 1, 2, 3, 4, 5, 6]);
+        });
+    }
+
+    if (closeGeneratedTestScheduleModalButton) {
+        closeGeneratedTestScheduleModalButton.addEventListener('click', closeScheduleModal);
+    }
+
+    if (cancelGeneratedTestScheduleButton) {
+        cancelGeneratedTestScheduleButton.addEventListener('click', closeScheduleModal);
+    }
+
+    if (removeGeneratedTestScheduleButton) {
+        removeGeneratedTestScheduleButton.addEventListener('click', async () => {
+            if (!scheduleModalFileName) return;
+            const fileName = scheduleModalFileName;
+            const saved = await saveGeneratedTestSchedule(fileName, null);
+            if (saved) {
+                showToast('Schedule removed.', 'success');
+                closeScheduleModal();
+                await loadGeneratedTests();
+            }
+        });
+    }
+
+    if (saveGeneratedTestScheduleButton) {
+        saveGeneratedTestScheduleButton.addEventListener('click', async () => {
+            if (!scheduleModalFileName) return;
+            const fileName = scheduleModalFileName;
+            const enabled = generatedTestScheduleEnabledInput.checked;
+
+            if (!enabled) {
+                // Kullanıcı kutuyu işaretlemeden kaydettiyse: zaten var olan bir zamanlama varsa
+                // komple kaldır (removeGeneratedTestScheduleButton'ın "Kaldır"ı ile AYNI sonuç,
+                // buradan da erişilebilsin diye); hiç yoksa hiçbir şey yapma (modalı kapat yeter).
+                const saved = await saveGeneratedTestSchedule(fileName, null);
+                if (saved) showToast('Schedule removed.', 'success');
+                closeScheduleModal();
+                await loadGeneratedTests();
+                return;
+            }
+
+            const selectedDays = getSelectedScheduleDays(generatedTestScheduleDaysContainer);
+            if (selectedDays.length === 0) {
+                showToast('Pick at least one day.', 'error');
+                return;
+            }
+
+            const saved = await saveGeneratedTestSchedule(fileName, {
+                enabled: true,
+                time: generatedTestScheduleTimeInput.value || '23:00',
+                days: selectedDays,
+            });
+
+            if (saved) {
+                showToast('Schedule saved.', 'success');
+                closeScheduleModal();
+                await loadGeneratedTests();
+            }
+        });
+    }
+
 
     let allTests = [];
 
@@ -5543,6 +5957,38 @@ async function initGeneratedTestsPage() {
                                                 </span>
                                             </button>
 
+                                            <button
+                                                class="
+                                                    scheduleGeneratedTestButton
+                                                    inline-flex
+                                                    items-center
+                                                    justify-center
+                                                    ${
+                        test.schedule?.enabled
+                            ? 'text-primary'
+                            : 'text-on-surface-variant hover:text-on-surface'
+                    }
+                                                    shrink-0
+                                                "
+                                                data-file="${fileName}"
+                                                title="${
+                        test.schedule?.enabled
+                            ? `Scheduled: ${formatScheduleSummary(test.schedule)}`
+                            : 'Schedule this test'
+                    }"
+                                                aria-label="Schedule ${fileName}"
+                                                type="button"
+                                            >
+                                                <span
+                                                    class="
+                                                        material-symbols-outlined
+                                                        text-[15px]
+                                                    "
+                                                >
+                                                    ${test.schedule?.enabled ? 'alarm_on' : 'alarm_add'}
+                                                </span>
+                                            </button>
+
                                             ${
                         batchStatus
                             ? `
@@ -6097,6 +6543,39 @@ async function initGeneratedTestsPage() {
                         await renameGeneratedTest(
                             fileName,
                             currentName,
+                        );
+                    },
+                );
+            });
+
+
+        document
+            .querySelectorAll(
+                '.scheduleGeneratedTestButton',
+            )
+            .forEach((button) => {
+
+                button.addEventListener(
+                    'click',
+                    () => {
+
+                        const fileName =
+                            button.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        const test =
+                            allTests.find(
+                                (t) => t.fileName === fileName,
+                            );
+
+                        openScheduleModal(
+                            fileName,
+                            test?.schedule,
                         );
                     },
                 );
