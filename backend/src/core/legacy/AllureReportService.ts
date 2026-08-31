@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, writeFile, readdir, stat, copyFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readdir, stat, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -122,8 +122,9 @@ export class AllureReportService {
     );
 
     try {
+      await rm(this.reportDir, { recursive: true, force: true });
       await mkdir(this.reportDir, { recursive: true });
-      await execFileAsync(allureBin, ['generate', this.resultsDir, '--clean', '-o', this.reportDir], {
+      await execFileAsync(allureBin, ['generate', this.resultsDir, '-o', this.reportDir], {
         timeout: GENERATE_TIMEOUT_MS,
       });
       log.info({ resultsDir: this.resultsDir, reportDir: this.reportDir }, 'Allure raporu oluşturuldu');
