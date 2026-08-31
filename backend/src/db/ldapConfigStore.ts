@@ -2,7 +2,7 @@ import { withConnection } from './oracleClient.js';
 import { encryptSecret } from '../auth/secretCrypto.js';
 
 /**
- * v3.0 Faz 2.3 — LDAP_CONFIG tablosu için DB katmanı (bkz. db/migrations/002_ldap_config.sql
+ * v3.0 Faz 2.3 — WEB_LDAP_CONFIG tablosu için DB katmanı (bkz. db/migrations/002_ldap_config.sql
  * dosya başı NOT — TEK SATIR, CONFIG_ID her zaman 1). Manager Password ASLA düz metin
  * SAKLANMAZ/DÖNÜLMEZ — bu katmanda encryptSecret() ile şifrelenerek yazılır; ÇÖZME (decrypt) İSE
  * BİLEREK BURADA DEĞİL, sadece gerçek LDAP bind denemesi yapılacağı yerde (Faz 2.4 — ldapClient.ts)
@@ -70,7 +70,7 @@ const SELECT_COLUMNS = `
 export async function getLdapConfig(): Promise<LdapConfigRecord | undefined> {
   return withConnection(async (connection) => {
     const result = await connection.execute<LdapConfigRow>(
-      `SELECT ${SELECT_COLUMNS} FROM LDAP_CONFIG WHERE CONFIG_ID = 1`,
+      `SELECT ${SELECT_COLUMNS} FROM WEB_LDAP_CONFIG WHERE CONFIG_ID = 1`,
     );
     const row = result.rows?.[0];
     return row ? mapRow(row) : undefined;
@@ -99,7 +99,7 @@ export async function upsertLdapConfig(input: UpsertLdapConfigInput): Promise<Ld
 
   return withConnection(async (connection) => {
     await connection.execute(
-      `MERGE INTO LDAP_CONFIG target
+      `MERGE INTO WEB_LDAP_CONFIG target
        USING (SELECT 1 AS CONFIG_ID FROM DUAL) source
        ON (target.CONFIG_ID = source.CONFIG_ID)
        WHEN MATCHED THEN UPDATE SET
@@ -139,7 +139,7 @@ export async function upsertLdapConfig(input: UpsertLdapConfigInput): Promise<Ld
     await connection.commit();
 
     const result = await connection.execute<LdapConfigRow>(
-      `SELECT ${SELECT_COLUMNS} FROM LDAP_CONFIG WHERE CONFIG_ID = 1`,
+      `SELECT ${SELECT_COLUMNS} FROM WEB_LDAP_CONFIG WHERE CONFIG_ID = 1`,
     );
     const row = result.rows?.[0];
     if (!row) {

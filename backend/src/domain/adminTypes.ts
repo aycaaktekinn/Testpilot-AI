@@ -1,5 +1,5 @@
 /**
- * v3.0 — Admin Panel domain tipleri (Faz 1: Project CRUD). Oracle'daki PROJECTS tablosunun
+ * v3.0 — Admin Panel domain tipleri (Faz 1: Project CRUD). Oracle'daki WEB_PROJECTS tablosunun
  * (bkz. db/migrations/001_initial_schema.sql) camelCase API/uygulama katmanı karşılığı —
  * ProjectStore.mapRow() bu iki temsil arasında çevirim yapar.
  */
@@ -22,12 +22,12 @@ export interface ProjectInput {
   maxParallelRuns?: number;
   llmModel?: string;
   /** v3.0 Faz 2 — sadece createProject()'te anlamlıdır (bkz. requireAdmin.authUser); güncellemede
-   * yoksayılır, PROJECTS.CREATED_BY ilk oluşturmadan sonra bir daha DEĞİŞMEZ. */
+   * yoksayılır, WEB_PROJECTS.CREATED_BY ilk oluşturmadan sonra bir daha DEĞİŞMEZ. */
   createdBy?: number;
 }
 
 /**
- * v3.1 — Admin Panel / Proje Üye Ataması. PROJECT_MEMBERS + USERS JOIN'inin camelCase karşılığı
+ * v3.1 — Admin Panel / Proje Üye Ataması. WEB_PROJECT_MEMBERS + WEB_USERS JOIN'inin camelCase karşılığı
  * (bkz. projectStore.listProjectMembers). MEMBER rolündeki bir kullanıcının hangi projeleri
  * görebildiğini belirleyen tablo budur (bkz. projectStore.listProjectsForUser /
  * projects.ts dosya başı NOT — "admin hepsini görür, member sadece kendine atananı görür").

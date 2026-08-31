@@ -9,7 +9,7 @@ export const projectsRouter = Router();
 
 /**
  * v3.0 Faz 6 — Create Test sayfasındaki proje seçici (bkz. sohbet notu: "onlar da db ye
- * kaydolması lazım" → SCENARIOS.PROJECT_ID NOT NULL olduğu için hangi projeye ait olduğu
+ * kaydolması lazım" → WEB_SCENARIOS.PROJECT_ID NOT NULL olduğu için hangi projeye ait olduğu
  * bilinmeden bir senaryo Oracle'a yazılamıyor, bu yüzden kullanıcının seçmesi gerekiyor).
  *
  * BİLEREK requireAdmin DEĞİL — app.ts'te zaten site geneli requireAuth arkasında (bkz. app.ts
@@ -20,7 +20,7 @@ export const projectsRouter = Router();
  * ulaşılamaz durumda Oracle kapalıysa.
  *
  * v3.1 — GÖRÜNÜRLÜK ARTIK ROL BAZLI: ADMIN hâlâ `listProjects()` ile TÜM projeleri görür; MEMBER
- * ise SADECE `PROJECT_MEMBERS`'ta kendisine atanmış projeleri (`listProjectsForUser`) görür — bkz.
+ * ise SADECE `WEB_PROJECT_MEMBERS`'ta kendisine atanmış projeleri (`listProjectsForUser`) görür — bkz.
  * Test Runs/Generated Tests'teki AYNI "admin hepsini görür, member sadece kendininkini görür"
  * kuralı (CallerContext, LegacyTestService.isVisibleTo).
  */

@@ -3,7 +3,7 @@ import { verifyToken, type TokenPayload } from '../../auth/token.js';
 import { getAuthCookie } from '../../auth/cookie.js';
 
 /**
- * v3.0 Faz 2 — Admin panel route'larını korur. Şu an sadece "ADMIN" rolü var (bkz. USERS.ROLE
+ * v3.0 Faz 2 — Admin panel route'larını korur. Şu an sadece "ADMIN" rolü var (bkz. WEB_USERS.ROLE
  * CHECK constraint) — "MEMBER" rolü ileride (Faz 4) proje bazlı izinlerle anlam kazanacak, bu
  * middleware BİLİNÇLİ OLARAK sadece ADMIN/değil ayrımı yapar.
  */

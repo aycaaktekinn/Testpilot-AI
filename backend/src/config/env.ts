@@ -230,7 +230,7 @@ const envSchema = z.object({
       message: 'ORACLE_DB_HOST tanımlıyken ORACLE_DB_PASSWORD gerekli',
     });
   }
-  // Admin panel girişi Oracle'daki USERS tablosuna bağımlı olduğu için, Oracle etkinken
+  // Admin panel girişi Oracle'daki WEB_USERS tablosuna bağımlı olduğu için, Oracle etkinken
   // AUTH_TOKEN_SECRET de zorunludur — aksi halde login endpoint'i çalışma zamanında (istek anında)
   // net olmayan bir hatayla patlardı; bunun yerine başlangıçta anlaşılır bir hata vermeyi tercih ediyoruz.
   if (data.ORACLE_DB_HOST && !data.AUTH_TOKEN_SECRET) {

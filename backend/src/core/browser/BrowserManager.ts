@@ -115,7 +115,7 @@ export class BrowserManager {
    *   2) .env dosyasındaki SELENIUM_GRID_URL — GERİYE DÖNÜK UYUMLULUK: Oracle/admin panel HİÇ
    *      kullanılmıyorsa (ya da DB'de henüz hiç ayar kaydedilmemişse) bu değer kullanılır.
    *
-   * NEDEN eskiden (Faz 1) eklenen PROJECTS.GRID_URL sütunu BURADA KULLANILMIYOR: sohbette fark
+   * NEDEN eskiden (Faz 1) eklenen WEB_PROJECTS.GRID_URL sütunu BURADA KULLANILMIYOR: sohbette fark
    * edildi ki o alan hiçbir zaman run yürütme koduna bağlanmamıştı (admin panelde saklanıyordu ama
    * okunmuyordu) — kullanıcı proje bazlı yerine TEK/sabit bir Grid URL istedi, bu yüzden proje
    * bazlı alan KALDIRILDI (bkz. adminProjects.ts/projectStore.ts dosya başı NOT'ları), yerine bu

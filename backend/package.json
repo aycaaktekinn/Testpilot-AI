@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "playwright:install": "playwright install --with-deps chromium firefox webkit",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:rename-web-tables": "tsx src/db/renameWebTables.ts",
     "create-admin": "tsx src/db/createAdminUser.ts"
   },
   "dependencies": {

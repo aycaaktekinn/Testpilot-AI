@@ -3,7 +3,7 @@ import { withConnection } from './oracleClient.js';
 import { NotFoundError, ValidationError } from '../domain/errors.js';
 
 /**
- * v3.0 Faz 2 / 2.2 — USERS tablosu için CRUD katmanı. login akışı (auth.ts), bootstrap admin
+ * v3.0 Faz 2 / 2.2 — WEB_USERS tablosu için CRUD katmanı. login akışı (auth.ts), bootstrap admin
  * script'i (createAdminUser.ts) VE admin panelin "Kullanıcılar" sekmesi (adminUsers.ts route'u)
  * burayı kullanır. LDAP kullanıcı otomatik-oluşturma (Faz 2.4) da createLocalUser'ın YANINA,
  * ayrı bir createLdapUser benzeri fonksiyon olarak eklenecek.
@@ -26,7 +26,7 @@ export interface UserRecord {
   id: number;
   username: string;
   userType: UserType;
-  /** LDAP kullanıcılarında her zaman null — bkz. 001_initial_schema.sql USERS tablosu dosya başı NOT. */
+  /** LDAP kullanıcılarında her zaman null — bkz. 001_initial_schema.sql WEB_USERS tablosu dosya başı NOT. */
   passwordHash: string | null;
   displayName: string | null;
   role: UserRole;
@@ -49,7 +49,7 @@ export async function getUserByUsername(username: string): Promise<UserRecord | 
   return withConnection(async (connection) => {
     const result = await connection.execute<UserRow>(
       `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-       FROM USERS
+       FROM WEB_USERS
        WHERE USERNAME = :username`,
       { username },
     );
@@ -62,7 +62,7 @@ export async function getUserById(id: number): Promise<UserRecord | undefined> {
   return withConnection(async (connection) => {
     const result = await connection.execute<UserRow>(
       `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-       FROM USERS
+       FROM WEB_USERS
        WHERE USER_ID = :id`,
       { id },
     );
@@ -75,7 +75,7 @@ export async function listUsers(): Promise<UserRecord[]> {
   return withConnection(async (connection) => {
     const result = await connection.execute<UserRow>(
       `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-       FROM USERS
+       FROM WEB_USERS
        ORDER BY CREATED_AT DESC`,
     );
     return (result.rows ?? []).map(mapRow);
@@ -87,7 +87,7 @@ export async function listUsers(): Promise<UserRecord[]> {
 export async function countAdmins(): Promise<number> {
   return withConnection(async (connection) => {
     const result = await connection.execute<{ COUNT: number }>(
-      `SELECT COUNT(*) AS COUNT FROM USERS WHERE ROLE = 'ADMIN'`,
+      `SELECT COUNT(*) AS COUNT FROM WEB_USERS WHERE ROLE = 'ADMIN'`,
     );
     return result.rows?.[0]?.COUNT ?? 0;
   });
@@ -103,7 +103,7 @@ export async function countAdmins(): Promise<number> {
 export async function updateUserRole(id: number, role: UserRole): Promise<UserRecord> {
   return withConnection(async (connection) => {
     const result = await connection.execute(
-      `UPDATE USERS SET ROLE = :role WHERE USER_ID = :id`,
+      `UPDATE WEB_USERS SET ROLE = :role WHERE USER_ID = :id`,
       { role, id },
     );
     await connection.commit();
@@ -114,7 +114,7 @@ export async function updateUserRole(id: number, role: UserRole): Promise<UserRe
 
     const row = await connection.execute<UserRow>(
       `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-       FROM USERS
+       FROM WEB_USERS
        WHERE USER_ID = :id`,
       { id },
     );
@@ -127,7 +127,7 @@ export async function updateUserRole(id: number, role: UserRole): Promise<UserRe
 }
 
 /**
- * v3.0 Faz 2.4 — bir LDAP kullanıcısı İLK KEZ başarıyla giriş yaptığında USERS tablosuna otomatik
+ * v3.0 Faz 2.4 — bir LDAP kullanıcısı İLK KEZ başarıyla giriş yaptığında WEB_USERS tablosuna otomatik
  * eklenir (bkz. auth.ts /auth/login). ROLE HER ZAMAN 'MEMBER' — kullanıcının sohbette net belirttiği
  * kural: "giriş yapılan kişiler ilk önce default olarak normal user rolünde atanacak, admin isterse
  * admin yapacak" (bkz. adminUsers.ts — rol yükseltme/düşürme AYRI, mevcut bir uçtan yapılır).
@@ -143,7 +143,7 @@ export async function createLdapUser(input: CreateLdapUserInput): Promise<UserRe
   return withConnection(async (connection) => {
     try {
       const result = await connection.execute<{ id: number[] }>(
-        `INSERT INTO USERS (USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE)
+        `INSERT INTO WEB_USERS (USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE)
          VALUES (:username, 'LDAP', NULL, :displayName, 'MEMBER')
          RETURNING USER_ID INTO :id`,
         {
@@ -161,7 +161,7 @@ export async function createLdapUser(input: CreateLdapUserInput): Promise<UserRe
 
       const row = await connection.execute<UserRow>(
         `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-         FROM USERS
+         FROM WEB_USERS
          WHERE USER_ID = :id`,
         { id: newId },
       );
@@ -200,9 +200,9 @@ export interface CreateLocalUserInput {
  * (kendi kendini silememe, SON admin'i silememe) BİLİNÇLİ OLARAK burada DEĞİL, çağıran route'ta
  * (adminUsers.ts) — updateUserRole ile AYNI ayrım (bkz. o fonksiyonun dosya başı NOT'u).
  *
- * NOT — FK KISITLARI: PROJECTS.CREATED_BY / SCENARIOS.CREATED_BY / RUNS.STARTED_BY /
- * LDAP_CONFIG.UPDATED_BY / GLOBAL_SETTINGS.UPDATED_BY sütunları USERS'a FK'lidir ve BİLİNÇLİ OLARAK
- * "ON DELETE CASCADE" DEĞİLDİR (bkz. 001_initial_schema.sql — sadece PROJECT_MEMBERS CASCADE'dir).
+ * NOT — FK KISITLARI: WEB_PROJECTS.CREATED_BY / WEB_SCENARIOS.CREATED_BY / WEB_RUNS.STARTED_BY /
+ * WEB_LDAP_CONFIG.UPDATED_BY / WEB_GLOBAL_SETTINGS.UPDATED_BY sütunları WEB_USERS'a FK'lidir ve BİLİNÇLİ OLARAK
+ * "ON DELETE CASCADE" DEĞİLDİR (bkz. 001_initial_schema.sql — sadece WEB_PROJECT_MEMBERS CASCADE'dir).
  * Yani zaten proje/senaryo/koşum oluşturmuş ya da LDAP/Grid ayarını kaydetmiş bir kullanıcı
  * silinmeye çalışılırsa Oracle ORA-02292 (child record found) fırlatır — bunu ham haliyle
  * göstermek yerine anlaşılır bir ValidationError'a çeviriyoruz (bkz. aşağı).
@@ -210,7 +210,7 @@ export interface CreateLocalUserInput {
 export async function deleteUser(id: number): Promise<void> {
   return withConnection(async (connection) => {
     try {
-      const result = await connection.execute(`DELETE FROM USERS WHERE USER_ID = :id`, { id });
+      const result = await connection.execute(`DELETE FROM WEB_USERS WHERE USER_ID = :id`, { id });
       await connection.commit();
 
       if (!result.rowsAffected) {
@@ -234,7 +234,7 @@ export async function createLocalUser(input: CreateLocalUserInput): Promise<User
   return withConnection(async (connection) => {
     try {
       const result = await connection.execute<{ id: number[] }>(
-        `INSERT INTO USERS (USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE)
+        `INSERT INTO WEB_USERS (USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE)
          VALUES (:username, 'LOCAL', :passwordHash, :displayName, :role)
          RETURNING USER_ID INTO :id`,
         {
@@ -254,7 +254,7 @@ export async function createLocalUser(input: CreateLocalUserInput): Promise<User
 
       const row = await connection.execute<UserRow>(
         `SELECT USER_ID, USERNAME, USER_TYPE, PASSWORD_HASH, DISPLAY_NAME, ROLE, CREATED_AT
-         FROM USERS
+         FROM WEB_USERS
          WHERE USER_ID = :id`,
         { id: newId },
       );

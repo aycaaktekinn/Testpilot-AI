@@ -4,12 +4,12 @@ import type { Project, ProjectInput, ProjectMember } from '../domain/adminTypes.
 import { NotFoundError, ValidationError } from '../domain/errors.js';
 
 /**
- * v3.0 — PROJECTS tablosu için CRUD katmanı (Faz 1). adminProjects.ts route'u DOĞRUDAN Oracle
- * SQL'i görmez — hepsi burada, tek yerde toplanır (ileride Faz 4/5'te USERS/PROJECT_MEMBERS ile
+ * v3.0 — WEB_PROJECTS tablosu için CRUD katmanı (Faz 1). adminProjects.ts route'u DOĞRUDAN Oracle
+ * SQL'i görmez — hepsi burada, tek yerde toplanır (ileride Faz 4/5'te WEB_USERS/WEB_PROJECT_MEMBERS ile
  * JOIN'ler eklenince route katmanı değişmeden kalabilsin diye).
  */
 
-// NOT — PROJECTS.GRID_URL sütunu BİLİNÇLİ OLARAK BURADA (ProjectRow/mapRow) YOK — v3.0 Faz 5'te
+// NOT — WEB_PROJECTS.GRID_URL sütunu BİLİNÇLİ OLARAK BURADA (ProjectRow/mapRow) YOK — v3.0 Faz 5'te
 // kaldırıldı (bkz. BrowserManager.resolveGridUrl / adminSettings.ts dosya başı NOT'ları — proje
 // bazlı Grid URL hiçbir zaman run yürütme koduna bağlanmamıştı, tek/global bir ayarla değiştirildi).
 // SÜTUN KENDİSİ veritabanında hâlâ mevcut (yıkıcı olmayan değişiklik — silinmedi), sadece kod
@@ -48,7 +48,7 @@ export async function listProjects(): Promise<Project[]> {
   return withConnection(async (connection) => {
     const result = await connection.execute<ProjectRow>(
       `SELECT PROJECT_ID, PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_AT, CREATED_BY
-       FROM PROJECTS
+       FROM WEB_PROJECTS
        ORDER BY CREATED_AT DESC`,
     );
     return (result.rows ?? []).map(mapRow);
@@ -56,7 +56,7 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 /**
- * v3.1 — MEMBER rolündeki kullanıcılar için: sadece PROJECT_MEMBERS'ta kendisine atanmış
+ * v3.1 — MEMBER rolündeki kullanıcılar için: sadece WEB_PROJECT_MEMBERS'ta kendisine atanmış
  * projeleri döner (bkz. projects.ts route'undaki dosya başı NOT — ADMIN hâlâ `listProjects()` ile
  * hepsini görür, bu fonksiyon SADECE MEMBER için kullanılır).
  */
@@ -64,8 +64,8 @@ export async function listProjectsForUser(userId: number): Promise<Project[]> {
   return withConnection(async (connection) => {
     const result = await connection.execute<ProjectRow>(
       `SELECT p.PROJECT_ID, p.PROJECT_NAME, p.MAX_PARALLEL_RUNS, p.LLM_MODEL, p.CREATED_AT, p.CREATED_BY
-       FROM PROJECTS p
-       INNER JOIN PROJECT_MEMBERS pm ON pm.PROJECT_ID = p.PROJECT_ID
+       FROM WEB_PROJECTS p
+       INNER JOIN WEB_PROJECT_MEMBERS pm ON pm.PROJECT_ID = p.PROJECT_ID
        WHERE pm.USER_ID = :userId
        ORDER BY p.CREATED_AT DESC`,
       { userId },
@@ -88,7 +88,7 @@ export async function createProject(input: ProjectInput): Promise<Project> {
   return withConnection(async (connection) => {
     try {
       const result = await connection.execute<{ id: number[] }>(
-        `INSERT INTO PROJECTS (PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_BY)
+        `INSERT INTO WEB_PROJECTS (PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_BY)
          VALUES (:name, :maxParallelRuns, :llmModel, :createdBy)
          RETURNING PROJECT_ID INTO :id`,
         {
@@ -133,7 +133,7 @@ export async function updateProject(id: number, input: ProjectInput): Promise<Pr
       }
 
       await connection.execute(
-        `UPDATE PROJECTS
+        `UPDATE WEB_PROJECTS
          SET PROJECT_NAME = :name,
              MAX_PARALLEL_RUNS = :maxParallelRuns,
              LLM_MODEL = :llmModel
@@ -158,14 +158,14 @@ export async function updateProject(id: number, input: ProjectInput): Promise<Pr
   });
 }
 
-/** PROJECT_MEMBERS/SCENARIOS/RUNS satırları ON DELETE CASCADE ile tanımlı (bkz. 001_initial_schema.sql)
+/** WEB_PROJECT_MEMBERS/WEB_SCENARIOS/WEB_RUNS satırları ON DELETE CASCADE ile tanımlı (bkz. 001_initial_schema.sql)
  * — bu yüzden bir proje silindiğinde ona bağlı TÜM kayıtlar da otomatik silinir. Faz 1'de henüz
  * bu tablolara hiçbir şey yazılmıyor, dolayısıyla şu an için bu her zaman güvenli/etkisiz bir
  * detaydır; ileride (Faz 4+) gerçek veriler birikince "Sil" butonunun yanına bir uyarı eklenmesi
  * gerekebilir. */
 export async function deleteProject(id: number): Promise<void> {
   return withConnection(async (connection) => {
-    const result = await connection.execute(`DELETE FROM PROJECTS WHERE PROJECT_ID = :id`, { id });
+    const result = await connection.execute(`DELETE FROM WEB_PROJECTS WHERE PROJECT_ID = :id`, { id });
     await connection.commit();
 
     if (!result.rowsAffected) {
@@ -176,9 +176,9 @@ export async function deleteProject(id: number): Promise<void> {
 
 /**
  * v3.1 — Admin Panel / Proje Üye Ataması (bkz. sohbet notu: "admin panelden proje ataması
- * yapacağız"). PROJECT_MEMBERS o güne kadar hiçbir kod tarafından yazılmıyordu (bkz. dosya başı
+ * yapacağız"). WEB_PROJECT_MEMBERS o güne kadar hiçbir kod tarafından yazılmıyordu (bkz. dosya başı
  * NOT — "ileride Faz 4/5'te ... JOIN'ler eklenince" öngörüsü, işte o Faz). Bu üç fonksiyon
- * PROJECT_MEMBERS için TEK CRUD katmanı — adminProjects.ts route'u da (Project CRUD'daki gibi)
+ * WEB_PROJECT_MEMBERS için TEK CRUD katmanı — adminProjects.ts route'u da (Project CRUD'daki gibi)
  * DOĞRUDAN Oracle SQL'i görmez.
  */
 interface ProjectMemberRow {
@@ -207,8 +207,8 @@ export async function listProjectMembers(projectId: number): Promise<ProjectMemb
   return withConnection(async (connection) => {
     const result = await connection.execute<ProjectMemberRow>(
       `SELECT u.USER_ID, u.USERNAME, u.DISPLAY_NAME, u.ROLE, pm.ASSIGNED_AT
-       FROM PROJECT_MEMBERS pm
-       INNER JOIN USERS u ON u.USER_ID = pm.USER_ID
+       FROM WEB_PROJECT_MEMBERS pm
+       INNER JOIN WEB_USERS u ON u.USER_ID = pm.USER_ID
        WHERE pm.PROJECT_ID = :projectId
        ORDER BY pm.ASSIGNED_AT DESC`,
       { projectId },
@@ -217,14 +217,14 @@ export async function listProjectMembers(projectId: number): Promise<ProjectMemb
   });
 }
 
-/** Zaten üye olan bir kullanıcı tekrar eklenmeye çalışılırsa (ORA-00001 — PROJECT_MEMBERS'ın
+/** Zaten üye olan bir kullanıcı tekrar eklenmeye çalışılırsa (ORA-00001 — WEB_PROJECT_MEMBERS'ın
  * PROJECT_ID+USER_ID birleşik PK'si ihlal edilir) sessizce no-op sayılır: idempotent davranış,
  * frontend'in ayrıca "zaten ekli mi" kontrolü yapmasına gerek bırakmaz. Proje ya da kullanıcı id'si
  * geçersizse (ORA-02291, FK ihlali) NotFoundError'a çevrilir. */
 export async function addProjectMember(projectId: number, userId: number): Promise<void> {
   return withConnection(async (connection) => {
     try {
-      await connection.execute(`INSERT INTO PROJECT_MEMBERS (PROJECT_ID, USER_ID) VALUES (:projectId, :userId)`, {
+      await connection.execute(`INSERT INTO WEB_PROJECT_MEMBERS (PROJECT_ID, USER_ID) VALUES (:projectId, :userId)`, {
         projectId,
         userId,
       });
@@ -245,7 +245,7 @@ export async function addProjectMember(projectId: number, userId: number): Promi
 export async function removeProjectMember(projectId: number, userId: number): Promise<void> {
   return withConnection(async (connection) => {
     const result = await connection.execute(
-      `DELETE FROM PROJECT_MEMBERS WHERE PROJECT_ID = :projectId AND USER_ID = :userId`,
+      `DELETE FROM WEB_PROJECT_MEMBERS WHERE PROJECT_ID = :projectId AND USER_ID = :userId`,
       { projectId, userId },
     );
     await connection.commit();
@@ -259,7 +259,7 @@ export async function removeProjectMember(projectId: number, userId: number): Pr
 async function fetchProjectRow(connection: oracledb.Connection, id: number): Promise<ProjectRow | undefined> {
   const result = await connection.execute<ProjectRow>(
     `SELECT PROJECT_ID, PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_AT, CREATED_BY
-     FROM PROJECTS
+     FROM WEB_PROJECTS
      WHERE PROJECT_ID = :id`,
     { id },
   );

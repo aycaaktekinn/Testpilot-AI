@@ -62,7 +62,7 @@ export class LegacyTestService {
 
   async generateAndRun(
     input: LegacyGenerateAndRunInput,
-    // v3.0 Faz 6 — SADECE Oracle'a (best-effort) yazarken SCENARIOS/RUNS.CREATED_BY/STARTED_BY
+    // v3.0 Faz 6 — SADECE Oracle'a (best-effort) yazarken WEB_SCENARIOS/WEB_RUNS.CREATED_BY/STARTED_BY
     // için kullanılır (bkz. finalizeResult dosya başı NOT). JSON tabanlı akışı ETKİLEMEZ.
     actingUserId?: number | null,
   ): Promise<LegacyTestResultResponse> {
@@ -535,14 +535,14 @@ export class LegacyTestService {
     // her tekrar çalıştırmada "düzenli" isim bilgisini rastgele bir şeyle EZMEMEK için.
     testName?: string,
     // v3.0 Faz 6 — bkz. LegacyGenerateAndRunInput.projectId / scenarioStore.ts dosya başı NOT.
-    // Doluysa aşağıda SCENARIOS+RUNS'a best-effort bir Oracle yazımı da denenir.
+    // Doluysa aşağıda WEB_SCENARIOS+WEB_RUNS'a best-effort bir Oracle yazımı da denenir.
     projectId?: number,
     actingUserId?: number | null,
   ): Promise<LegacyTestResultResponse> {
     const status = report.status === 'passed' ? 'passed' : 'failed';
     const createdAt = report.finishedAt ?? new Date().toISOString();
     const trimmedTestName = testName?.trim();
-    // Hem JSON kaydı (aşağıdaki generatedTestStore.save) hem Oracle RUNS.STEPS_JSON için TEK
+    // Hem JSON kaydı (aşağıdaki generatedTestStore.save) hem Oracle WEB_RUNS.STEPS_JSON için TEK
     // seferde hesaplanır (bkz. BddStepView dosya başı açıklaması).
     const bddSteps = buildBddSteps(report);
 

@@ -1,8 +1,8 @@
 import { withConnection } from './oracleClient.js';
 
 /**
- * v3.0 Faz 5 — GLOBAL_SETTINGS tablosu için DB katmanı (bkz. db/migrations/003_global_settings.sql
- * dosya başı NOT — TEK SATIR, CONFIG_ID her zaman 1, LDAP_CONFIG ile AYNI desen). Şu an sadece
+ * v3.0 Faz 5 — WEB_GLOBAL_SETTINGS tablosu için DB katmanı (bkz. db/migrations/003_global_settings.sql
+ * dosya başı NOT — TEK SATIR, CONFIG_ID her zaman 1, WEB_LDAP_CONFIG ile AYNI desen). Şu an sadece
  * Grid URL taşıyor; ileride proje bazlı OLMAYAN başka bir global ayar gerekirse buraya sütun
  * olarak eklenebilir.
  */
@@ -35,7 +35,7 @@ const SELECT_COLUMNS = `CONFIG_ID, GRID_URL, UPDATED_AT, UPDATED_BY`;
 export async function getGlobalSettings(): Promise<GlobalSettingsRecord | undefined> {
   return withConnection(async (connection) => {
     const result = await connection.execute<GlobalSettingsRow>(
-      `SELECT ${SELECT_COLUMNS} FROM GLOBAL_SETTINGS WHERE CONFIG_ID = 1`,
+      `SELECT ${SELECT_COLUMNS} FROM WEB_GLOBAL_SETTINGS WHERE CONFIG_ID = 1`,
     );
     const row = result.rows?.[0];
     return row ? mapRow(row) : undefined;
@@ -50,7 +50,7 @@ export interface UpsertGlobalSettingsInput {
 export async function upsertGlobalSettings(input: UpsertGlobalSettingsInput): Promise<GlobalSettingsRecord> {
   return withConnection(async (connection) => {
     await connection.execute(
-      `MERGE INTO GLOBAL_SETTINGS target
+      `MERGE INTO WEB_GLOBAL_SETTINGS target
        USING (SELECT 1 AS CONFIG_ID FROM DUAL) source
        ON (target.CONFIG_ID = source.CONFIG_ID)
        WHEN MATCHED THEN UPDATE SET
@@ -64,7 +64,7 @@ export async function upsertGlobalSettings(input: UpsertGlobalSettingsInput): Pr
     await connection.commit();
 
     const result = await connection.execute<GlobalSettingsRow>(
-      `SELECT ${SELECT_COLUMNS} FROM GLOBAL_SETTINGS WHERE CONFIG_ID = 1`,
+      `SELECT ${SELECT_COLUMNS} FROM WEB_GLOBAL_SETTINGS WHERE CONFIG_ID = 1`,
     );
     const row = result.rows?.[0];
     if (!row) {
