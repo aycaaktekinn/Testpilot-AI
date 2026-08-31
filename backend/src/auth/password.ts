@@ -6,7 +6,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
  * amaca (yavaş, brute-force'a dirençli bir hash) hizmet eder ve hiçbir native derleme/kurulum
  * gerektirmez (bkz. oracledb'de yaşanan sandbox kurulum sürtünmesi — bir daha yaşamamak için).
  *
- * Saklama formatı: "<salt-hex>:<hash-hex>" — tek bir VARCHAR2 sütununda (USERS.PASSWORD_HASH)
+ * Saklama formatı: "<salt-hex>:<hash-hex>" — tek bir VARCHAR2 sütununda (WEB_USERS.PASSWORD_HASH)
  * tutulabilsin diye salt ve hash tek string'te birleştirilir.
  */
 

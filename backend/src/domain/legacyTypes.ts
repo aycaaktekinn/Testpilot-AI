@@ -123,12 +123,12 @@ export interface LegacyGeneratedTestMeta {
    */
   displayName?: string;
   /**
-   * v3.0 Faz 6 — bu testin hangi PROJECTS kaydına ait olduğu (bkz. sohbet notu: "onlar da db ye
+   * v3.0 Faz 6 — bu testin hangi WEB_PROJECTS kaydına ait olduğu (bkz. sohbet notu: "onlar da db ye
    * kaydolması lazım" → Create Test sayfasına proje seçici eklendi). OPSİYONEL: bu alan
    * eklenmeden ÖNCE üretilmiş eski kayıtlarda bulunmaz VE kullanıcı proje seçmeden de test
    * üretebilir/çalıştırabilir (JSON tabanlı akış projeden bağımsız çalışmaya devam eder) —
    * SADECE doluysa LegacyTestService.finalizeResult() Oracle'a da (best-effort) yazar, çünkü
-   * SCENARIOS.PROJECT_ID veritabanında NOT NULL'dur.
+   * WEB_SCENARIOS.PROJECT_ID veritabanında NOT NULL'dur.
    */
   projectId?: number;
   /**
