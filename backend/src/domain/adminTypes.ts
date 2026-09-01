@@ -37,5 +37,5 @@ export interface ProjectMember {
   username: string;
   displayName: string | null;
   role: 'ADMIN' | 'MEMBER';
-  assignedAt: string;
+  assignedAt: string | null;
 }

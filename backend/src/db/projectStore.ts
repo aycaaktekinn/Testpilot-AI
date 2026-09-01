@@ -2,11 +2,90 @@ import oracledb from 'oracledb';
 import { withConnection } from './oracleClient.js';
 import type { Project, ProjectInput, ProjectMember } from '../domain/adminTypes.js';
 import { NotFoundError, ValidationError } from '../domain/errors.js';
+import { createLogger } from '../config/logger.js';
+
+const log = createLogger('projectStore');
+
+type ProjectTableName = 'WEB_PROJECTS' | 'PROJECTS';
+type MemberTableName = 'WEB_PROJECT_MEMBERS' | 'PROJECT_MEMBERS';
+
+interface ProjectTableChoice {
+  hasWebProjects: boolean;
+  hasLegacyProjects: boolean;
+  webProjectRowCount: number;
+  legacyProjectRowCount: number;
+}
+
+interface MemberTableChoice {
+  hasWebMembers: boolean;
+  hasLegacyMembers: boolean;
+  webMemberRowCount: number;
+  legacyMemberRowCount: number;
+}
+
+export function chooseProjectTable(input: ProjectTableChoice): ProjectTableName {
+  if (input.hasLegacyProjects && !input.hasWebProjects) return 'PROJECTS';
+  if (input.hasWebProjects && !input.hasLegacyProjects) return 'WEB_PROJECTS';
+  if (input.legacyProjectRowCount > input.webProjectRowCount) return 'PROJECTS';
+  return 'WEB_PROJECTS';
+}
+
+export function chooseMembershipTable(input: MemberTableChoice): MemberTableName {
+  if (input.hasLegacyMembers && !input.hasWebMembers) return 'PROJECT_MEMBERS';
+  if (input.hasWebMembers && !input.hasLegacyMembers) return 'WEB_PROJECT_MEMBERS';
+  if (input.legacyMemberRowCount > input.webMemberRowCount) return 'PROJECT_MEMBERS';
+  return 'WEB_PROJECT_MEMBERS';
+}
+
+async function detectTableCounts(connection: oracledb.Connection, tableName: string): Promise<{ exists: boolean; rowCount: number }> {
+  try {
+    const result = await connection.execute<{ COUNT: number }>(`SELECT COUNT(*) AS COUNT FROM ${tableName}`);
+    return { exists: true, rowCount: Number(result.rows?.[0]?.COUNT ?? 0) };
+  } catch (err) {
+    const oraError = err as { errorNum?: number };
+    if (oraError.errorNum === 942) {
+      return { exists: false, rowCount: 0 };
+    }
+    throw err;
+  }
+}
+
+async function resolveProjectTable(connection: oracledb.Connection): Promise<ProjectTableName> {
+  const [web, legacy] = await Promise.all([
+    detectTableCounts(connection, 'WEB_PROJECTS'),
+    detectTableCounts(connection, 'PROJECTS'),
+  ]);
+
+  return chooseProjectTable({
+    hasWebProjects: web.exists,
+    hasLegacyProjects: legacy.exists,
+    webProjectRowCount: web.rowCount,
+    legacyProjectRowCount: legacy.rowCount,
+  });
+}
+
+async function resolveMemberTable(connection: oracledb.Connection): Promise<MemberTableName> {
+  const [web, legacy] = await Promise.all([
+    detectTableCounts(connection, 'WEB_PROJECT_MEMBERS'),
+    detectTableCounts(connection, 'PROJECT_MEMBERS'),
+  ]);
+
+  return chooseMembershipTable({
+    hasWebMembers: web.exists,
+    hasLegacyMembers: legacy.exists,
+    webMemberRowCount: web.rowCount,
+    legacyMemberRowCount: legacy.rowCount,
+  });
+}
 
 /**
  * v3.0 — WEB_PROJECTS tablosu için CRUD katmanı (Faz 1). adminProjects.ts route'u DOĞRUDAN Oracle
  * SQL'i görmez — hepsi burada, tek yerde toplanır (ileride Faz 4/5'te WEB_USERS/WEB_PROJECT_MEMBERS ile
  * JOIN'ler eklenince route katmanı değişmeden kalabilsin diye).
+ *
+ * NOT — yerel Oracle örneğinde DB kısmen yeniden adlandırılmış olabilir: hem yeni WEB_* tablosu hem
+ * eski legacy PROJECTS/PROJECT_MEMBERS birlikte bulunabilir. Bu durumda "gerçek veri taşıyan tablo"
+ * belirlenip ona göre okuma/yazma yapılır; aksi halde üyelik atamaları boş görünür.
  */
 
 // NOT — WEB_PROJECTS.GRID_URL sütunu BİLİNÇLİ OLARAK BURADA (ProjectRow/mapRow) YOK — v3.0 Faz 5'te
@@ -46,9 +125,10 @@ function rethrowFriendly(err: unknown): never {
 
 export async function listProjects(): Promise<Project[]> {
   return withConnection(async (connection) => {
+    const table = await resolveProjectTable(connection);
     const result = await connection.execute<ProjectRow>(
       `SELECT PROJECT_ID, PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_AT, CREATED_BY
-       FROM WEB_PROJECTS
+       FROM ${table}
        ORDER BY CREATED_AT DESC`,
     );
     return (result.rows ?? []).map(mapRow);
@@ -62,10 +142,12 @@ export async function listProjects(): Promise<Project[]> {
  */
 export async function listProjectsForUser(userId: number): Promise<Project[]> {
   return withConnection(async (connection) => {
+    const projectTable = await resolveProjectTable(connection);
+    const memberTable = await resolveMemberTable(connection);
     const result = await connection.execute<ProjectRow>(
       `SELECT p.PROJECT_ID, p.PROJECT_NAME, p.MAX_PARALLEL_RUNS, p.LLM_MODEL, p.CREATED_AT, p.CREATED_BY
-       FROM WEB_PROJECTS p
-       INNER JOIN WEB_PROJECT_MEMBERS pm ON pm.PROJECT_ID = p.PROJECT_ID
+       FROM ${projectTable} p
+       INNER JOIN ${memberTable} pm ON pm.PROJECT_ID = p.PROJECT_ID
        WHERE pm.USER_ID = :userId
        ORDER BY p.CREATED_AT DESC`,
       { userId },
@@ -87,8 +169,9 @@ export async function getProject(id: number): Promise<Project> {
 export async function createProject(input: ProjectInput): Promise<Project> {
   return withConnection(async (connection) => {
     try {
+      const table = await resolveProjectTable(connection);
       const result = await connection.execute<{ id: number[] }>(
-        `INSERT INTO WEB_PROJECTS (PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_BY)
+        `INSERT INTO ${table} (PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_BY)
          VALUES (:name, :maxParallelRuns, :llmModel, :createdBy)
          RETURNING PROJECT_ID INTO :id`,
         {
@@ -101,10 +184,6 @@ export async function createProject(input: ProjectInput): Promise<Project> {
       );
       await connection.commit();
 
-      // NOT — outBinds'in anahtar adı, execute()'a verilen bindParams nesnesindeki anahtarla
-      // (burada "id") BİREBİR AYNIDIR — SQL'deki ":id" placeholder'ının adıyla DEĞİL (aynı isim
-      // olsa da bu bir tesadüf, ikisi ayrı kavramlar). Yanlışlıkla "ID" (büyük harf) yazılırsa
-      // TypeScript hata vermez ama çalışma zamanında undefined döner — bkz. aşağıdaki kontrol.
       const newId = result.outBinds?.id?.[0];
       if (newId === undefined) {
         throw new Error('Proje oluşturuldu ama yeni PROJECT_ID okunamadı.');
@@ -127,13 +206,14 @@ export async function createProject(input: ProjectInput): Promise<Project> {
 export async function updateProject(id: number, input: ProjectInput): Promise<Project> {
   return withConnection(async (connection) => {
     try {
+      const table = await resolveProjectTable(connection);
       const existing = await fetchProjectRow(connection, id);
       if (!existing) {
         throw new NotFoundError(`Proje bulunamadı: ${id}`);
       }
 
       await connection.execute(
-        `UPDATE WEB_PROJECTS
+        `UPDATE ${table}
          SET PROJECT_NAME = :name,
              MAX_PARALLEL_RUNS = :maxParallelRuns,
              LLM_MODEL = :llmModel
@@ -165,7 +245,8 @@ export async function updateProject(id: number, input: ProjectInput): Promise<Pr
  * gerekebilir. */
 export async function deleteProject(id: number): Promise<void> {
   return withConnection(async (connection) => {
-    const result = await connection.execute(`DELETE FROM WEB_PROJECTS WHERE PROJECT_ID = :id`, { id });
+    const table = await resolveProjectTable(connection);
+    const result = await connection.execute(`DELETE FROM ${table} WHERE PROJECT_ID = :id`, { id });
     await connection.commit();
 
     if (!result.rowsAffected) {
@@ -195,7 +276,7 @@ function mapMemberRow(row: ProjectMemberRow): ProjectMember {
     username: row.USERNAME,
     displayName: row.DISPLAY_NAME,
     role: row.ROLE,
-    assignedAt: row.ASSIGNED_AT.toISOString(),
+    assignedAt: row.ASSIGNED_AT ? row.ASSIGNED_AT.toISOString() : null,
   };
 }
 
@@ -205,12 +286,14 @@ function mapMemberRow(row: ProjectMemberRow): ProjectMember {
  * göründüğünü belirler. */
 export async function listProjectMembers(projectId: number): Promise<ProjectMember[]> {
   return withConnection(async (connection) => {
+    const memberTable = await resolveMemberTable(connection);
+    const selectAssignmentColumn = memberTable === 'WEB_PROJECT_MEMBERS' ? 'pm.ASSIGNED_AT' : 'CAST(NULL AS TIMESTAMP) AS ASSIGNED_AT';
     const result = await connection.execute<ProjectMemberRow>(
-      `SELECT u.USER_ID, u.USERNAME, u.DISPLAY_NAME, u.ROLE, pm.ASSIGNED_AT
-       FROM WEB_PROJECT_MEMBERS pm
+      `SELECT u.USER_ID, u.USERNAME, u.DISPLAY_NAME, u.ROLE, ${selectAssignmentColumn}
+       FROM ${memberTable} pm
        INNER JOIN WEB_USERS u ON u.USER_ID = pm.USER_ID
        WHERE pm.PROJECT_ID = :projectId
-       ORDER BY pm.ASSIGNED_AT DESC`,
+       ORDER BY ${memberTable === 'WEB_PROJECT_MEMBERS' ? 'pm.ASSIGNED_AT' : 'u.USER_ID'} DESC`,
       { projectId },
     );
     return (result.rows ?? []).map(mapMemberRow);
@@ -223,14 +306,18 @@ export async function listProjectMembers(projectId: number): Promise<ProjectMemb
  * geçersizse (ORA-02291, FK ihlali) NotFoundError'a çevrilir. */
 export async function addProjectMember(projectId: number, userId: number): Promise<void> {
   return withConnection(async (connection) => {
+    const memberTable = await resolveMemberTable(connection);
     try {
-      await connection.execute(`INSERT INTO WEB_PROJECT_MEMBERS (PROJECT_ID, USER_ID) VALUES (:projectId, :userId)`, {
+      await connection.execute(`INSERT INTO ${memberTable} (PROJECT_ID, USER_ID) VALUES (:projectId, :userId)`, {
         projectId,
         userId,
       });
       await connection.commit();
     } catch (err) {
-      const oraError = err as { errorNum?: number };
+      const oraError = err as { errorNum?: number; message?: string };
+      if (oraError.errorNum === 2291) {
+        log.warn({ projectId, userId, err }, 'addProjectMember: FK ihlali (ORA-02291)');
+      }
       if (oraError.errorNum === 1) {
         return;
       }
@@ -244,8 +331,9 @@ export async function addProjectMember(projectId: number, userId: number): Promi
 
 export async function removeProjectMember(projectId: number, userId: number): Promise<void> {
   return withConnection(async (connection) => {
+    const memberTable = await resolveMemberTable(connection);
     const result = await connection.execute(
-      `DELETE FROM WEB_PROJECT_MEMBERS WHERE PROJECT_ID = :projectId AND USER_ID = :userId`,
+      `DELETE FROM ${memberTable} WHERE PROJECT_ID = :projectId AND USER_ID = :userId`,
       { projectId, userId },
     );
     await connection.commit();
@@ -257,9 +345,10 @@ export async function removeProjectMember(projectId: number, userId: number): Pr
 }
 
 async function fetchProjectRow(connection: oracledb.Connection, id: number): Promise<ProjectRow | undefined> {
+  const table = await resolveProjectTable(connection);
   const result = await connection.execute<ProjectRow>(
     `SELECT PROJECT_ID, PROJECT_NAME, MAX_PARALLEL_RUNS, LLM_MODEL, CREATED_AT, CREATED_BY
-     FROM WEB_PROJECTS
+     FROM ${table}
      WHERE PROJECT_ID = :id`,
     { id },
   );

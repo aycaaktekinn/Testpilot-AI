@@ -47,4 +47,9 @@ backend/allure-results/
 # v2 — Docker bind-mount verisi (Milvus etcd/minio/standalone). Kaynak kod DEĞİL, çalışma zamanında
 # üretilen/büyüyen binary veri (bkz. docker-compose.milvus.yml volumes tanımları) — repoya asla
 # commit edilmemeli.
-volumes/backend/.env_qwen
+ymlFiles/milvus/volumes/backend/.env_qwen
+*.meta
+/ymlFiles/milvus/volumes_local_backup/
+ymlFiles/milvus/volumes/
+/ymlFiles/milvus/volumes/
+/volumes/
