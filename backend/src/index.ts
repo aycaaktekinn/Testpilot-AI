@@ -5,6 +5,7 @@ import { env } from './config/env.js';
 import { createLogger } from './config/logger.js';
 import { initOraclePool, closeOraclePool } from './db/oracleClient.js';
 import { legacyTestService } from './api/legacyTestServiceInstance.js';
+import { AgentSettingsStore, applyAgentSettingsOverride } from './core/settings/AgentSettingsStore.js';
 
 const log = createLogger('server');
 
@@ -29,6 +30,17 @@ async function main() {
     await legacyTestService.initSchedules();
   } catch (err) {
     log.error({ err }, 'Zamanlanmış testler yüklenemedi — sunucu yine de başlatılıyor');
+  }
+
+  // v3.5 — Settings sayfasından değiştirilmiş "Agent Behavior" ayarları varsa (bkz.
+  // AgentSettingsStore.ts dosya başı açıklaması), sunucu başlarken defaultRunOptions'a uygulanır.
+  // Oracle/schedule yükleme ile AYNI best-effort felsefesi: dosya bozuksa/okunamazsa süreç
+  // ÇÖKMEZ, sadece .env varsayılanlarıyla devam edilir.
+  try {
+    const agentSettingsOverride = await new AgentSettingsStore().get();
+    applyAgentSettingsOverride(agentSettingsOverride);
+  } catch (err) {
+    log.error({ err }, 'Agent Behavior ayarları yüklenemedi — .env varsayılanları kullanılacak');
   }
 
   const app = createApp();

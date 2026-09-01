@@ -46,12 +46,18 @@ export class TestRunStore {
    * bile (ör. run hiç artefakt üretmediyse, ya da RunLogger yazımı daha önce başarısız olduysa)
    * işlem yine de başarılı sayılır — `force: true` bu yüzden hem `rm()`'e hem de best-effort
    * felsefesine uygun.
+   *
+   * v3.4 — silinen kaydı (void yerine) geri döner: bkz. LegacyTestService.deleteTestRun — çağıran,
+   * bu kaydın `createdAt`/`ownerId` alanlarını Oracle WEB_RUNS'taki karşılığını (varsa) bulup
+   * silmek için kullanıyor (JSON runId <-> RUN_ID arasında birebir bir eşleme YOK, bkz.
+   * runStore.ts deleteRunByFinishedAt dosya başı NOT'u — bu yüzden silme SONRASI bu bilgiye artık
+   * erişilemez, dolayısıyla burada, silmeden ÖNCE dışarı taşınması gerekiyor).
    */
-  async delete(id: string): Promise<void> {
+  async delete(id: string): Promise<LegacyRunRecord> {
     const records = await this.list();
-    const exists = records.some((r) => r.id === id);
+    const record = records.find((r) => r.id === id);
 
-    if (!exists) {
+    if (!record) {
       throw new NotFoundError(`Koşum bulunamadı: ${id}`);
     }
 
@@ -59,6 +65,7 @@ export class TestRunStore {
 
     const remaining = records.filter((r) => r.id !== id);
     await this.persist(remaining);
+    return record;
   }
 
   /**

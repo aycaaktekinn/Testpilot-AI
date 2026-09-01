@@ -155,9 +155,15 @@ legacyTestsRouter.get('/test-runs', async (req, res) => {
 // NOT: Bu route, '/test-runs/:id' route'undan ÖNCE tanımlanmasa da sorun olmaz — Express, farklı
 // segment sayısına sahip path'leri (parametresiz vs. :id'li) yapısal olarak ayırt eder, sıralama
 // sadece AYNI şekle sahip route'lar arasında önem taşır (bkz. '/generated-tests' ile aynı NOT).
+// v3.1 — ?before=YYYY-MM-DD verilirse Admin Panel'deki "Delete Old Runs" bakım özelliğini
+// (clearTestRunsBefore) tetikler; verilmezse ESKİ davranış (hepsini temizle, clearTestRuns) AYNEN
+// korunur — bkz. sohbet notu: "admin panelden eski koşumları şu tarihten itibaren sil".
 legacyTestsRouter.delete('/test-runs', async (req, res) => {
   try {
-    const result = await legacyTestService.clearTestRuns(getCaller(req as RequestWithAuthUser));
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
+    const result = before
+      ? await legacyTestService.clearTestRunsBefore(before, getCaller(req as RequestWithAuthUser))
+      : await legacyTestService.clearTestRuns(getCaller(req as RequestWithAuthUser));
     res.status(200).json(result);
   } catch (err) {
     log.error({ err }, 'test-runs temizlenemedi');

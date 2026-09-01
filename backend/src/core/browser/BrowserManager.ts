@@ -51,21 +51,48 @@ export class BrowserManager {
   /**
    * @param videoDir Video kaydı isteniyorsa (options.captureVideo), Playwright'ın .webm dosyasını
    *   yazacağı klasör. Klasörün var olduğu çağıran tarafından garanti edilmelidir.
+   * @param storageState v3.3 — verilirse yeni context bu çerez/localStorage durumuyla BAŞLAR (bkz.
+   *   getStorageState dosya başı açıklaması). Senaryo Önerileri'ndeki login ön-adımından sonra,
+   *   taramayı YENİ bir (ama zaten giriş yapılmış) context ile devam ettirmek için kullanılır.
+   *   Verilmezse (varsayılan, TÜM normal test run'larında olduğu gibi) davranış AYNEN korunur —
+   *   Playwright boş/anonim bir context açar.
    */
-  async launch(options: RunOptions, videoDir?: string): Promise<Page> {
+  async launch(
+    options: RunOptions,
+    videoDir?: string,
+    storageState?: Awaited<ReturnType<BrowserContext['storageState']>>,
+  ): Promise<Page> {
+    // v3.2 — bkz. sohbet notu: "test için chrome sekmesi açılıyor ya o sekme tam ekran olsun".
+    // SADECE headed (görünür) + yerel (Selenium Grid'siz) + Chromium koşumlarında anlamlı: pencere
+    // gerçekten görünür olduğu için kullanıcı onu küçük sabit boyutlu (1366x900) bir pencere
+    // yerine ekranı kaplamış görmek istiyor. Headless koşumlarda (görünür pencere YOK), Grid'de
+    // (uzak node kendi ekranını kullanır) ya da Firefox/WebKit'te (`--start-maximized` Chromium'a
+    // özgü bir flag, karşılığı yok) BİLİNÇLİ OLARAK dokunulmuyor.
+    const shouldMaximize = !options.useSeleniumGrid && !options.headless && options.browserEngine === 'chromium';
+
     if (options.useSeleniumGrid) {
       this.browser = await this.launchViaSeleniumGrid(options);
     } else {
       const launcher = ENGINES[options.browserEngine];
-      this.browser = await launcher.launch({ headless: options.headless });
+      this.browser = await launcher.launch({
+        headless: options.headless,
+        ...(shouldMaximize ? { args: ['--start-maximized'] } : {}),
+      });
     }
 
     this.context = await this.browser.newContext({
-      viewport: options.viewport,
+      // `--start-maximized` sadece PENCEREYİ maksimize eder; Playwright'a yine sabit bir viewport
+      // (1366x900) verilmeye devam edilirse sayfa içeriği eski küçük boyutunda kalır (pencere
+      // büyük ama içerik ortada, kenarlarda boşluk) — bu yüzden bu durumda viewport'u BİLEREK
+      // `null` bırakıyoruz, böylece sayfa gerçek (maksimize edilmiş) pencere boyutuna göre render
+      // olur. Headless/Grid/diğer motorlarda davranış AYNEN korunur (sabit viewport, ekran
+      // koordinatlarının/AI element keşfinin tutarlılığı için).
+      viewport: shouldMaximize ? null : options.viewport,
       // Sadece Chromium için gerçekçi bir masaüstü Chrome user-agent'ı kullanıyoruz; diğer
       // motorlarda kendi varsayılan (ve tutarlı) user-agent'ları bırakılıyor.
       ...(options.browserEngine === 'chromium' ? { userAgent: CHROMIUM_USER_AGENT } : {}),
       ...(options.captureVideo && videoDir ? { recordVideo: { dir: videoDir, size: options.viewport } } : {}),
+      ...(storageState ? { storageState } : {}),
     });
     this.context.setDefaultTimeout(options.defaultActionTimeoutMs);
     this.context.setDefaultNavigationTimeout(options.navigationTimeoutMs);
@@ -79,7 +106,51 @@ export class BrowserManager {
     this.video = this.page.video();
     this.attachDialogHandler(this.page);
 
+    if (shouldMaximize) {
+      await this.maximizeWindow(this.page);
+    }
+
     return this.page;
+  }
+
+  /**
+   * v3.2 — DÜZELTME 3: kullanıcı "maximized" (pencere ekranı kaplar ama menü çubuğu/dock görünür
+   * kalır) değil, GERÇEK OS-seviyesi fullscreen istedi (bkz. sohbet notu: "full screen istmiştim").
+   * Önceki denemeler (`--start-maximized` flag'i, CDP `windowState:'maximized'`, somut piksel
+   * boyutuna resize) sırasıyla denendi ama hiçbiri macOS'ta gerçek fullscreen VERMEDİ — çünkü
+   * macOS'ta "maximize" native bir pencere durumu DEĞİLDİR (yerine "zoom" var). "fullscreen" İSE
+   * (yeşil butona çift tıklama / Cmd+Ctrl+F ile açılan, menü çubuğu ve dock'un da kaybolduğu mod)
+   * macOS'ta native olarak DESTEKLENİYOR — bu yüzden CDP'ye doğrudan bu durumu istettiriyoruz.
+   */
+  private async maximizeWindow(page: Page): Promise<void> {
+    try {
+      const cdpSession = await this.context!.newCDPSession(page);
+      const { windowId } = await cdpSession.send('Browser.getWindowForTarget');
+      // Önce 'normal' durumuna alıyoruz — pencere zaten farklı bir state'teyse doğrudan
+      // 'fullscreen' istemek CDP tarafından yok sayılabiliyor; 'normal'a çekip HEMEN ARDINDAN
+      // fullscreen istemek bu riski ortadan kaldırıyor.
+      await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+
+      try {
+        await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } });
+      } catch (fullscreenErr) {
+        // Best-effort geri düşüş: fullscreen state bir sebeple reddedilirse (ör. eski bir
+        // Chromium sürümü/platform), en azından ekranın gerçek çözünürlüğüne göre somut piksel
+        // değerleriyle büyütmeyi dene — hiç büyütememekten iyidir.
+        log.warn({ err: fullscreenErr }, 'Fullscreen durumu ayarlanamadı, somut ekran boyutuna büyütme deneniyor');
+        // NOT: bu callback Node'da DEĞİL, page.evaluate() ile TARAYICIDA çalışır (bkz.
+        // browserDiscoveryScript.ts dosya başı NOT'undaki AYNI durum) — bu projenin tsconfig'i
+        // BİLİNÇLİ OLARAK "DOM" lib'ini içermediği için `window`/`screen` burada TypeScript'e
+        // tanımsız görünür; tip zorlamasıyla bu kontrolü es geçiyoruz.
+        const { width, height } = await page.evaluate(() => {
+          const s = (globalThis as unknown as { screen: { width: number; height: number } }).screen;
+          return { width: s.width, height: s.height };
+        });
+        await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { left: 0, top: 0, width, height } });
+      }
+    } catch (err) {
+      log.warn({ err }, 'Tarayıcı penceresi tam ekran yapılamadı (görsel bir sorun, testi etkilemez)');
+    }
   }
 
   /**
@@ -154,6 +225,27 @@ export class BrowserManager {
   getPage(): Page {
     if (!this.page) throw new Error('BrowserManager henüz başlatılmadı (launch çağrılmadı).');
     return this.page;
+  }
+
+  /**
+   * v3.3 — Senaryo Önerileri'ndeki AI destekli login ön-adımı için eklendi (bkz.
+   * ScenarioSuggester.performLogin dosya başı açıklaması). Context'in o anki çerez/localStorage
+   * durumunu (Playwright storageState) döner — bu, başka bir BrowserManager'ın YENİ bir context'i
+   * `launch(options, videoDir, storageState)` ile bu durumdan başlatabilmesini sağlar (ör. giriş
+   * yapılmış bir oturumla devam edip sayfayı taramak). NOT: dönen değer çerezleri (potansiyel
+   * olarak bir session token) içerir — ASLA loglanmamalı, diske yazılmamalı ya da genel bir WS
+   * yayın kanalına gönderilmemelidir; sadece process içinde, çağıranın kendi belleğinde
+   * kullanılmalıdır. context kapatılmadan ÖNCE çağrılmalıdır. Best-effort: context yoksa ya da bir
+   * hata olursa null döner (asla fırlatmaz).
+   */
+  async getStorageState(): Promise<Awaited<ReturnType<BrowserContext['storageState']>> | null> {
+    if (!this.context) return null;
+    try {
+      return await this.context.storageState();
+    } catch (err) {
+      log.debug({ err }, 'Oturum durumu (storageState) alınamadı (yok sayıldı)');
+      return null;
+    }
   }
 
   private attachDialogHandler(page: Page): void {

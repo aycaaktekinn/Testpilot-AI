@@ -105,7 +105,13 @@ async function searchUser(
   }
 
   const getAttr = (name: string): string | null => {
-    const attrEntry = (entry.attributes ?? []) as Array<{ type: string; values: unknown }>;
+    // NOT: ldapts'in kendi tip tanımı `entry.attributes`'ı (Entry'nin diğer dinamik alanlarıyla
+    // AYNI genel) `string | string[] | Buffer | Buffer[]` olarak modelliyor — GERÇEK çalışma
+    // zamanında ise (ldapts'in gerçek davranışı) bu alan bir `{ type, values }[]` dizisidir. Bu
+    // SADECE bir tip-seviyesi uyuşmazlığı (çalışma zamanı davranışını DEĞİŞTİRMİYORUZ) — derleyici
+    // bu iki tipin "yeterince örtüşmediğini" düşündüğü için doğrudan cast'e izin vermiyor, `unknown`
+    // üzerinden geçiş (derleyicinin kendi önerdiği çözüm) bunu susturur.
+    const attrEntry = (entry.attributes ?? []) as unknown as Array<{ type: string; values: unknown }>;
     const found = attrEntry.find((a) => a?.type?.toLowerCase() === name.toLowerCase());
     if (found) return firstAttributeValue(found.values);
     // ldapts ayrıca her özniteliği DOĞRUDAN entry üzerinde de düz alan olarak sunar (ör.

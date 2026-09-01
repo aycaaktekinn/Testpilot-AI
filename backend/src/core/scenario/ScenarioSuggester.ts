@@ -1,13 +1,36 @@
+import path from 'node:path';
+import { rm } from 'node:fs/promises';
+import type { BrowserContext } from 'playwright';
+import { nanoid } from 'nanoid';
 import type { LlmProvider } from '../llm/LlmProvider.js';
 import { BrowserManager } from '../browser/BrowserManager.js';
 import { DomAnalyzer } from '../dom/DomAnalyzer.js';
 import { dismissConsentBanners } from '../browser/ConsentBannerHandler.js';
 import { GeneratedTestStore } from '../legacy/GeneratedTestStore.js';
 import { TestRunStore } from '../legacy/TestRunStore.js';
-import { defaultRunOptions } from '../../config/env.js';
+import { AgentLoop } from '../agent/AgentLoop.js';
+import { env, defaultRunOptions } from '../../config/env.js';
 import { ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import type { DiscoveredElement } from '../../domain/types.js';
+
+type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
+
+/**
+ * v3.3 — Sayfa giriş (login) gerektiriyorsa, taramadan ÖNCE çalıştırılacak kısa bir AI destekli
+ * giriş adımını tanımlar (bkz. ScenarioSuggester.performLogin dosya başı açıklaması). `scenario`,
+ * gerçek test senaryolarıyla AYNI serbest metin formatındadır ve AYNI `{{var.AD}}`/`{{secret.AD}}`
+ * placeholder kuralını kullanır (bkz. SYSTEM_PROMPT kural 6) — GERÇEK bir şifre asla LLM'e
+ * gönderilmez, sadece placeholder adı gönderilir (bkz. SecretsVault.resolve/maskForLog deseni).
+ */
+export interface ScenarioSuggestionLoginConfig {
+  /** Giriş formunun bulunduğu sayfa — boşsa/verilmezse `suggest()`'e verilen ana URL kullanılır. */
+  url?: string;
+  /** "E-posta alanına {{var.EMAIL}} yaz, şifre alanına {{secret.PASSWORD}} yaz, Giriş'e tıkla..." gibi doğal dil adımlar. */
+  scenario: string;
+  variables?: Record<string, string>;
+  secrets?: Record<string, string>;
+}
 
 const log = createLogger('ScenarioSuggester');
 
@@ -95,17 +118,29 @@ export class ScenarioSuggester {
    * @param focus Kullanıcının "sadece login sayfasıyla ilgili senaryo üret" gibi serbest metin bir
    *   yönlendirmesi — opsiyonel, boşsa AI eskisi gibi sayfanın GENELİNE göre öneriyor (bkz.
    *   SYSTEM_PROMPT kural 10).
+   * @param login v3.3 — verilirse, `scanPage()`'den ÖNCE `performLogin()` ile kısa bir AI destekli
+   *   giriş adımı çalıştırılır ve tarama, GİRİŞ YAPILMIŞ oturumla devam eder (bkz.
+   *   ScenarioSuggestionLoginConfig). Verilmezse (varsayılan) davranış eskisi gibi — sayfa hiç
+   *   giriş yapılmadan, anonim olarak taranır.
    */
   async suggest(
     url: string,
     headed = true,
     existingScenarios: string[] = [],
     focus = '',
+    login?: ScenarioSuggestionLoginConfig,
   ): Promise<ScenarioSuggestion[]> {
-    const [{ title, elements }, history] = await Promise.all([
-      this.scanPage(url, headed),
-      this.getRelevantHistory(url),
-    ]);
+    // history taraması login'e bağlı DEĞİLDİR (sadece geçmiş çalıştırılmış senaryoları okur) —
+    // login adımının sıralı (ve yavaş) olmasından bağımsız olarak paralel başlatılır.
+    const historyPromise = this.getRelevantHistory(url);
+
+    // Login SIRALI olmak ZORUNDADIR: scanPage'in kullanacağı storageState, ancak login BİTTİKTEN
+    // sonra bilinebilir (bkz. performLogin dosya başı açıklaması).
+    const storageState = login
+      ? await this.performLogin({ ...login, url: login.url || url }, headed)
+      : undefined;
+    const { title, elements } = await this.scanPage(url, headed, storageState);
+    const history = await historyPromise;
 
     if (elements.length === 0) {
       throw new ValidationError('Sayfada hiç etkileşilebilir element bulunamadı; senaryo önerisi çıkarılamadı.');
@@ -205,7 +240,85 @@ export class ScenarioSuggester {
     }
   }
 
-  private async scanPage(url: string, headed: boolean): Promise<{ title: string; elements: DiscoveredElement[] }> {
+  /**
+   * v3.3 — Sayfa giriş gerektirdiğinde `suggest()` tarafından `scanPage()`'den ÖNCE çağrılır.
+   * Gerçek test run'larında kullanılan AYNI AI karar motorunu (AgentLoop) — DomAnalyzer/
+   * ActionExecutor/SecretsVault ile birlikte — kullanarak `login.scenario`'yu adım adım çalıştırır
+   * (herhangi bir login formuna, çok adımlı akışa vb. uyum sağlayabilir; sabit selector'lara
+   * dayanan kırılgan bir "otomatik doldurma" DEĞİLDİR). Giriş BAŞARILI olursa, context'in
+   * çerez/localStorage durumunu (Playwright storageState) yakalayıp döner — bu, `scanPage()`'in
+   * SIFIRDAN yeni bir tarayıcı context'ini bu durumla başlatıp taramayı GİRİŞ YAPILMIŞ haliyle
+   * sürdürmesini sağlar.
+   *
+   * BİLİNÇLİ OLARAK bu AgentLoop run'ı runManager'a/persistan koşum geçmişine (Test Runs) HİÇ
+   * kaydedilmez — kendi özel/yerel bir onEvent dinleyicisiyle, tamamen izole çalıştırılır (bkz.
+   * types.ts'teki 'storage_state_captured' olayı dosya başı NOT'u: bu olay çerez taşıdığı için
+   * ASLA genel bir WS yayın kanalına bağlanmamalıdır — burada da bağlanmıyor).
+   *
+   * Giriş adımı `passed` DIŞINDA bir durumla biterse (failed/error/cancelled), taramaya anonim
+   * olarak SESSİZCE devam ETMEK yerine BİLEREK net bir hata fırlatılır — aksi halde kullanıcı,
+   * aslında giriş yapılmamış bir sayfaya göre üretilmiş önerileri "giriş yapılmış" sanabilirdi.
+   */
+  private async performLogin(
+    login: ScenarioSuggestionLoginConfig & { url: string },
+    headed: boolean,
+  ): Promise<StorageState | undefined> {
+    const runId = `suggest-login-${nanoid(10)}`;
+    let capturedState: StorageState | undefined;
+
+    const loop = new AgentLoop(this.llm, (event) => {
+      if (event.type === 'storage_state_captured') {
+        capturedState = event.storageState;
+      }
+    });
+
+    const options = {
+      ...defaultRunOptions,
+      headless: !headed,
+      captureScreenshot: false,
+      captureVideo: false,
+      captureTrace: false,
+    };
+
+    const report = await loop.run({
+      runId,
+      url: login.url,
+      scenario: login.scenario,
+      variables: login.variables ?? {},
+      secrets: login.secrets ?? {},
+      options,
+      captureStorageState: true,
+    });
+
+    // RunLogger.persist() (AgentLoop.run() içinde, tüm çağıranlar için KOŞULSUZ) her zaman
+    // RUNS_DIR/<runId>.json'a bir run detay dosyası yazar — bu login ön-adımı BİLEREK
+    // TestRunStore'un index'ine hiç EKLENMEDİĞİ için (Test Runs geçmişinde görünmesin diye), bu
+    // dosya index'te hiçbir zaman referans edilmeyen bir "yetim" olarak kalır ve "Delete Old Runs"
+    // gibi index-tabanlı temizlik araçları tarafından ASLA silinemez. Diskte sessizce birikmesin
+    // diye burada best-effort olarak (asla fırlatmadan) hemen siliyoruz — storageState zaten
+    // yukarıda process belleğine yakalandı, bu dosyaya bir daha ihtiyaç yok.
+    await rm(path.join(path.resolve(env.RUNS_DIR), `${runId}.json`), { force: true }).catch((err) => {
+      log.debug({ err, runId }, 'Login ön-adımının geçici run kaydı silinemedi (yok sayıldı)');
+    });
+
+    if (report.status !== 'passed') {
+      log.warn({ runId, status: report.status, failureReason: report.failureReason }, 'Senaryo önerisi login ön-adımı başarısız');
+      throw new ValidationError(
+        `Giriş adımı tamamlanamadı (${report.status}): ${report.failureReason ?? 'bilinmeyen hata'}. ` +
+          'Giriş senaryosunu ve Değişkenler/Secrets değerlerini kontrol edip tekrar deneyin.',
+      );
+    }
+    if (!capturedState) {
+      throw new ValidationError('Giriş başarılı görünüyor ama oturum bilgisi yakalanamadı. Lütfen tekrar deneyin.');
+    }
+    return capturedState;
+  }
+
+  private async scanPage(
+    url: string,
+    headed: boolean,
+    storageState?: StorageState,
+  ): Promise<{ title: string; elements: DiscoveredElement[] }> {
     const browserManager = new BrowserManager();
     const domAnalyzer = new DomAnalyzer();
 
@@ -227,7 +340,7 @@ export class ScenarioSuggester {
     };
 
     try {
-      const page = await browserManager.launch(options);
+      const page = await browserManager.launch(options, undefined, storageState);
       try {
         await page.goto(url, { timeout: options.navigationTimeoutMs, waitUntil: 'domcontentloaded' });
         await dismissConsentBanners(page);

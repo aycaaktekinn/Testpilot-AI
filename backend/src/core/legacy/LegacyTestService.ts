@@ -22,7 +22,7 @@ import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore
 import { applySchedule } from './TestScheduler.js';
 import { AllureReportService } from './AllureReportService.js';
 import { createScenario } from '../../db/scenarioStore.js';
-import { createRun } from '../../db/runStore.js';
+import { createRun, deleteRunsBefore, deleteRunByFinishedAt, deleteAllRuns } from '../../db/runStore.js';
 import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import { runManager } from '../../api/runManager.js';
@@ -145,9 +145,24 @@ export class LegacyTestService {
     return { runs: all.filter((r) => isVisibleTo(r.ownerId, caller)) };
   }
 
+  /**
+   * v3.4 — bkz. sohbet notu: "test runs kısmından sile bastığımızda databaseden de siliyor mu".
+   * ÖNCEDEN sadece JSON tarafını (index.json + detay/artefakt dosyaları) siliyordu; Oracle
+   * WEB_RUNS'ta karşılığı varsa (best-effort yazılmışsa) orada SONSUZA kadar kalıyordu. Şimdi
+   * silinen kaydın `createdAt`/`ownerId` bilgisiyle (bkz. TestRunStore.delete dosya başı NOT'u)
+   * WEB_RUNS'taki karşılığı da (varsa) best-effort silinmeye çalışılıyor — clearTestRunsBefore ile
+   * AYNI desen: JSON tarafı asıl kaynak-of-truth'tur, Oracle hatası yanıtı ASLA etkilemez.
+   */
   async deleteTestRun(id: string, caller: CallerContext): Promise<{ id: string }> {
     await this.assertRunAccess(id, caller);
-    await this.testRunStore.delete(id);
+    const deleted = await this.testRunStore.delete(id);
+
+    try {
+      await deleteRunByFinishedAt(new Date(deleted.createdAt), deleted.ownerId ?? null);
+    } catch (err) {
+      log.error({ err, id }, 'Koşum Oracle veritabanından silinemedi (JSON tarafı yine de başarılı)');
+    }
+
     return { id };
   }
 
@@ -158,6 +173,48 @@ export class LegacyTestService {
       caller.role === 'ADMIN'
         ? await this.testRunStore.clear()
         : await this.testRunStore.clear((r) => r.ownerId === caller.userId);
+
+    // v3.4 — bkz. deleteTestRun dosya başı NOT'u, AYNI gerekçe: "Clear All" da WEB_RUNS'ı
+    // güncellemiyordu, şimdi ediyor (best-effort, JSON tarafı yine de asıl kaynak-of-truth).
+    try {
+      await deleteAllRuns(caller.role === 'ADMIN' ? null : caller.userId);
+    } catch (err) {
+      log.error({ err }, 'Tüm koşumlar Oracle veritabanından silinemedi (JSON tarafı yine de başarılı)');
+    }
+
+    return { count };
+  }
+
+  /**
+   * v3.1 — Admin Panel'deki "Delete Old Runs" bakım özelliği (bkz. sohbet notu: "admin panelden
+   * eski koşumları şu tarihten itibaren sil"). clearTestRuns()'ın AYNI yetki desenini kullanır
+   * (ADMIN: TÜM kullanıcıların koşumları hedeflenir; MEMBER: sadece kendi koşumları — bu uç
+   * pratikte SADECE Admin Panel'den, yani ADMIN rolüyle çağrılıyor, ama servis katmanında
+   * clearTestRuns ile tutarlı kalması için MEMBER dalı da bilinçli olarak korundu), buna EK
+   * olarak `createdAt < cutoffDate` filtresi ekler — yani "cutoffDate'TEN ESKİ (ondan önce
+   * oluşturulmuş) koşumları sil" anlamına gelir; cutoffDate'in kendisi ve sonrası SİLİNMEZ.
+   */
+  async clearTestRunsBefore(cutoffDateIso: string, caller: CallerContext): Promise<{ count: number }> {
+    const cutoff = new Date(cutoffDateIso);
+    if (Number.isNaN(cutoff.getTime())) {
+      throw new ValidationError('Geçersiz tarih.');
+    }
+
+    const count = await this.testRunStore.clear((r) => {
+      const inScope = caller.role === 'ADMIN' || r.ownerId === caller.userId;
+      return inScope && new Date(r.createdAt) < cutoff;
+    });
+
+    // v3.1 — bkz. sohbet notu: "silinenler veritabanından da siliniyor mu". WEB_RUNS (Oracle)
+    // satırlarını da AYNI eşikle temizlemeyi dener — best-effort: Oracle yapılandırılmamışsa/
+    // ulaşılamıyorsa bu blok SADECE loglanarak atlanır, kullanıcıya dönen `count` (JSON tarafı,
+    // asıl kaynak-of-truth) ASLA etkilenmez (bkz. deleteRunsBefore dosya başı NOT'u — runStore.ts).
+    try {
+      await deleteRunsBefore(cutoff, caller.role === 'ADMIN' ? null : caller.userId);
+    } catch (err) {
+      log.error({ err }, 'Eski koşumlar Oracle veritabanından silinemedi (JSON tarafı yine de başarılı)');
+    }
+
     return { count };
   }
 
@@ -429,7 +486,12 @@ export class LegacyTestService {
       runManager.publishExternalEvent(runId, {
         type: 'replay_retry_started',
         runId,
-        reason: report.failureReason,
+        // NOT: `shouldFallbackToAi` yukarıda zaten report.failureReason'ın TANIMLI bir string
+        // olduğunu (ve replay_mismatch/replay_step_failed ile başladığını) garanti ediyor — ama
+        // TypeScript bunu ayrı bir boolean değişken üzerinden (kontrol akışı daralması olmadan)
+        // çıkaramıyor, bu yüzden burada SADECE tip kontrolünü geçmek için (pratikte hiç
+        // tetiklenmeyecek) bir varsayılan değer veriyoruz.
+        reason: report.failureReason ?? 'unknown',
       });
       report = await runAttempt(undefined);
     }
@@ -731,6 +793,12 @@ export class LegacyTestService {
         ? report.steps.at(-1)?.decision.summary ?? 'Senaryo başarıyla tamamlandı.'
         : (report.failureReason ?? 'Senaryo başarısız oldu.');
 
+    // v3.1 — bkz. LegacyRunRecord.artifacts dosya başı açıklaması: TEK seferde hesaplanıp hem
+    // kalıcı kayda (record.artifacts, aşağıda) hem de bu isteğin ANLIK yanıtına (return'deki
+    // result.artifacts) aynı URL'ler yazılır — iki ayrı hesaplama/olası tutarsızlık YOK.
+    const artifactUrls = toArtifactUrls(report.runId, report.artifacts);
+    const hasArtifacts = Object.keys(artifactUrls).length > 0;
+
     const record: LegacyRunRecord = {
       id: report.runId,
       testFile: fileName,
@@ -744,6 +812,7 @@ export class LegacyTestService {
       exitCode,
       // v3.1 — bkz. LegacyRunRecord.ownerId / isVisibleTo() dosya başı açıklamaları.
       ownerId: actingUserId ?? null,
+      artifacts: hasArtifacts ? artifactUrls : undefined,
     };
 
     try {
@@ -765,7 +834,7 @@ export class LegacyTestService {
         output: buildOutputLog(report, options.browserEngine),
         errorOutput: record.errorOutput ?? '',
         exitCode,
-        artifacts: toArtifactUrls(report.runId, report.artifacts),
+        artifacts: artifactUrls,
       },
     };
   }

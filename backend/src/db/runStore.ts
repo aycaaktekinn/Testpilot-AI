@@ -44,3 +44,72 @@ export async function createRun(input: CreateRunInput): Promise<{ id: number }> 
     return { id: newId };
   });
 }
+
+/**
+ * v3.1 — Admin Panel "Delete Old Runs" bakım özelliği (bkz. sohbet notu: "silinenler veritabanından
+ * da siliniyor mu"). WEB_RUNS satırları, JSON tarafındaki (TestRunStore) koşum kayıtlarından
+ * BAĞIMSIZ, best-effort olarak yazılır (bkz. createRun() çağrı yeri, LegacyTestService) VE
+ * aralarında birebir bir id eşlemesi (JSON runId <-> RUN_ID) YOK — bu yüzden burada da id bazlı
+ * değil, AYNI eşik mantığıyla (FINISHED_AT < cutoff) tarih bazlı bir toplu silme yapılır.
+ * FINISHED_AT kullanılıyor çünkü JSON tarafındaki LegacyRunRecord.createdAt, createRun()'a
+ * `finishedAt: new Date(createdAt)` olarak birebir aktarılıyor (bkz. finalizeResult()) — yani iki
+ * taraf da AYNI zaman damgasını temsil ediyor, eşik karşılaştırması bu sayede tutarlı.
+ *
+ * `startedBy` verilirse (MEMBER senaryosu — bkz. LegacyTestService.clearTestRunsBefore) SADECE o
+ * kullanıcının başlattığı koşumlar hedeflenir; `null`/`undefined` ise (ADMIN) TÜM kullanıcıların
+ * koşumları silinir.
+ */
+export async function deleteRunsBefore(cutoff: Date, startedBy?: number | null): Promise<number> {
+  return withConnection(async (connection) => {
+    const result =
+      startedBy == null
+        ? await connection.execute(`DELETE FROM WEB_RUNS WHERE FINISHED_AT < :cutoff`, { cutoff })
+        : await connection.execute(`DELETE FROM WEB_RUNS WHERE FINISHED_AT < :cutoff AND STARTED_BY = :startedBy`, {
+            cutoff,
+            startedBy,
+          });
+    await connection.commit();
+    return result.rowsAffected ?? 0;
+  });
+}
+
+/**
+ * v3.4 — bkz. sohbet notu: "test runs kısmından sile bastığımızda databaseden de siliyor mu".
+ * Test Runs sayfasındaki TEKİL "Delete" butonu için — deleteRunsBefore()'daki AYNI kısıt burada
+ * da geçerli: JSON runId <-> RUN_ID arasında birebir bir eşleme YOK, bu yüzden yine FINISHED_AT
+ * eşleşmesiyle çalışılıyor (bkz. deleteRunsBefore dosya başı NOT'u) — ama bir ARALIK değil, TEK
+ * bir zaman damgasına TAM eşitlik. Teorik olarak aynı milisaniyede biten birden fazla run varsa
+ * (son derece olası değil) birden fazla satır silinebilir — bu, id eşlemesi hiç var olmadığı için
+ * kabul edilen bir sınırlamadır (deleteRunsBefore ile AYNI best-effort felsefesi).
+ */
+export async function deleteRunByFinishedAt(finishedAt: Date, startedBy?: number | null): Promise<number> {
+  return withConnection(async (connection) => {
+    const result =
+      startedBy == null
+        ? await connection.execute(`DELETE FROM WEB_RUNS WHERE FINISHED_AT = :finishedAt`, { finishedAt })
+        : await connection.execute(
+            `DELETE FROM WEB_RUNS WHERE FINISHED_AT = :finishedAt AND STARTED_BY = :startedBy`,
+            { finishedAt, startedBy },
+          );
+    await connection.commit();
+    return result.rowsAffected ?? 0;
+  });
+}
+
+/**
+ * v3.4 — Test Runs sayfasındaki "Clear All" butonu için (Admin Panel'deki tarih bazlı "Delete Old
+ * Runs" bakım özelliğinden AYRI — bkz. deleteRunsBefore). Tarih filtresi OLMADAN TÜM (ya da
+ * `startedBy` verilmişse SADECE o kullanıcının) WEB_RUNS satırlarını siler — deleteRunsBefore ile
+ * AYNI yetki deseni (startedBy==null -> ADMIN, tüm kullanıcılar; sayı verilirse -> sadece o
+ * kullanıcı) ve AYNI best-effort felsefesi.
+ */
+export async function deleteAllRuns(startedBy?: number | null): Promise<number> {
+  return withConnection(async (connection) => {
+    const result =
+      startedBy == null
+        ? await connection.execute(`DELETE FROM WEB_RUNS`)
+        : await connection.execute(`DELETE FROM WEB_RUNS WHERE STARTED_BY = :startedBy`, { startedBy });
+    await connection.commit();
+    return result.rowsAffected ?? 0;
+  });
+}

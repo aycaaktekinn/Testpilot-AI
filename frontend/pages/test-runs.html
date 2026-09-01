@@ -726,6 +726,43 @@
 
                 </div>
 
+
+                <!-- SCREENSHOT — v3.1. Sadece bu koşum screenshot alınarak çalıştırıldıysa görünür
+                     (bkz. sohbet notu: "test koşumlarında alınan ekran görüntüleri test runs da...
+                     gözüksün"; app.js LegacyRunRecord.artifacts). Küçük resme tıklamak orijinal
+                     boyutta yeni sekmede açar (bkz. app.js viewRunDetailsButton handler'ı). -->
+                <div
+                        id="runDetailsScreenshotSection"
+                        class="hidden"
+                >
+
+                    <div
+                            class="font-label-caps
+                               text-label-caps
+                               text-on-surface-variant
+                               mb-2"
+                    >
+                        Screenshot
+                    </div>
+
+                    <a
+                            id="runDetailsScreenshotLink"
+                            href="#"
+                            target="_blank"
+                            rel="noopener"
+                            class="block rounded-lg overflow-hidden border border-outline-variant
+                               hover:border-primary-container transition-colors"
+                    >
+                        <img
+                                id="runDetailsScreenshotImg"
+                                src=""
+                                alt="Run screenshot"
+                                class="w-full max-h-64 object-contain bg-black/20"
+                        />
+                    </a>
+
+                </div>
+
             </div>
 
 

@@ -64,6 +64,14 @@ export interface AgentLoopInput {
    * adapte olabilecek bir karar verici yoktur.
    */
   replaySteps?: ReplayStep[];
+  /**
+   * v3.3 — SADECE Senaryo Önerileri'ndeki AI destekli login ön-adımı için (bkz.
+   * ScenarioSuggester.performLogin). `true` ise, context kapatılmadan hemen önce
+   * `browserManager.getStorageState()` çağrılır ve sonucu bir 'storage_state_captured' olayıyla
+   * (bkz. types.ts) yayınlanır. Varsayılan `false`/`undefined` — normal test run'larında (Run,
+   * Run Selected, zamanlanmış koşumlar vb.) davranış HİÇ DEĞİŞMEZ, hiçbir ek işlem yapılmaz.
+   */
+  captureStorageState?: boolean;
 }
 
 export class AgentLoop {
@@ -515,6 +523,17 @@ export class AgentLoop {
         if (options.captureTrace) {
           const ok = await browserManager.stopTracing(tracePath);
           if (ok) artifacts.tracePath = tracePath;
+        }
+
+        // bkz. AgentLoopInput.captureStorageState dosya başı açıklaması — SADECE login ön-adımı
+        // bunu `true` verir, normal run'larda bu blok hiç çalışmaz. getStorageState() zaten
+        // best-effort'tur (asla fırlatmaz), context kapanmadan ÖNCE (browserManager.close()'dan
+        // ÖNCE) çağrılması gerekir.
+        if (input.captureStorageState) {
+          const storageState = await browserManager.getStorageState();
+          if (storageState) {
+            this.emit({ type: 'storage_state_captured', runId, storageState });
+          }
         }
 
         const closeResult = await browserManager.close();

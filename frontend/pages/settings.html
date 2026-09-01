@@ -164,8 +164,8 @@
                     Agent Behavior
                 </h3>
                 <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">
-                    Read-only — the agent's safety/timeout thresholds. To change them, edit the backend's
-                    <code class="font-code-md text-code-md">.env</code> file and restart the server.
+                    The agent's safety/timeout thresholds. Changes here take effect immediately for
+                    everyone (no server restart needed) and apply until changed again or reset.
                 </p>
             </div>
 
@@ -173,6 +173,46 @@
                 <div class="col-span-3 font-body-sm text-body-sm text-on-surface-variant">
                     Loading...
                 </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-3 pt-sm border-t border-outline-variant">
+                <button
+                        id="settingsAgentSaveButton"
+                        type="button"
+                        class="flex items-center gap-1.5
+                               px-4 py-2 rounded-lg
+                               bg-primary-container
+                               text-white
+                               hover:bg-inverse-primary
+                               transition-colors
+                               font-body-sm text-body-sm font-bold
+                               disabled:opacity-50
+                               disabled:cursor-not-allowed"
+                >
+                    <span class="material-symbols-outlined text-[16px]">save</span>
+                    Save
+                </button>
+                <button
+                        id="settingsAgentResetButton"
+                        type="button"
+                        class="flex items-center gap-1.5
+                               px-4 py-2 rounded-lg
+                               border border-outline-variant
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-container-high
+                               transition-colors
+                               font-body-sm text-body-sm
+                               disabled:opacity-50
+                               disabled:cursor-not-allowed"
+                >
+                    Reset to .env Defaults
+                </button>
+                <span id="settingsAgentSavedNotice" class="hidden font-body-sm text-body-sm text-secondary flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[16px]">check_circle</span>
+                    Saved
+                </span>
+                <span id="settingsAgentErrorNotice" class="hidden font-body-sm text-body-sm text-error"></span>
             </div>
 
         </div>

@@ -148,6 +148,124 @@
 
         </div>
 
+
+        <!-- LOGIN-GATED PAGE SUPPORT -->
+        <div class="flex flex-col gap-sm border-t border-outline-variant pt-sm mt-1">
+
+            <label
+                    class="flex items-center gap-2
+                           cursor-pointer
+                           font-body-sm text-body-sm
+                           text-on-surface-variant"
+            >
+                <input
+                        id="suggestRequiresLoginCheckbox"
+                        class="rounded
+                               bg-surface-container
+                               border-outline-variant
+                               text-primary"
+                        type="checkbox"
+                />
+                This page requires logging in first
+            </label>
+
+            <div id="loginConfigSection" class="hidden flex flex-col gap-sm bg-surface-container-low rounded-lg border border-outline-variant p-sm">
+
+                <p class="font-body-sm text-[12px] text-on-surface-variant">
+                    TestPilot AI will log in first (using the same AI engine as a real test run), then
+                    scan the page as an authenticated user. This makes suggestions slower but lets it
+                    see content that's only visible after login.
+                </p>
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="loginUrlInput"
+                            class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                    >
+                        Login page URL (optional)
+                    </label>
+                    <input
+                            id="loginUrlInput"
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-2
+                                   text-body-sm text-on-surface
+                                   placeholder:text-on-surface-variant/50
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none"
+                            placeholder="Defaults to the page URL above"
+                            type="url"
+                    />
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="loginScenarioInput"
+                            class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                    >
+                        Login steps
+                    </label>
+                    <textarea
+                            id="loginScenarioInput"
+                            rows="2"
+                            placeholder="e.g. Click Login, type {{var.EMAIL}} into the email field, type {{secret.PASSWORD}} into the password field, click Sign In and wait for the page to load."
+                            class="w-full
+                                   bg-[#0F172A]
+                                   border border-[#334155]
+                                   rounded-lg
+                                   px-sm py-2
+                                   text-body-sm text-on-surface
+                                   placeholder:text-on-surface-variant/50
+                                   focus:border-primary-container
+                                   focus:ring-2
+                                   focus:ring-primary-container/20
+                                   transition-all
+                                   outline-none
+                                   resize-y"
+                    ></textarea>
+                </div>
+
+                <div class="flex flex-col gap-2">
+
+                    <div class="flex items-center justify-between">
+                        <span class="font-body-sm text-body-sm text-on-surface-variant font-semibold">
+                            Login Variables &amp; Secrets
+                        </span>
+                        <button
+                                id="addLoginVariableButton"
+                                type="button"
+                                class="flex items-center gap-1
+                                       px-2 py-1 rounded-md
+                                       border border-outline-variant
+                                       text-on-surface-variant
+                                       hover:text-on-surface
+                                       hover:bg-surface-container-high
+                                       transition-colors
+                                       font-body-sm text-[12px]"
+                        >
+                            <span class="material-symbols-outlined text-[14px]">add</span>
+                            Add
+                        </button>
+                    </div>
+
+                    <div id="loginVariablesContainer" class="flex flex-col gap-2"></div>
+
+                    <p class="font-body-sm text-[11px] text-on-surface-variant">
+                        Values marked "Secret" are never sent to the AI — only their placeholder names
+                        are (e.g. {{secret.PASSWORD}}).
+                    </p>
+
+                </div>
+
+            </div>
+
+        </div>
+
     </div>
 
 
@@ -319,7 +437,7 @@
                        p-xl flex flex-col items-center justify-center gap-3"
         >
             <span class="spinner"></span>
-            <span class="font-body-sm text-body-sm text-on-surface-variant">
+            <span id="suggestionsLoadingText" class="font-body-sm text-body-sm text-on-surface-variant">
                 Visiting the page and analyzing it, this may take a moment...
             </span>
         </div>

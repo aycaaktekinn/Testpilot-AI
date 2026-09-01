@@ -56,6 +56,20 @@ export interface LegacyRunRecord {
    * LegacyTestService.isVisibleTo dosya başı NOT'u).
    */
   ownerId?: number | null;
+  /**
+   * v3.1 — bkz. sohbet notu: "test koşumlarında alınan ekran görüntüleri test runs da... gözüksün".
+   * ÖNCEDEN sadece run'ın ANLIK HTTP yanıtında (LegacyTestResultResponse.result.artifacts) vardı —
+   * Create Test sayfasından ayrılınca kaybolurdu, Test Runs (GEÇMİŞ koşumlar) listesinde HİÇ
+   * görünmüyordu. Artık AYNI URL'ler (bkz. LegacyTestService.toArtifactUrls — `/artifacts/<runId>/
+   * ...`, backend'de auth GEREKTİRMEDEN statik servis edilir, bkz. app.ts) bu kayda da yazılıp
+   * kalıcı hale getiriliyor. Tamamı OPSİYONEL: bir run screenshot/video/trace İSTEMEDEN
+   * çalıştırıldıysa (ör. captureScreenshot=false) ilgili alan hiç yazılmaz.
+   */
+  artifacts?: {
+    screenshot?: string;
+    video?: string;
+    trace?: string;
+  };
 }
 
 /**

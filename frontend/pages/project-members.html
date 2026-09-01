@@ -1,0 +1,159 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full">
+
+    <!-- v3.1 — eskiden bir modaldı (bkz. app.js initProjectMembersPage() dosya başı NOT), artık
+         bağımsız bir detay sayfası. Hangi projenin gösterileceği goToProjectMembersPage()
+         tarafından sessionStorage'a yazılır, initProjectMembersPage() içinde okunur. -->
+
+    <!-- BACK LINK -->
+    <button
+            id="projectMembersBackButton"
+            class="self-start flex items-center gap-1 mb-md
+                   font-body-sm text-body-sm
+                   text-on-surface-variant
+                   hover:text-on-surface
+                   transition-colors"
+            type="button"
+    >
+        <span class="material-symbols-outlined text-[18px]">arrow_back</span>
+        Back to Admin Panel
+    </button>
+
+    <!-- PAGE HEADER -->
+    <div class="flex justify-between items-end mb-lg gap-4 flex-wrap">
+
+        <div class="min-w-0">
+            <h1
+                    id="projectMembersPageTitle"
+                    class="font-display-lg text-display-lg text-on-surface mb-base truncate"
+            >
+                Project Members
+            </h1>
+
+            <p
+                    id="projectMembersPageSubtitle"
+                    class="font-body-lg text-body-lg text-on-surface-variant"
+            >
+                Members of this project
+            </p>
+        </div>
+
+        <button
+                id="projectMembersRefreshButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-on-surface
+                       hover:bg-surface-container-high
+                       transition-colors"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">refresh</span>
+            Refresh
+        </button>
+
+    </div>
+
+
+    <!-- ADD MEMBER -->
+    <div
+            class="bg-surface-container-low
+                   border border-outline-variant
+                   rounded-lg p-md mb-lg
+                   flex flex-col gap-2"
+    >
+        <label
+                for="projectMembersAddSearch"
+                class="font-label-caps text-label-caps text-on-surface-variant"
+        >
+            Add Member
+        </label>
+
+        <!-- v3.1 — isme göre arama kutusu (bkz. sohbet notu: "arama kısmı da yazalım isim
+             yazalım"). Backend'e ek istek atmıyor, sadece aşağıdaki <select>'i client-side
+             filtreliyor (bkz. app.js renderAddSelectOptions). -->
+        <input
+                id="projectMembersAddSearch"
+                type="text"
+                placeholder="Search by name or username..."
+                autocomplete="off"
+                class="bg-[#0F172A]
+                       border border-[#334155]
+                       rounded-lg
+                       px-sm py-xs
+                       text-body-md text-on-surface
+                       placeholder:text-on-surface-variant/50
+                       focus:border-primary-container
+                       focus:ring-2
+                       focus:ring-primary-container/20
+                       transition-all
+                       outline-none"
+        />
+
+        <div class="flex gap-2">
+            <select
+                    id="projectMembersAddSelect"
+                    class="flex-1 min-w-0 truncate
+                           bg-[#0F172A]
+                           border border-[#334155]
+                           rounded-lg
+                           px-sm py-xs
+                           text-body-md text-on-surface
+                           focus:border-primary-container
+                           focus:ring-2
+                           focus:ring-primary-container/20
+                           transition-all
+                           outline-none"
+            ></select>
+            <button
+                    id="projectMembersAddButton"
+                    class="shrink-0 px-4 py-2 rounded-lg
+                           bg-primary-container
+                           hover:bg-primary-container/80
+                           text-on-primary-container
+                           transition-colors
+                           disabled:opacity-40
+                           disabled:cursor-not-allowed"
+                    type="button"
+            >
+                Add
+            </button>
+        </div>
+    </div>
+
+
+    <!-- MEMBERS TABLE -->
+    <div
+            class="bg-surface-container-low
+                   border border-outline-variant
+                   rounded-lg
+                   overflow-hidden"
+    >
+
+        <div id="projectMembersLoadingState" class="p-lg text-center text-on-surface-variant">
+            Loading members...
+        </div>
+
+        <div id="projectMembersEmptyState" class="hidden p-lg text-center text-on-surface-variant">
+            No members assigned yet.
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left">
+                <thead>
+                    <tr class="border-b border-outline-variant bg-surface-container-high">
+                        <th class="py-sm px-md font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">Name</th>
+                        <th class="py-sm px-md font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">Username</th>
+                        <th class="py-sm px-md font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">Account Type</th>
+                        <th class="py-sm px-md font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">Role</th>
+                        <th class="py-sm px-md font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">Assigned</th>
+                        <th class="py-sm px-md"></th>
+                    </tr>
+                </thead>
+                <tbody id="projectMembersTableBody"></tbody>
+            </table>
+        </div>
+
+    </div>
+
+</div>

@@ -602,6 +602,16 @@ const pageConfig = {
         subtitle: 'Projects, Grid URL & LLM configuration',
     },
 
+    // v3.1 — Admin Panel'deki "Members" butonunun artık açtığı ayrı detay sayfası (eskiden
+    // küçük bir modaldı, bkz. app.js dosya içindeki "PROJECT MEMBERS PAGE" bölümü). Sidebar'da
+    // kendi menü öğesi YOK — adminPanelMenu'yü aktif göstermeye devam ediyoruz ki kullanıcı hâlâ
+    // "Admin Panel" içinde olduğunu hissetsin (bkz. goToProjectMembersPage()).
+    projectMembers: {
+        file: 'project-members.html',
+        menu: adminPanelMenu,
+        subtitle: 'Project Members',
+    },
+
     settings: {
         file: 'settings.html',
         menu: settingsMenu,
@@ -744,7 +754,7 @@ async function navigateTo(pageName) {
     // bir tetikleyici fark etmeksizin) gerçek engel BURADA — link'i gizlemek sadece UX, buradaki
     // kontrol MEMBER bir kullanıcının admin panel fragment'ını hiç ÇEKMEMESİNİ garanti eder
     // (aksi halde /api/admin/* çağrıları 403 dönerdi ama sayfa yarım yamalak/hatalı yüklenirdi).
-    if (pageName === 'admin' && currentAppUserRole !== 'ADMIN') {
+    if ((pageName === 'admin' || pageName === 'projectMembers') && currentAppUserRole !== 'ADMIN') {
         showToast('Bu sayfaya erişim için admin yetkisi gerekiyor.', 'error');
         return;
     }
@@ -851,6 +861,11 @@ async function initializePage(pageName) {
 
     if (pageName === 'admin') {
         await initAdminPanelPage();
+        return;
+    }
+
+    if (pageName === 'projectMembers') {
+        await initProjectMembersPage();
         return;
     }
 
@@ -3390,6 +3405,16 @@ function initScenarioSuggestionsPage() {
     const suggestFocusInput = document.getElementById('suggestFocusInput');
     const getSuggestionsButton = document.getElementById('getSuggestionsButton');
 
+    // LOGIN-GATED PAGE SUPPORT (bkz. scenario-suggestions.html "LOGIN-GATED PAGE SUPPORT" bloğu) —
+    // işaretlenirse, taramadan ÖNCE kısa bir AI destekli giriş adımı çalıştırılır (bkz. backend
+    // ScenarioSuggester.performLogin).
+    const suggestRequiresLoginCheckbox = document.getElementById('suggestRequiresLoginCheckbox');
+    const loginConfigSection = document.getElementById('loginConfigSection');
+    const loginUrlInput = document.getElementById('loginUrlInput');
+    const loginScenarioInput = document.getElementById('loginScenarioInput');
+    const addLoginVariableButton = document.getElementById('addLoginVariableButton');
+    const loginVariablesContainer = document.getElementById('loginVariablesContainer');
+
     const emptyState = document.getElementById('suggestionsEmptyState');
     const loadingState = document.getElementById('suggestionsLoadingState');
     const errorState = document.getElementById('suggestionsErrorState');
@@ -3413,6 +3438,139 @@ function initScenarioSuggestionsPage() {
         !resultsGrid
     ) {
         return;
+    }
+
+    /* -----------------------------------------------------
+       LOGIN-GATED PAGE SUPPORT
+       Create Test sayfasındaki "Variables & Secrets" tablosuyla AYNI desen (bkz.
+       initCreateTestPage() içindeki createVariableRow/collectVariablesAndSecrets) — kasıtlı olarak
+       AYRI class'lar (.loginVariableRow vb.) ve AYRI fonksiyonlarla, tamamen izole şekilde
+       kopyalandı. Sebep: bu sayfadaki değerler backend'e FARKLI bir alanda (login.variables/
+       login.secrets) gönderiliyor, Create Test sayfasının koduna dokunmadan burada bağımsız
+       kalması hem daha güvenli (yanlışlıkla Create Test'i bozma riski yok) hem daha basit.
+    ----------------------------------------------------- */
+    if (suggestRequiresLoginCheckbox && loginConfigSection) {
+        suggestRequiresLoginCheckbox.addEventListener('change', () => {
+            loginConfigSection.classList.toggle('hidden', !suggestRequiresLoginCheckbox.checked);
+        });
+    }
+
+    function createLoginVariableRow(key = '', value = '', variableType = 'text') {
+        const row = document.createElement('div');
+        row.className = 'loginVariableRow grid grid-cols-12 gap-2 items-center';
+
+        row.innerHTML = `
+            <div class="col-span-3 input-well rounded-md">
+                <input
+                        class="loginVariableKey w-full bg-transparent border-none text-on-surface font-mono text-sm p-2 focus:ring-0"
+                        type="text"
+                        placeholder="KEY Name"
+                />
+            </div>
+
+            <div class="col-span-2">
+                <select
+                        class="loginVariableType w-full bg-[#0F172A] border border-outline-variant text-on-surface text-sm rounded-md px-2 py-2 focus:ring-1 focus:ring-primary"
+                >
+                    <option value="text">Text</option>
+                    <option value="secret">Secret</option>
+                </select>
+            </div>
+
+            <div class="col-span-6 input-well rounded-md relative flex items-center">
+                <input
+                        class="loginVariableValue w-full bg-transparent border-none text-on-surface font-mono text-sm p-2 pr-9 focus:ring-0"
+                        type="text"
+                        placeholder="Value"
+                />
+                <button
+                        class="toggleLoginVariableVisibility material-symbols-outlined text-[16px] text-outline absolute right-2 hidden"
+                        type="button"
+                        title="Show / Hide"
+                        aria-label="Show or hide secret value"
+                >
+                    visibility
+                </button>
+            </div>
+
+            <div class="col-span-1 flex justify-center">
+                <button
+                        class="deleteLoginVariableButton text-on-surface-variant hover:text-error"
+                        type="button"
+                        title="Delete Variable"
+                        aria-label="Delete variable"
+                >
+                    <span class="material-symbols-outlined text-[18px]">delete</span>
+                </button>
+            </div>
+        `;
+
+        loginVariablesContainer.appendChild(row);
+
+        const keyInput = row.querySelector('.loginVariableKey');
+        const typeSelect = row.querySelector('.loginVariableType');
+        const valueInput = row.querySelector('.loginVariableValue');
+        const visibilityButton = row.querySelector('.toggleLoginVariableVisibility');
+        const deleteButton = row.querySelector('.deleteLoginVariableButton');
+
+        keyInput.value = key;
+        valueInput.value = value;
+        typeSelect.value = variableType;
+
+        if (variableType === 'secret') {
+            valueInput.type = 'password';
+            visibilityButton.classList.remove('hidden');
+        }
+
+        typeSelect.addEventListener('change', () => {
+            if (typeSelect.value === 'secret') {
+                valueInput.type = 'password';
+                visibilityButton.classList.remove('hidden');
+                visibilityButton.textContent = 'visibility';
+            } else {
+                valueInput.type = 'text';
+                visibilityButton.classList.add('hidden');
+                visibilityButton.textContent = 'visibility';
+            }
+        });
+
+        visibilityButton.addEventListener('click', () => {
+            if (typeSelect.value !== 'secret') return;
+            const isHidden = valueInput.type === 'password';
+            valueInput.type = isHidden ? 'text' : 'password';
+            visibilityButton.textContent = isHidden ? 'visibility_off' : 'visibility';
+        });
+
+        deleteButton.addEventListener('click', () => {
+            row.remove();
+        });
+    }
+
+    function collectLoginVariablesAndSecrets() {
+        const variables = {};
+        const secrets = {};
+
+        document.querySelectorAll('.loginVariableRow').forEach((row) => {
+            const key = row.querySelector('.loginVariableKey')?.value.trim();
+            const value = row.querySelector('.loginVariableValue')?.value;
+            const type = row.querySelector('.loginVariableType')?.value;
+
+            if (key) {
+                if (type === 'secret') {
+                    secrets[key] = value || '';
+                } else {
+                    variables[key] = value || '';
+                }
+            }
+        });
+
+        return { variables, secrets };
+    }
+
+    if (addLoginVariableButton && loginVariablesContainer) {
+        addLoginVariableButton.addEventListener('click', () => {
+            createLoginVariableRow();
+        });
     }
 
     // Son başarılı sonuç kümesi — "Copy All" ve tekrar render için burada tutuluyor. ARTIK
@@ -3614,6 +3772,32 @@ function initScenarioSuggestionsPage() {
 
         const focus = suggestFocusInput ? suggestFocusInput.value.trim() : '';
 
+        // LOGIN-GATED PAGE SUPPORT: sadece kutucuk işaretliyse ve bir login senaryosu girilmişse
+        // gönderilir (bkz. backend ScenarioSuggester.performLogin) — işaretli değilse `login`
+        // hiç gönderilmez, davranış eskisi gibi (anonim tarama) kalır.
+        let login;
+        if (suggestRequiresLoginCheckbox && suggestRequiresLoginCheckbox.checked) {
+            const loginScenario = loginScenarioInput ? loginScenarioInput.value.trim() : '';
+            if (!loginScenario) {
+                showToast('Please describe the login steps first.', 'info');
+                return;
+            }
+            const { variables: loginVariables, secrets: loginSecrets } = collectLoginVariablesAndSecrets();
+            login = {
+                url: loginUrlInput && loginUrlInput.value.trim() ? loginUrlInput.value.trim() : undefined,
+                scenario: loginScenario,
+                variables: loginVariables,
+                secrets: loginSecrets,
+            };
+        }
+
+        const loadingText = document.getElementById('suggestionsLoadingText');
+        if (loadingText) {
+            loadingText.textContent = login
+                ? 'Logging in and analyzing the page, this may take a bit longer...'
+                : 'Visiting the page and analyzing it, this may take a moment...';
+        }
+
         showOnly(loadingState);
         getSuggestionsButton.disabled = true;
 
@@ -3625,6 +3809,7 @@ function initScenarioSuggestionsPage() {
                     url,
                     headed: suggestHeadedMode ? suggestHeadedMode.checked : true,
                     focus,
+                    login,
                 }),
             });
 
@@ -3947,6 +4132,23 @@ async function initTestRunsPage() {
     const runDetailsError =
         document.getElementById(
             'runDetailsError',
+        );
+
+    // v3.1 — bkz. sohbet notu: "test koşumlarında alınan ekran görüntüleri test runs da...
+    // gözüksün" (bkz. LegacyRunRecord.artifacts, backend).
+    const runDetailsScreenshotSection =
+        document.getElementById(
+            'runDetailsScreenshotSection',
+        );
+
+    const runDetailsScreenshotLink =
+        document.getElementById(
+            'runDetailsScreenshotLink',
+        );
+
+    const runDetailsScreenshotImg =
+        document.getElementById(
+            'runDetailsScreenshotImg',
         );
 
 
@@ -4445,6 +4647,42 @@ async function initTestRunsPage() {
 
                                 </button>
 
+                                ${
+                        run.artifacts?.screenshot
+                            ? `
+                                <a
+                                    href="${run.artifacts.screenshot}"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="
+                                        viewRunScreenshotLink
+                                        inline-flex
+                                        text-on-surface-variant
+                                        hover:text-primary
+                                        p-1
+                                        rounded
+                                        hover:bg-surface-bright
+                                        transition-colors
+                                    "
+                                    title="View Screenshot"
+                                    aria-label="View screenshot for ${run.testFile || 'run'}"
+                                    onclick="event.stopPropagation()"
+                                >
+
+                                    <span
+                                        class="
+                                            material-symbols-outlined
+                                            text-[18px]
+                                        "
+                                    >
+                                        photo_camera
+                                    </span>
+
+                                </a>
+                                `
+                            : ''
+                    }
+
                                 <button
                                     class="
                                         deleteTestRunButton
@@ -4652,6 +4890,39 @@ async function initTestRunsPage() {
 
                             runDetailsError.textContent =
                                 '';
+                        }
+
+
+                        // v3.1 — bkz. sohbet notu: "test koşumlarında alınan ekran görüntüleri
+                        // test runs da... gözüksün". Bu koşum screenshot ALARAK çalıştırılmadıysa
+                        // (captureScreenshot=false) selectedRun.artifacts?.screenshot hiç yoktur —
+                        // bu durumda bölüm tamamen gizli kalır.
+                        if (
+                            runDetailsScreenshotSection &&
+                            selectedRun.artifacts?.screenshot
+                        ) {
+
+                            runDetailsScreenshotImg.src =
+                                selectedRun.artifacts.screenshot;
+
+                            runDetailsScreenshotLink.href =
+                                selectedRun.artifacts.screenshot;
+
+                            runDetailsScreenshotSection.classList.remove(
+                                'hidden',
+                            );
+
+                        } else if (runDetailsScreenshotSection) {
+
+                            runDetailsScreenshotSection.classList.add(
+                                'hidden',
+                            );
+
+                            runDetailsScreenshotImg.src =
+                                '';
+
+                            runDetailsScreenshotLink.href =
+                                '#';
                         }
 
 
@@ -8838,6 +9109,27 @@ async function initReportsPage() {
    adminProjects.ts dosya başı NOT — bu klasik "sadece değişen alan" PATCH'i DEĞİLDİR).
 ========================================================= */
 
+/* -----------------------------------------------------
+   PROJECT MEMBERS PAGE'E GEÇİŞ (v3.1) — "Members" butonuna
+   basılınca çağrılır (bkz. wireProjectRowButtons() aşağıda).
+   navigateTo()'nun kendisi parametre taşımadığı için,
+   testpilot.pendingSuggestion ile AYNI desen: proje id+name
+   TEK SEFERLİK sessionStorage'a yazılır, initProjectMembersPage()
+   içinde okunup hemen silinir (bkz. o fonksiyon).
+----------------------------------------------------- */
+function goToProjectMembersPage(project) {
+    try {
+        window.sessionStorage.setItem(
+            'testpilot.pendingProjectMembers',
+            JSON.stringify({ id: project.id, name: project.name }),
+        );
+    } catch (error) {
+        console.error(error);
+    }
+    void navigateTo('projectMembers');
+}
+
+
 async function initAdminPanelPage() {
 
     // v3.0 Faz 2 — LOGIN GATE elemanları. #adminLoginSection / #adminPanelContent görünürlüğü
@@ -8908,6 +9200,13 @@ async function initAdminPanelPage() {
     const globalGridUrlError = document.getElementById('adminGlobalGridUrlError');
     const globalGridUrlSavedBadge = document.getElementById('adminGlobalGridUrlSavedBadge');
 
+    // v3.1 — Grid URL ile AYNI desen: sekmelerin ÜSTÜNDE her zaman görünen "Delete Old Runs" bakım
+    // aracı elemanları (bkz. sohbet notu: "admin panelden eski koşumları şu tarihten itibaren
+    // sil"). v3.1.1 — tarih SEÇMEK yerine (bkz. sohbet notu: "default olarak 15 gün falan gibi
+    // yapalım tarih girmeyelim") gün SAYISI giriliyor (bkz. aşağıdaki handler).
+    const deleteOldRunsDaysInput = document.getElementById('adminDeleteOldRunsDays');
+    const deleteOldRunsButton = document.getElementById('adminDeleteOldRunsButton');
+
     let currentUserId = null; // giriş yapmış kullanıcının id'si — kendi kendini düşürme engeli için (bkz. showPanelContent).
     let usersLoadedOnce = false;
     let ldapLoadedOnce = false;
@@ -8924,17 +9223,6 @@ async function initAdminPanelPage() {
     const nameInput = document.getElementById('adminProjectName');
     const maxParallelInput = document.getElementById('adminProjectMaxParallel');
     const llmModelInput = document.getElementById('adminProjectLlmModel');
-
-    // v3.1 — Proje Üye Ataması modalı (bkz. openProjectMembersModal aşağıda).
-    const membersModal = document.getElementById('adminProjectMembersModal');
-    const membersModalTitle = document.getElementById('adminProjectMembersModalTitle');
-    const closeMembersModalButton = document.getElementById('closeAdminProjectMembersModal');
-    const doneMembersModalButton = document.getElementById('doneAdminProjectMembersModal');
-    const membersListEl = document.getElementById('adminProjectMembersList');
-    const membersEmptyEl = document.getElementById('adminProjectMembersEmpty');
-    const addMemberSelect = document.getElementById('addProjectMemberSelect');
-    const addMemberButton = document.getElementById('addProjectMemberButton');
-    let membersModalProjectId = null;
 
     // Bu sayfaya özel, küçük bir tarih biçimlendirici — formatDate() diğer sayfaların kendi
     // closure'ları içinde tanımlı (ör. Generated Tests), global değil, bu yüzden burada ayrıca
@@ -9070,7 +9358,7 @@ async function initAdminPanelPage() {
                 const id = Number(button.getAttribute('data-id'));
                 const project = currentProjects.find((p) => p.id === id);
                 if (project) {
-                    openProjectMembersModal(project);
+                    goToProjectMembersPage(project);
                 }
             });
         });
@@ -9118,189 +9406,6 @@ async function initAdminPanelPage() {
             });
         });
     }
-
-    /* -----------------------------------------------------
-       PROJE ÜYE ATAMASI — v3.1. "Members" butonuyla açılır,
-       PROJECT_MEMBERS'a kullanıcı ekler/çıkarır (bkz. sohbet
-       notu: "admin panelden proje ataması yapacağız"). ADMIN
-       dahil TÜM kullanıcılar listede görünür (bkz. sohbet
-       notu — MEMBER görünürlüğüne pratik etkisi yok, sadece
-       "resmi" atamayı gösterir); MEMBER rolündeki kullanıcılar
-       için projects.ts/listProjectsForUser bu tabloyu okuyarak
-       gerçek görünürlüğü belirler.
-    ----------------------------------------------------- */
-
-    function openProjectMembersModal(project) {
-        membersModalProjectId = project.id;
-        membersModalTitle.textContent = `Members — ${project.name}`;
-        membersModal.classList.remove('hidden');
-        membersModal.classList.add('flex');
-        refreshProjectMembersModal();
-    }
-
-    function closeProjectMembersModal() {
-        membersModal.classList.add('hidden');
-        membersModal.classList.remove('flex');
-        membersModalProjectId = null;
-    }
-
-    function renderProjectMembersList(members) {
-        if (!members.length) {
-            membersListEl.innerHTML = '';
-            membersEmptyEl.classList.remove('hidden');
-            return;
-        }
-
-        membersEmptyEl.classList.add('hidden');
-
-        membersListEl.innerHTML = members.map((member) => {
-            const isAdmin = member.role === 'ADMIN';
-            const label = member.displayName ? member.displayName : member.username;
-
-            return `
-            <div class="flex items-center justify-between gap-sm py-xs px-sm rounded-lg bg-surface-container-high/60">
-                <div class="flex items-center gap-2 min-w-0">
-                    <span class="font-body-sm text-body-sm text-on-surface font-semibold truncate">${escapeHtml(label)}</span>
-                    <span class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'bg-primary/15 text-primary' : 'bg-surface-container-high text-on-surface-variant'}">
-                        ${escapeHtml(member.role)}
-                    </span>
-                </div>
-                <button
-                        class="removeProjectMemberButton
-                               inline-flex items-center justify-center
-                               text-on-surface-variant hover:text-error
-                               hover:bg-error/10
-                               p-[4px] rounded-lg
-                               transition-colors"
-                        data-user-id="${member.id}"
-                        title="Remove"
-                        aria-label="Remove ${escapeHtml(label)}"
-                        type="button"
-                >
-                    <span class="material-symbols-outlined text-[16px]">close</span>
-                </button>
-            </div>
-            `;
-        }).join('');
-
-        document.querySelectorAll('.removeProjectMemberButton').forEach((button) => {
-            button.addEventListener('click', async () => {
-                const userId = button.getAttribute('data-user-id');
-                button.disabled = true;
-                try {
-                    const response = await fetch(`/api/admin/projects/${membersModalProjectId}/members/${userId}`, {
-                        method: 'DELETE',
-                    });
-                    if (!response.ok && response.status !== 204) {
-                        const result = await response.json().catch(() => ({}));
-                        throw new Error(result.error?.message || 'Failed to remove member.');
-                    }
-                    showToast('Member removed.', 'success');
-                    await refreshProjectMembersModal();
-                } catch (error) {
-                    console.error(error);
-                    showToast(error instanceof Error ? error.message : 'Failed to remove member.', 'error');
-                    button.disabled = false;
-                }
-            });
-        });
-    }
-
-    /** Modal her açıldığında/değiştiğinde HEM güncel üye listesini HEM TÜM kullanıcıları
-     * (zaten üye olanlar "add" dropdown'ından hariç tutulacak şekilde) yeniden çeker — Users
-     * sekmesindeki `usersLoadedOnce` gibi bir cache burada BİLİNÇLİ OLARAK yok, çünkü modal nadiren
-     * açılır ve her zaman en güncel atamayı göstermesi daha önemli. */
-    async function refreshProjectMembersModal() {
-        if (membersModalProjectId == null) {
-            return;
-        }
-
-        addMemberButton.disabled = true;
-        addMemberSelect.disabled = true;
-        addMemberSelect.innerHTML = '<option value="">Loading...</option>';
-
-        try {
-            const [membersResponse, usersResponse] = await Promise.all([
-                fetch(`/api/admin/projects/${membersModalProjectId}/members`),
-                fetch('/api/admin/users'),
-            ]);
-
-            if (membersResponse.status === 401 || usersResponse.status === 401) {
-                showLoginGate();
-                return;
-            }
-
-            const membersResult = await membersResponse.json();
-            const usersResult = await usersResponse.json();
-
-            if (!membersResponse.ok) {
-                throw new Error(membersResult.error?.message || 'Failed to load members.');
-            }
-            if (!usersResponse.ok) {
-                throw new Error(usersResult.error?.message || 'Failed to load users.');
-            }
-
-            const members = membersResult.members || [];
-            const allUsers = usersResult.users || [];
-
-            renderProjectMembersList(members);
-
-            const memberIds = new Set(members.map((m) => m.id));
-            const assignable = allUsers.filter((u) => !memberIds.has(u.id));
-
-            if (!assignable.length) {
-                addMemberSelect.innerHTML = '<option value="">No more users to add</option>';
-                addMemberSelect.disabled = true;
-                addMemberButton.disabled = true;
-                return;
-            }
-
-            addMemberSelect.innerHTML = assignable.map((u) => {
-                const label = u.displayName ? `${u.displayName} (${u.username})` : u.username;
-                return `<option value="${u.id}">${escapeHtml(label)} — ${escapeHtml(u.role)}</option>`;
-            }).join('');
-            addMemberSelect.disabled = false;
-            addMemberButton.disabled = false;
-
-        } catch (error) {
-            console.error(error);
-            showToast(error instanceof Error ? error.message : 'Failed to load project members.', 'error');
-        }
-    }
-
-    closeMembersModalButton.addEventListener('click', closeProjectMembersModal);
-    doneMembersModalButton.addEventListener('click', closeProjectMembersModal);
-
-    addMemberButton.addEventListener('click', async () => {
-        const userId = addMemberSelect.value;
-        if (!userId || membersModalProjectId == null) {
-            return;
-        }
-
-        addMemberButton.disabled = true;
-
-        try {
-            const response = await fetch(`/api/admin/projects/${membersModalProjectId}/members`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: Number(userId) }),
-            });
-
-            const result = await response.json().catch(() => ({}));
-
-            if (!response.ok) {
-                throw new Error(result.error?.message || 'Failed to add member.');
-            }
-
-            showToast('Member added.', 'success');
-            await refreshProjectMembersModal();
-
-        } catch (error) {
-            console.error(error);
-            showToast(error instanceof Error ? error.message : 'Failed to add member.', 'error');
-            addMemberButton.disabled = false;
-        }
-    });
 
     async function loadAdminProjects() {
 
@@ -10008,6 +10113,76 @@ async function initAdminPanelPage() {
         }
     });
 
+    /* -----------------------------------------------------
+       DELETE OLD RUNS — v3.1. Bkz. sohbet notu: "admin panelden eski koşumları şu tarihten
+       itibaren sil". Test Runs sayfasındaki "Clear All" ile AYNI confirm()+disable deseni,
+       sadece DELETE /api/test-runs?before=<tarih> çağırıyor (bkz. backend legacyTests.ts /
+       LegacyTestService.clearTestRunsBefore — hesaplanan tarihten ESKİ, o tarihten ÖNCE
+       oluşturulmuş koşumları siler; kesim tarihinin kendisi silinmez). Bu araç TÜM kullanıcıların
+       koşumlarını hedefler (Admin Panel zaten ADMIN'e özel), Generated Tests'teki test
+       DOSYALARINA dokunmaz.
+
+       v3.1.1 — bkz. sohbet notu: "default olarak 15 gün falan gibi yapalım tarih girmeyelim".
+       Kullanıcı artık bir TARİH değil, kaç GÜNDEN eski koşumların silineceğini (varsayılan 15)
+       giriyor; kesim tarihi burada ("bugün - N gün") hesaplanıp backend'e AYNI ?before= parametresi
+       olarak gönderiliyor — backend HİÇ değişmedi, sadece frontend'in tarihi nasıl ürettiği değişti.
+    ----------------------------------------------------- */
+    if (deleteOldRunsDaysInput && deleteOldRunsButton) {
+
+        // days -> "YYYY-MM-DD" (yerel gün, saat dilimi kaymasın diye getFullYear/Month/Date ile
+        // elle biçimlendiriliyor — toISOString() UTC'ye çevirir, akşam saatlerinde bir gün geride
+        // kalabilirdi). Geçersiz/boş/negatif girişte null döner.
+        function computeCutoffDate() {
+            const days = Number(deleteOldRunsDaysInput.value);
+            if (!Number.isFinite(days) || days <= 0) {
+                return null;
+            }
+            const cutoff = new Date();
+            cutoff.setDate(cutoff.getDate() - days);
+            const y = cutoff.getFullYear();
+            const m = String(cutoff.getMonth() + 1).padStart(2, '0');
+            const d = String(cutoff.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        deleteOldRunsButton.addEventListener('click', async () => {
+            const cutoffDate = computeCutoffDate();
+            if (!cutoffDate) {
+                showToast('Enter a valid number of days.', 'error');
+                return;
+            }
+
+            const confirmed = confirm(
+                `Delete ALL test runs older than ${deleteOldRunsDaysInput.value} days (before ${cutoffDate}, for every user)? This cannot be undone.`,
+            );
+            if (!confirmed) {
+                return;
+            }
+
+            deleteOldRunsButton.disabled = true;
+
+            try {
+                const response = await fetch(`/api/test-runs?before=${encodeURIComponent(cutoffDate)}`, {
+                    method: 'DELETE',
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to delete old test runs.');
+                }
+
+                showToast(`${result.count ?? 0} old test run(s) deleted.`, 'success');
+
+            } catch (error) {
+                console.error(error);
+                showToast(error instanceof Error ? error.message : 'Failed to delete old test runs.', 'error');
+            } finally {
+                deleteOldRunsButton.disabled = false;
+            }
+        });
+    }
+
     function switchAdminTab(tab) {
         const sections = { projects: projectsSection, users: usersSection, ldap: ldapSection };
         const tabButtons = { projects: tabProjectsButton, users: tabUsersButton, ldap: tabLdapButton };
@@ -10057,6 +10232,317 @@ async function initAdminPanelPage() {
 
 
 /* =========================================================
+   PROJECT MEMBERS PAGE
+   ------------------------------------------------------
+   v3.1 — eskiden Admin Panel > Projects tablosundaki "Members"
+   butonu küçük bir modal açardı; bu modal LDAP kullanıcı adları
+   uzun olduğunda "Add" butonunun görünmez olmasına yol açan bir
+   flexbox bug'ı yüzünden VE genel olarak yetersiz alan sağladığı
+   için tamamen kaldırıldı (bkz. sohbet notu: "modal tamamen
+   kalksın, buton direkt sayfaya götürsün"). Yerine bu ayrı, tam
+   sayfalık detay görünümü geldi. Hangi projenin gösterileceği
+   goToProjectMembersPage() tarafından sessionStorage'a TEK
+   SEFERLİK yazılır (testpilot.pendingSuggestion ile AYNI desen),
+   burada okunup hemen silinir.
+
+   Kullanıcının hesap tipi (LDAP/LOCAL) rozeti için backend'e
+   YENİ bir alan/route EKLEMEDİK: GET /api/admin/users zaten her
+   kullanıcı için userType döndürüyor (bkz. adminUsers.ts), o
+   yüzden burada members + tüm kullanıcılar paralel çekilip
+   client-side id üzerinden eşleştiriliyor — listProjectMembers()
+   SQL'ini değiştirmeye gerek kalmadı.
+========================================================= */
+
+async function initProjectMembersPage() {
+
+    const backButton = document.getElementById('projectMembersBackButton');
+    const titleEl = document.getElementById('projectMembersPageTitle');
+    const subtitleEl = document.getElementById('projectMembersPageSubtitle');
+
+    const loadingState = document.getElementById('projectMembersLoadingState');
+    const emptyState = document.getElementById('projectMembersEmptyState');
+    const tableBody = document.getElementById('projectMembersTableBody');
+
+    const addSearchInput = document.getElementById('projectMembersAddSearch');
+    const addSelect = document.getElementById('projectMembersAddSelect');
+    const addButton = document.getElementById('projectMembersAddButton');
+    const refreshButton = document.getElementById('projectMembersRefreshButton');
+
+    // "Add Member" dropdown'ındaki İSİM ARAMA kutusu (bkz. sohbet notu: "arama kısmı da
+    // yazalım isim yazalım"). Backend'e her tuş vuruşunda ayrı istek atmıyoruz — refreshMembers()
+    // zaten TÜM atanabilir kullanıcıları tek seferde çekiyor, burada sadece o listeyi client-side
+    // filtreleyip <select>'i yeniden dolduruyoruz (bkz. renderAddSelectOptions).
+    let assignableUsers = [];
+
+    // Bu sayfaya özel, küçük bir tarih biçimlendirici — formatAdminDate() Admin Panel'in kendi
+    // closure'ı içinde tanımlı, global değil (bkz. initAdminPanelPage), bu yüzden burada da
+    // (kasıtlı olarak minimal) ayrı bir kopyası var.
+    function formatMemberDate(value) {
+        if (!value) {
+            return '-';
+        }
+        try {
+            return new Date(value).toLocaleString('tr-TR');
+        } catch (error) {
+            return '-';
+        }
+    }
+
+    if (backButton) {
+        backButton.addEventListener('click', () => {
+            void navigateTo('admin');
+        });
+    }
+
+    /* -----------------------------------------------------
+       PENDING PROJECT HANDOFF — goToProjectMembersPage() tarafından yazılan {id, name} burada
+       okunup hemen silinir (bkz. yukarısı "PROJECT MEMBERS PAGE'E GEÇİŞ" notu). Eksikse (ör.
+       sayfa doğrudan yenilendiyse) gösterecek proje yok demektir, Admin Panel'e geri dön.
+    ----------------------------------------------------- */
+    let project = null;
+    try {
+        const pendingRaw = window.sessionStorage.getItem('testpilot.pendingProjectMembers');
+        if (pendingRaw) {
+            window.sessionStorage.removeItem('testpilot.pendingProjectMembers');
+            project = JSON.parse(pendingRaw);
+        }
+    } catch (error) {
+        console.error(error);
+    }
+
+    if (!project || project.id == null) {
+        showToast('No project selected.', 'error');
+        void navigateTo('admin');
+        return;
+    }
+
+    if (titleEl) {
+        titleEl.textContent = project.name || `Project #${project.id}`;
+    }
+    if (subtitleEl) {
+        subtitleEl.textContent = `Members of ${project.name || `Project #${project.id}`}`;
+    }
+
+    function renderMembersTable(members, userTypeById) {
+        if (!members.length) {
+            tableBody.innerHTML = '';
+            emptyState.classList.remove('hidden');
+            return;
+        }
+
+        emptyState.classList.add('hidden');
+
+        tableBody.innerHTML = members.map((member) => {
+            const isAdmin = member.role === 'ADMIN';
+            const label = member.displayName ? member.displayName : member.username;
+            const userType = userTypeById.get(member.id) || 'LOCAL';
+            const isLdap = userType === 'LDAP';
+
+            return `
+            <tr class="hover:bg-surface-container-low/50 transition-colors">
+                <td class="py-sm px-md">
+                    <span class="font-body-md text-on-surface font-semibold">${escapeHtml(label)}</span>
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${escapeHtml(member.username)}
+                </td>
+                <td class="py-sm px-md">
+                    <span class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider ${isLdap ? 'bg-secondary/15 text-secondary' : 'bg-surface-container-high text-on-surface-variant'}">
+                        ${escapeHtml(userType)}
+                    </span>
+                </td>
+                <td class="py-sm px-md">
+                    <span class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider ${isAdmin ? 'bg-primary/15 text-primary' : 'bg-surface-container-high text-on-surface-variant'}">
+                        ${escapeHtml(member.role)}
+                    </span>
+                </td>
+                <td class="py-sm px-md text-on-surface-variant">
+                    ${formatMemberDate(member.assignedAt)}
+                </td>
+                <td class="py-sm px-md text-right">
+                    <button
+                            class="removeProjectMemberButton
+                                   inline-flex items-center justify-center
+                                   text-on-surface-variant hover:text-error
+                                   hover:bg-error/10
+                                   p-[6px] rounded-lg
+                                   border border-outline-variant
+                                   transition-colors"
+                            data-user-id="${member.id}"
+                            title="Remove"
+                            aria-label="Remove ${escapeHtml(label)}"
+                            type="button"
+                    >
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                </td>
+            </tr>
+            `;
+        }).join('');
+
+        document.querySelectorAll('.removeProjectMemberButton').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const userId = button.getAttribute('data-user-id');
+                button.disabled = true;
+                try {
+                    const response = await fetch(`/api/admin/projects/${project.id}/members/${userId}`, {
+                        method: 'DELETE',
+                    });
+                    if (!response.ok && response.status !== 204) {
+                        const result = await response.json().catch(() => ({}));
+                        throw new Error(result.error?.message || 'Failed to remove member.');
+                    }
+                    showToast('Member removed.', 'success');
+                    await refreshMembers();
+                } catch (error) {
+                    console.error(error);
+                    showToast(error instanceof Error ? error.message : 'Failed to remove member.', 'error');
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    /** assignableUsers (zaten üye olmayan TÜM kullanıcılar) içinden arama kutusundaki metne göre
+     * filtreleyip <select>'i yeniden doldurur — displayName VEYA username'de, büyük/küçük harf
+     * duyarsız bir alt-dize eşleşmesi arar. filterText boşsa (ör. sayfa yeni yüklendiğinde veya
+     * arama kutusu temizlendiğinde) TÜM liste gösterilir. */
+    function renderAddSelectOptions(filterText) {
+        if (!assignableUsers.length) {
+            addSelect.innerHTML = '<option value="">No more users to add</option>';
+            addSelect.disabled = true;
+            addButton.disabled = true;
+            return;
+        }
+
+        const needle = (filterText || '').trim().toLowerCase();
+        const filtered = needle
+            ? assignableUsers.filter((u) => {
+                const haystack = `${u.displayName || ''} ${u.username}`.toLowerCase();
+                return haystack.includes(needle);
+            })
+            : assignableUsers;
+
+        if (!filtered.length) {
+            addSelect.innerHTML = `<option value="">No match for "${escapeHtml(filterText)}"</option>`;
+            addSelect.disabled = true;
+            addButton.disabled = true;
+            return;
+        }
+
+        addSelect.innerHTML = filtered.map((u) => {
+            const label = u.displayName ? `${u.displayName} (${u.username})` : u.username;
+            return `<option value="${u.id}">${escapeHtml(label)} — ${escapeHtml(u.userType)} — ${escapeHtml(u.role)}</option>`;
+        }).join('');
+        addSelect.disabled = false;
+        addButton.disabled = false;
+    }
+
+    if (addSearchInput) {
+        addSearchInput.addEventListener('input', () => {
+            renderAddSelectOptions(addSearchInput.value);
+        });
+    }
+
+    /** Sayfa her açıldığında/yenilendiğinde HEM güncel üye listesini HEM TÜM kullanıcıları (zaten
+     * üye olanlar "add" dropdown'ından hariç tutulacak şekilde) yeniden çeker — kasıtlı olarak
+     * cache YOK, her zaman en güncel atamayı göstermesi burada modal versiyonundakiyle aynı
+     * gerekçeyle daha önemli. */
+    async function refreshMembers() {
+        loadingState.classList.remove('hidden');
+        emptyState.classList.add('hidden');
+
+        addButton.disabled = true;
+        addSelect.disabled = true;
+        addSelect.innerHTML = '<option value="">Loading...</option>';
+        if (addSearchInput) {
+            addSearchInput.value = '';
+        }
+
+        try {
+            const [membersResponse, usersResponse] = await Promise.all([
+                fetch(`/api/admin/projects/${project.id}/members`),
+                fetch('/api/admin/users'),
+            ]);
+
+            if (membersResponse.status === 401 || usersResponse.status === 401) {
+                showToast('Session expired, please sign in again.', 'error');
+                void navigateTo('admin');
+                return;
+            }
+
+            const membersResult = await membersResponse.json();
+            const usersResult = await usersResponse.json();
+
+            if (!membersResponse.ok) {
+                throw new Error(membersResult.error?.message || 'Failed to load members.');
+            }
+            if (!usersResponse.ok) {
+                throw new Error(usersResult.error?.message || 'Failed to load users.');
+            }
+
+            const members = membersResult.members || [];
+            const allUsers = usersResult.users || [];
+
+            const userTypeById = new Map(allUsers.map((u) => [u.id, u.userType]));
+
+            renderMembersTable(members, userTypeById);
+
+            const memberIds = new Set(members.map((m) => m.id));
+            assignableUsers = allUsers.filter((u) => !memberIds.has(u.id));
+
+            renderAddSelectOptions('');
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to load project members.', 'error');
+        } finally {
+            loadingState.classList.add('hidden');
+        }
+    }
+
+    addButton.addEventListener('click', async () => {
+        const userId = addSelect.value;
+        if (!userId) {
+            return;
+        }
+
+        addButton.disabled = true;
+
+        try {
+            const response = await fetch(`/api/admin/projects/${project.id}/members`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: Number(userId) }),
+            });
+
+            const result = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to add member.');
+            }
+
+            showToast('Member added.', 'success');
+            await refreshMembers();
+
+        } catch (error) {
+            console.error(error);
+            showToast(error instanceof Error ? error.message : 'Failed to add member.', 'error');
+            addButton.disabled = false;
+        }
+    });
+
+    if (refreshButton) {
+        refreshButton.addEventListener('click', () => {
+            void refreshMembers();
+        });
+    }
+
+    await refreshMembers();
+}
+
+
+/* =========================================================
    SETTINGS
 ========================================================= */
 
@@ -10101,6 +10587,14 @@ async function initSettingsPage() {
         document.getElementById(
             'settingsAgentInfo',
         );
+
+    // v3.5 — bkz. sohbet notu: "koda gömülü ayarlar ... settings kısmından değiştirilebilir olsun".
+    // Agent Behavior artık salt-okunur DEĞİL — bkz. aşağıdaki renderAgentSettingsForm()/
+    // saveAgentSettings()/resetAgentSettings().
+    const settingsAgentSaveButton = document.getElementById('settingsAgentSaveButton');
+    const settingsAgentResetButton = document.getElementById('settingsAgentResetButton');
+    const settingsAgentSavedNotice = document.getElementById('settingsAgentSavedNotice');
+    const settingsAgentErrorNotice = document.getElementById('settingsAgentErrorNotice');
 
     const settingsSeleniumGridInfo =
         document.getElementById(
@@ -10228,6 +10722,51 @@ async function initSettingsPage() {
         `;
     }
 
+    // v3.5 — bkz. sohbet notu: "koda gömülü ayarlar ... settings kısmından değiştirilebilir olsun".
+    // infoTile() ile AYNI grid hücresi boyutunu kaplayan ama gerçekten düzenlenebilir bir input
+    // üreten karşılığı — Agent Behavior formu için.
+    const numberFieldClass =
+        'w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-2 text-body-md text-on-surface ' +
+        'focus:border-primary-container focus:ring-2 focus:ring-primary-container/20 transition-all outline-none';
+
+    function numberField(id, label, value, { step, min, max } = {}) {
+        return `
+            <div class="flex flex-col gap-1">
+                <label for="${id}" class="font-label-caps text-on-surface-variant">${label}</label>
+                <input
+                        id="${id}"
+                        type="number"
+                        value="${value}"
+                        ${step !== undefined ? `step="${step}"` : ''}
+                        ${min !== undefined ? `min="${min}"` : ''}
+                        ${max !== undefined ? `max="${max}"` : ''}
+                        class="${numberFieldClass}"
+                />
+            </div>
+        `;
+    }
+
+    function checkboxField(id, label, checked) {
+        return `
+            <label class="flex items-center gap-2 cursor-pointer p-1.5 self-end hover:bg-surface-variant rounded transition-colors">
+                <input id="${id}" type="checkbox" ${checked ? 'checked' : ''} class="rounded bg-surface-container border-outline-variant text-primary" />
+                <span class="font-body-sm text-body-sm text-on-surface">${label}</span>
+            </label>
+        `;
+    }
+
+    function renderAgentSettingsForm(agent, playwright) {
+        settingsAgentInfo.innerHTML =
+            numberField('agentSettingMinConfidence', 'Min. Confidence (0–1)', agent.minConfidence, { step: 0.01, min: 0, max: 1 }) +
+            numberField('agentSettingMaxSteps', 'Max Steps', agent.maxSteps, { step: 1, min: 1, max: 500 }) +
+            numberField('agentSettingMaxRepeatedActions', 'Loop Tolerance (repeats)', agent.maxRepeatedActions, { step: 1, min: 1 }) +
+            numberField('agentSettingStepTimeoutMs', 'Step Timeout (ms)', agent.stepTimeoutMs, { step: 500, min: 1000 }) +
+            numberField('agentSettingMaxElementsPerStep', 'Max Elements / Step', agent.maxElementsPerStep, { step: 1, min: 1, max: 500 }) +
+            numberField('agentSettingNavigationTimeoutMs', 'Navigation Timeout (ms)', playwright.navigationTimeoutMs, { step: 500, min: 1000 }) +
+            numberField('agentSettingDefaultActionTimeoutMs', 'Action Timeout (ms)', playwright.defaultActionTimeoutMs, { step: 500, min: 1000 }) +
+            checkboxField('agentSettingHeadless', 'Headless by default', playwright.headless);
+    }
+
 
     try {
 
@@ -10259,17 +10798,10 @@ async function initSettingsPage() {
         settingsLlmInfo.innerHTML =
             infoTile('Provider', data.llm.provider) +
             infoTile('Model', data.llm.model || '—') +
-            infoTile('API Key', apiKeyStatus) +
-            infoTile('Headless (default)', data.playwright.headless ? 'Yes' : 'No');
+            infoTile('API Key', apiKeyStatus);
 
 
-        settingsAgentInfo.innerHTML =
-            infoTile('Min. Confidence', data.agent.minConfidence) +
-            infoTile('Max Steps', data.agent.maxSteps) +
-            infoTile('Loop Tolerance', `${data.agent.maxRepeatedActions} repeats`) +
-            infoTile('Step Timeout', `${data.agent.stepTimeoutMs} ms`) +
-            infoTile('Navigation Timeout', `${data.playwright.navigationTimeoutMs} ms`) +
-            infoTile('Action Timeout', `${data.playwright.defaultActionTimeoutMs} ms`);
+        renderAgentSettingsForm(data.agent, data.playwright);
 
         // v2.0 — bkz. GET /api/settings → seleniumGrid.configured (hub adresinin KENDİSİ BİLEREK
         // dönülmez/gösterilmez, sadece "yapılandırılmış mı" bilgisi).
@@ -10318,6 +10850,93 @@ async function initSettingsPage() {
 
         settingsVectorCacheInfo.innerHTML =
             '<div class="col-span-2 text-error font-body-sm text-body-sm">Settings could not be loaded from backend.</div>';
+    }
+
+
+    /* -----------------------------------------------------
+       AGENT BEHAVIOR — SAVE / RESET (v3.5)
+    ----------------------------------------------------- */
+
+    let agentSavedNoticeTimer = null;
+
+    function showAgentSavedNotice() {
+        settingsAgentErrorNotice.classList.add('hidden');
+        settingsAgentSavedNotice.classList.remove('hidden');
+        if (agentSavedNoticeTimer) clearTimeout(agentSavedNoticeTimer);
+        agentSavedNoticeTimer = setTimeout(() => {
+            settingsAgentSavedNotice.classList.add('hidden');
+        }, 1500);
+    }
+
+    function showAgentErrorNotice(message) {
+        settingsAgentSavedNotice.classList.add('hidden');
+        settingsAgentErrorNotice.textContent = message;
+        settingsAgentErrorNotice.classList.remove('hidden');
+    }
+
+    if (settingsAgentSaveButton) {
+        settingsAgentSaveButton.addEventListener('click', async () => {
+            const payload = {
+                minConfidence: Number(document.getElementById('agentSettingMinConfidence')?.value),
+                maxSteps: Number(document.getElementById('agentSettingMaxSteps')?.value),
+                maxRepeatedActions: Number(document.getElementById('agentSettingMaxRepeatedActions')?.value),
+                stepTimeoutMs: Number(document.getElementById('agentSettingStepTimeoutMs')?.value),
+                maxElementsPerStep: Number(document.getElementById('agentSettingMaxElementsPerStep')?.value),
+                navigationTimeoutMs: Number(document.getElementById('agentSettingNavigationTimeoutMs')?.value),
+                defaultActionTimeoutMs: Number(document.getElementById('agentSettingDefaultActionTimeoutMs')?.value),
+                headless: Boolean(document.getElementById('agentSettingHeadless')?.checked),
+            };
+
+            if (Object.values(payload).some((v) => typeof v === 'number' && Number.isNaN(v))) {
+                showAgentErrorNotice('Please fill in every field with a valid number.');
+                return;
+            }
+
+            settingsAgentSaveButton.disabled = true;
+            try {
+                const response = await fetch('/api/settings/agent', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to save settings.');
+                }
+                renderAgentSettingsForm(result.agent, result.playwright);
+                showAgentSavedNotice();
+            } catch (error) {
+                console.error(error);
+                showAgentErrorNotice(error instanceof Error ? error.message : 'Failed to save settings.');
+            } finally {
+                settingsAgentSaveButton.disabled = false;
+            }
+        });
+    }
+
+    if (settingsAgentResetButton) {
+        settingsAgentResetButton.addEventListener('click', async () => {
+            const confirmed = confirm(
+                'Reset Agent Behavior settings to the .env defaults? This affects everyone using this app.',
+            );
+            if (!confirmed) return;
+
+            settingsAgentResetButton.disabled = true;
+            try {
+                const response = await fetch('/api/settings/agent/reset', { method: 'POST' });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to reset settings.');
+                }
+                renderAgentSettingsForm(result.agent, result.playwright);
+                showAgentSavedNotice();
+            } catch (error) {
+                console.error(error);
+                showAgentErrorNotice(error instanceof Error ? error.message : 'Failed to reset settings.');
+            } finally {
+                settingsAgentResetButton.disabled = false;
+            }
+        });
     }
 }
 

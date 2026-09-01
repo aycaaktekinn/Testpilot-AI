@@ -194,6 +194,61 @@
     ></div>
 
 
+    <!-- DELETE OLD RUNS — v3.1. Grid URL alanıyla AYNI desen: sekmelerin ÜSTÜNDE, tek/global bir
+         bakım aracı (bkz. sohbet notu: "admin panelden eski koşumları şu tarihten itibaren sil").
+         v3.1.1 — tarih SEÇMEK yerine (bkz. sohbet notu: "default olarak 15 gün falan gibi yapalım
+         tarih girmeyelim") kaç GÜNDEN eski koşumların silineceği bir sayı olarak giriliyor,
+         varsayılan 15 — kesim tarihi app.js'te "bugün - N gün" olarak hesaplanıp AYNI backend
+         ucuna (?before=) gönderiliyor, backend hiç değişmedi. Seçilen günden ESKİ (o tarihten
+         önce oluşturulmuş) TÜM kullanıcıların Test Runs geçmişini siler — Test Runs sayfasındaki
+         "Clear All" ile AYNI silme mantığını (koşum detay dosyası + artefaktlar, bkz.
+         TestRunStore.deleteRunFiles) kullanır, sadece `createdAt < kesim tarihi` filtresiyle (bkz.
+         LegacyTestService.clearTestRunsBefore). Yıkıcı bir işlem olduğu için "Clear All" ile AYNI
+         confirm() deseni kullanılıyor. -->
+    <div
+            class="flex flex-col sm:flex-row sm:items-end gap-3
+                   bg-error/5 border border-error/20
+                   rounded-xl px-4 py-3"
+    >
+        <div class="flex-1 flex flex-col gap-1">
+            <label for="adminDeleteOldRunsDays" class="font-label-caps text-label-caps text-on-surface-variant">
+                Delete test runs older than (days)
+            </label>
+            <input
+                    id="adminDeleteOldRunsDays"
+                    class="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-sm py-xs
+                           text-body-md text-on-surface focus:border-primary-container
+                           focus:ring-2 focus:ring-primary-container/20 transition-all outline-none"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value="15"
+            />
+        </div>
+        <button
+                id="adminDeleteOldRunsButton"
+                class="flex items-center gap-2
+                       px-4 py-2 rounded-lg
+                       border border-outline-variant
+                       text-on-surface-variant
+                       hover:text-error
+                       hover:border-error/40
+                       hover:bg-error/10
+                       transition-colors
+                       whitespace-nowrap
+                       disabled:opacity-40
+                       disabled:cursor-not-allowed"
+                type="button"
+        >
+            <span class="material-symbols-outlined text-[18px]">delete_sweep</span>
+            Delete Old Runs
+        </button>
+    </div>
+    <p class="font-body-sm text-body-sm text-on-surface-variant/70 -mt-2">
+        This affects Test Runs history for ALL users (not generated test files). This cannot be undone.
+    </p>
+
+
     <!-- TABS — v3.0 Faz 2.2/2.3. Projects | Users | LDAP. app.js switchAdminTab() görünürlüğü
          toggler, veri sadece ilgili sekmeye ilk geçildiğinde yüklenir (bkz. dosya sonundaki tab
          mantığı). -->
@@ -546,134 +601,13 @@
     </div>
 
 
-    <!-- PROJECT MEMBERS MODAL — v3.1. "Members" butonuyla açılır (bkz. app.js
-         openProjectMembersModal(project)); PROJECT_MEMBERS'a kullanıcı ekler/çıkarır. Edit/New
-         Project modalıyla AYNI görsel dil (header + close + body + footer). -->
-    <div
-            id="adminProjectMembersModal"
-            class="fixed inset-0 z-[100]
-                   hidden items-center justify-center
-                   bg-black/60 backdrop-blur-sm
-                   px-4"
-    >
-        <div
-                class="w-full max-w-lg
-                       bg-surface-container
-                       border border-outline-variant
-                       rounded-xl
-                       shadow-2xl
-                       overflow-hidden"
-        >
-            <!-- HEADER -->
-            <div
-                    class="flex items-center justify-between
-                           px-5 py-4
-                           border-b border-outline-variant
-                           bg-surface-container-high"
-            >
-                <h3
-                        id="adminProjectMembersModalTitle"
-                        class="font-headline-sm text-headline-sm text-on-surface"
-                >
-                    Members
-                </h3>
-
-                <button
-                        id="closeAdminProjectMembersModal"
-                        class="text-on-surface-variant
-                               hover:text-on-surface
-                               hover:bg-surface-variant
-                               p-2 rounded-lg
-                               transition-colors"
-                        type="button"
-                        aria-label="Close"
-                >
-                    <span class="material-symbols-outlined">close</span>
-                </button>
-            </div>
-
-            <!-- BODY -->
-            <div class="p-5 flex flex-col gap-4">
-
-                <div class="flex flex-col gap-2">
-                    <label class="font-label-caps text-label-caps text-on-surface-variant">
-                        Current Members
-                    </label>
-
-                    <div id="adminProjectMembersList" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
-
-                    <div
-                            id="adminProjectMembersEmpty"
-                            class="hidden font-body-sm text-body-sm text-on-surface-variant/70 py-2 text-center"
-                    >
-                        No members assigned yet.
-                    </div>
-                </div>
-
-                <div class="flex flex-col gap-1 pt-2 border-t border-outline-variant">
-                    <label
-                            for="addProjectMemberSelect"
-                            class="font-label-caps text-label-caps text-on-surface-variant"
-                    >
-                        Add Member
-                    </label>
-                    <div class="flex gap-2">
-                        <select
-                                id="addProjectMemberSelect"
-                                class="flex-1
-                                       bg-[#0F172A]
-                                       border border-[#334155]
-                                       rounded-lg
-                                       px-sm py-xs
-                                       text-body-md text-on-surface
-                                       focus:border-primary-container
-                                       focus:ring-2
-                                       focus:ring-primary-container/20
-                                       transition-all
-                                       outline-none"
-                        ></select>
-                        <button
-                                id="addProjectMemberButton"
-                                class="px-4 py-2 rounded-lg
-                                       bg-primary-container
-                                       hover:bg-primary-container/80
-                                       text-on-primary-container
-                                       transition-colors
-                                       disabled:opacity-40
-                                       disabled:cursor-not-allowed"
-                                type="button"
-                        >
-                            Add
-                        </button>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- FOOTER -->
-            <div
-                    class="flex justify-end gap-2
-                           px-5 py-4
-                           border-t border-outline-variant"
-            >
-                <button
-                        id="doneAdminProjectMembersModal"
-                        class="px-4 py-2 rounded-lg
-                               border border-outline-variant
-                               text-on-surface-variant
-                               hover:bg-surface-container-high
-                               transition-colors"
-                        type="button"
-                >
-                    Done
-                </button>
-            </div>
-
-        </div>
-    </div>
-
     </div>
     <!-- /adminProjectsSection -->
+    <!-- v3.1'de burada bir "Project Members" MODALı vardı — LDAP kullanıcı adları uzun olduğunda
+         Add butonunun görünmez olması (flex min-width bug'ı) ve modalın küçük kalması nedeniyle
+         kaldırıldı; yerine ayrı bir detay sayfası geldi (bkz. app.js goToProjectMembersPage() /
+         initProjectMembersPage(), pages/project-members.html). "Members" butonu artık modal
+         yerine doğrudan o sayfaya yönlendiriyor. -->
 
 
     <!-- ============================ USERS TAB ============================ -->

@@ -19,6 +19,20 @@ const suggestSchema = z.object({
   // — opsiyonel, boşsa AI eskisi gibi sayfanın GENELİNE göre öneriyor. Bkz. ScenarioSuggester.suggest()
   // dördüncü parametresi ve SYSTEM_PROMPT kural 10.
   focus: z.string().trim().max(300, 'İstek en fazla 300 karakter olabilir').optional().default(''),
+  // v3.3 — verilirse, tarama ÖNCESİNDE kısa bir AI destekli giriş adımı çalıştırılır (bkz.
+  // ScenarioSuggester.performLogin). Bkz. ScenarioSuggester.suggest() beşinci parametresi.
+  login: z
+    .object({
+      url: z.string().url('Geçerli bir giriş sayfası URL\'si giriniz').optional(),
+      scenario: z
+        .string()
+        .trim()
+        .min(1, 'Giriş senaryosu boş olamaz')
+        .max(1000, 'Giriş senaryosu en fazla 1000 karakter olabilir'),
+      variables: z.record(z.string(), z.string()).optional().default({}),
+      secrets: z.record(z.string(), z.string()).optional().default({}),
+    })
+    .optional(),
 });
 
 /**
@@ -41,6 +55,7 @@ scenariosRouter.post('/scenarios/suggest', async (req, res, next) => {
       parsed.data.headed,
       parsed.data.existingScenarios,
       parsed.data.focus,
+      parsed.data.login,
     );
     res.status(200).json({ suggestions });
   } catch (err) {
