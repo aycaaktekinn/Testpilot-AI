@@ -381,4 +381,36 @@ describe('AgentLoop — vector cache okuma tarafi (v2.0 Faz 2)', () => {
     expect(report.status).toBe('failed');
     expect(report.failureReason).toContain('unknown_reference');
   });
+
+  it(
+    'LLM bir karar verip vector cache YAZDIKTAN hemen sonra (fire-and-forget), ' +
+      'AYNI adayi bir SONRAKI adimda kendi kendine onermez (bkz. sohbet notu: hepsiburada ' +
+      'arama kutusuna iki kez ust uste tiklanip zaman asimi hatasi)',
+    async () => {
+      const { AgentLoop, findSimilarMock } = await loadAgentLoopWithVectorCache({ VECTOR_CACHE_READ_ENABLED: true });
+      // 1. adimda cache BOS doner (henuz Milvus'a hicbir sey yazilmadi) -> LLM 'click e1' karari
+      // verir (e1: button/button/'Gonder' - bkz. fakeSnapshot). 2. adimdan itibaren findSimilar,
+      // TAM OLARAK bu kararla ayni yapisal imzaya sahip bir adayi donmeye baslar - gercek hayatta bu,
+      // recordDecisionInCache'in (fire-and-forget) LLM'in 1. adimdaki kararini Milvus'a yazip 2. adimin
+      // okuma sorgusunun bu YENI yazilan kaydi (sourceRunId = kendi run'i) BULMASI durumunu simule
+      // ediyor. Fix OLMADAN: 2. adim da cache'ten 'click e1' alir -> ayni aksiyon + degismeyen
+      // stateHash -> LoopGuard 'loop_detected' ile run'i durdurur (asla finish_success'e ulasilmaz).
+      findSimilarMock.mockResolvedValueOnce([]).mockResolvedValue([fakeCandidate({ similarity: 0.99 })]);
+      const { provider, } = scriptedLlm([
+        decisionJson({ action: 'click', targetRef: 'e1', confidence: 0.9 }),
+        decisionJson({ action: 'finish_success', confidence: 0.95, summary: 'x', targetRef: undefined }),
+      ]);
+      const loop = new AgentLoop(provider);
+
+      const report = await loop.run({ runId: 'r-cache-self-match', url: 'https://example.com', scenario: 'test', options: fakeOptions({ maxSteps: 5 }) });
+
+      // Fix sayesinde: 1. adim LLM'den gelir (cache bos, henuz hicbir imza kullanilmadi), aksiyonun
+      // imzasi usedCacheSignatures'a eklenir; 2. adimda AYNI imzali cache adayi bulunsa da SESSIZCE
+      // atlanir ve LLM'e danisilir (finish_success), run BASARIYLA biter.
+      expect(report.status).toBe('passed');
+      expect(report.llmCallCount).toBe(2);
+      expect(report.steps[0]?.decision.decisionSource).toBe('llm');
+      expect(report.steps[1]?.decision.decisionSource).toBe('llm');
+    },
+  );
 });

@@ -349,6 +349,26 @@ export class AgentLoop {
           });
         }
 
+        // v3.6 — BUG FİX (bkz. sohbet notu: hepsiburada "ipad air ara" senaryosu — arama kutusuna
+        // tıklandıktan hemen sonra AYNI arama kutusuna İKİNCİ KEZ tıklanmaya çalışılıp zaman aşımı
+        // ile run'ın çökmesi). Kök sebep: `usedCacheSignatures` (bkz. dosya başı NOT) SADECE cache'ten
+        // GELEN bir karar kullanıldığında dolduruluyordu — LLM'in kendi verdiği bir karar ASLA bu
+        // Set'e eklenmiyordu. `recordDecisionInCache` çağrısı fire-and-forget (void, await YOK)
+        // olduğu için, LLM'in bu adımdaki kararı Milvus'a yazılır yazılmaz (birkaç ms içinde) BİR
+        // SONRAKİ adımın `tryVectorCacheHit` okuması bu YENİ yazılan kaydı kendi run'ının İÇİNDEN
+        // (sourceRunId = mevcut runId) bulup tekrar öneriyordu — yani "arama kutusuna tıkla" kararı
+        // LLM'den geldikten SANİYELER SONRA vector cache üzerinden KENDİSİYLE eşleşip aynı elemente
+        // tekrar tıklanmaya çalışılıyordu (element artık odaklanmış/dropdown açık durumda olduğu
+        // için bu ikinci tıklama zaman aşımına uğradı). Çözüm: kaynağı ne olursa olsun (LLM/replay/
+        // cache) HER karar, hedefi belliyse (targetRef + targetEl dolu), aynı yapısal imzayla BU
+        // Set'e eklenir — tryVectorCacheHit içindeki AYNI imza kontrolü sayesinde bir sonraki adım
+        // artık bu kararı KÖRÜ KÖRÜNE tekrar öneremez, LLM'e danışmak zorunda kalır (LLM, elementin
+        // artık odaklanmış olduğunu görüp doğru bir sonraki adıma — ör. metin yazmaya — karar verir).
+        if (!isReplay && decision.targetRef && targetEl) {
+          const decisionSignature = `${decision.action}:${targetEl.tag}:${targetEl.role ?? ''}:${targetEl.accessibleName ?? ''}:${decision.value ?? ''}`;
+          usedCacheSignatures.add(decisionSignature);
+        }
+
         if (TERMINAL_ACTIONS.has(decision.action)) {
           const stepLog = this.buildStepLog(stepIndex, snapshot.url, decision, vault, {
             ok: true,
