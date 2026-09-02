@@ -1,9 +1,11 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { ReplayStep, RunReport, RunSummary, TestRunRequest } from '../domain/types.js';
 import { AgentLoop } from '../core/agent/AgentLoop.js';
 import type { AgentEvent, AgentEventListener } from '../core/agent/types.js';
 import { createLlmProvider } from '../core/llm/createLlmProvider.js';
-import { defaultRunOptions } from '../config/env.js';
+import { env, defaultRunOptions } from '../config/env.js';
 import { NotFoundError } from '../domain/errors.js';
 import { createLogger } from '../config/logger.js';
 
@@ -215,6 +217,39 @@ class RunManager {
     if (!record) throw new NotFoundError(`Run bulunamadı: ${runId}`);
     if (!record.report) throw new NotFoundError(`Run henüz tamamlanmadı: ${runId}`);
     return record.report;
+  }
+
+  /**
+   * v3.10 — "BDD" paneli: kullanıcının otomatik üretilen özeti düzenleyip kaydettiği yol.
+   * `getReport` ile AYNI kısıtlar geçerlidir — run bu sunucu sürecinin belleğinde (henüz
+   * tamamlanmış olarak) bulunmalıdır; sunucu yeniden başlatıldıysa/run bellekten düştüyse
+   * `NotFoundError` fırlatılır (mevcut `GET /runs/:id/report` davranışıyla TUTARLI).
+   */
+  async updateBddDescription(runId: string, bddDescription: string): Promise<RunReport> {
+    const record = this.runs.get(runId);
+    if (!record) throw new NotFoundError(`Run bulunamadı: ${runId}`);
+    if (!record.report) throw new NotFoundError(`Run henüz tamamlanmadı: ${runId}`);
+
+    record.report.bddDescription = bddDescription;
+    await this.persistReportToDisk(record.report);
+    return record.report;
+  }
+
+  /**
+   * `RunLogger.persist()` ile AYNI dosya konumu/biçimi (`{RUNS_DIR}/{runId}.json`) — orası run
+   * DEVAM EDERKEN/bitişte yazar, burası run BİTTİKTEN SONRA kullanıcı düzenlemesiyle üzerine
+   * yazar. İki yazıcı asla AYNI ANDA çalışmaz (RunLogger'ın örneği, ilgili AgentLoop.run() bittiği
+   * an devre dışı kalır) — bu yüzden çakışma riski yoktur.
+   */
+  private async persistReportToDisk(report: RunReport): Promise<void> {
+    try {
+      const runDir = path.resolve(env.RUNS_DIR);
+      await mkdir(runDir, { recursive: true });
+      const filePath = path.join(runDir, `${report.runId}.json`);
+      await writeFile(filePath, JSON.stringify(report, null, 2), 'utf-8');
+    } catch (err) {
+      log.error({ err, runId: report.runId }, 'BDD açıklaması diske yazılamadı');
+    }
   }
 
   cancelRun(runId: string): RunSummary {

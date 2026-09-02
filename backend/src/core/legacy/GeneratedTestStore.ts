@@ -141,6 +141,84 @@ export class GeneratedTestStore {
   }
 
   /**
+   * v3.12 — bkz. sohbet notu: "tıklıyım burdan bdd ye yine create test panelinde bdd kısmına
+   * götürsün ordan edit yapabileyim". Kullanıcı Create Test panelindeki BDD sekmesinde bu kaydın
+   * (`LegacyGeneratedTestMeta.runId` üzerinden bulunan) run'ına ait metni düzenleyip kaydettiğinde
+   * (bkz. LegacyTestService.updateBddDescription), `LegacyRunRecord.bddDescription` (kalıcı asıl
+   * kayıt) İLE BİRLİKTE bu kaydın `bddDescription` ÖNBELLEK kopyası da (Generated Tests/Suites
+   * sayfalarında gösterilen) senkron kalsın diye çağrılır. BEST-EFFORT: eşleşen kayıt yoksa (ör.
+   * test bu arada silindi) SESSİZCE `null` döner, çağıran (bkz. updateBddDescription) bunu hataya
+   * ÇEVİRMEZ — asıl kalıcı kayıt (test-runs-index.json) zaten güncellenmiş olur, bu sadece ek bir
+   * görüntüleme senkronizasyonudur.
+   */
+  async updateBddDescription(fileName: string, bddDescription: string): Promise<LegacyGeneratedTestMeta | null> {
+    assertSafeFileName(fileName);
+
+    const all = await this.list();
+    const index = all.findIndex((t) => t.fileName === fileName);
+    const existing = all[index];
+    if (index === -1 || !existing) {
+      return null;
+    }
+
+    const updated: LegacyGeneratedTestMeta = { ...existing, bddDescription };
+    all[index] = updated;
+
+    await this.persistIndex(all);
+    return updated;
+  }
+
+  /**
+   * v3.11 — "Add to Suite" / testi bir suite'ten çıkarma. `rename()`/`setSchedule()` ile AYNI
+   * desen: sadece `suiteIds` alanını değiştirir, kaydın geri kalanı AYNEN kalır. Çağıran (bkz.
+   * LegacyTestService.addTestToSuite/removeTestFromSuite) tekrarsız (Set tabanlı) bir dizi
+   * hesaplayıp buraya OLDUĞU GİBİ verir — burada ekleme/çıkarma mantığı YOKTUR, sadece yazar.
+   */
+  async updateSuiteIds(fileName: string, suiteIds: string[]): Promise<LegacyGeneratedTestMeta> {
+    assertSafeFileName(fileName);
+
+    const all = await this.list();
+    const index = all.findIndex((t) => t.fileName === fileName);
+    const existing = all[index];
+    if (index === -1 || !existing) {
+      throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
+
+    const updated: LegacyGeneratedTestMeta = {
+      ...existing,
+      suiteIds: suiteIds.length > 0 ? suiteIds : undefined,
+    };
+    all[index] = updated;
+
+    await this.persistIndex(all);
+    return updated;
+  }
+
+  /**
+   * v3.11 — bkz. LegacyTestService.deleteSuite dosya başı NOT'u: bir suite silindiğinde, o
+   * suite'e ait olan HER testin `suiteIds` dizisinden bu id'yi çıkarır (best-effort, tek seferde,
+   * TÜM listeyi bir kez okuyup bir kez yazarak — `updateSuiteIds()`'i test başına çağırmak yerine,
+   * çünkü bir suite onlarca teste ait olabilir). Etkilenen kayıt sayısını döner.
+   */
+  async removeSuiteIdFromAll(suiteId: string): Promise<number> {
+    const all = await this.list();
+    let affected = 0;
+
+    const updated = all.map((test) => {
+      if (!test.suiteIds?.includes(suiteId)) return test;
+      affected += 1;
+      const remaining = test.suiteIds.filter((id) => id !== suiteId);
+      return { ...test, suiteIds: remaining.length > 0 ? remaining : undefined };
+    });
+
+    if (affected > 0) {
+      await this.persistIndex(updated);
+    }
+
+    return affected;
+  }
+
+  /**
    * "Clear All" — listedeki her .spec.ts dosyasını diskten silmeyi dener (best-effort, tek
    * dosya başarısız olursa diğerlerini engellemez) ve index.json'ı boşaltır (ya da `predicate`
    * verildiyse SADECE ona uyan kayıtları). Silinen kayıt sayısını döner (frontend'in "X test

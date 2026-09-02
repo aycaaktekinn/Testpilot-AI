@@ -694,4 +694,96 @@
         </div>
     </div>
 
+    <!-- ADD TO SUITE MODAL (v3.11 — bkz. app.js initGeneratedTestsPage NOT: "Add to Suite" —
+         bir test satırındaki ilgili butona tıklanınca açılır; mevcut bir suite seçilebilir YA DA
+         yeni bir isim girilip anında oluşturulabilir. bkz. LegacyGeneratedTestMeta.suiteIds. -->
+    <div
+            id="addToSuiteModal"
+            class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]"
+    >
+        <div class="bg-surface-container p-6 rounded-lg shadow-xl w-full max-w-md border border-outline-variant">
+
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-headline-md text-on-surface">
+                    Add to Suite
+                </h3>
+
+                <button
+                        id="closeAddToSuiteModal"
+                        class="text-on-surface-variant hover:text-on-surface"
+                        type="button"
+                >
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+
+            <div class="flex flex-col gap-4">
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="addToSuiteExistingSelect"
+                            class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                    >
+                        Existing suite
+                    </label>
+
+                    <select
+                            id="addToSuiteExistingSelect"
+                            class="bg-surface-container border border-outline-variant
+                                   rounded px-2 py-2 font-body-sm text-body-sm text-on-surface"
+                    >
+                        <option value="">— Select —</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center gap-2 text-on-surface-variant/70 font-body-xs text-body-xs">
+                    <div class="flex-1 h-px bg-outline-variant/50"></div>
+                    or create new
+                    <div class="flex-1 h-px bg-outline-variant/50"></div>
+                </div>
+
+                <div class="flex flex-col gap-1">
+                    <label
+                            for="addToSuiteNewName"
+                            class="font-body-sm text-body-sm text-on-surface-variant font-semibold"
+                    >
+                        New suite name
+                    </label>
+
+                    <input
+                            id="addToSuiteNewName"
+                            type="text"
+                            maxlength="120"
+                            placeholder="e.g. Regression Suite"
+                            class="bg-surface-container border border-outline-variant
+                                   rounded px-2 py-2 font-body-sm text-body-sm text-on-surface
+                                   placeholder-outline-variant"
+                    />
+                </div>
+
+            </div>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <button
+                        id="cancelAddToSuiteButton"
+                        class="px-4 py-2 rounded-md font-body-sm text-body-sm
+                               text-on-surface-variant hover:bg-surface-variant transition-colors"
+                        type="button"
+                >
+                    Cancel
+                </button>
+
+                <button
+                        id="confirmAddToSuiteButton"
+                        class="px-4 py-2 rounded-md font-body-sm text-body-sm
+                               bg-primary text-on-primary hover:bg-primary/90 transition-colors"
+                        type="button"
+                >
+                    Add
+                </button>
+            </div>
+
+        </div>
+    </div>
+
 </div>

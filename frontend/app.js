@@ -9,6 +9,7 @@ const pageContent = document.getElementById('pageContent');
 const pageSubtitle = document.getElementById('pageSubtitle');
 
 const dashboardMenu = document.getElementById('dashboardMenu');
+const suitesMenu = document.getElementById('suitesMenu');
 const createTestMenu = document.getElementById('createTestMenu');
 const suggestionsMenu = document.getElementById('suggestionsMenu');
 const generatedTestsMenu = document.getElementById('generatedTestsMenu');
@@ -552,6 +553,29 @@ const appState = {
     pendingGeneratedCode: null,
     pendingGeneratedFile: null,
     pendingTestResult: null,
+
+    // v3.10 — "BDD" paneli: Save butonunun PATCH /api/test-runs/:id/bdd-description isteğini
+    // hangi run'a göndereceğini bilmesi için, EKRANDA GÖSTERİLEN sonucun runId'sini tutar (bkz.
+    // LegacyTestResultResponse.runId dosya başı açıklaması). Bir run hiç başlamadıysa (ör. sayfa
+    // yeni açıldı) ya da runId'siz eski/hatalı bir yanıt geldiyse `null` kalır — bu durumda Save
+    // butonu tıklanınca kullanıcıya "önce bir test çalıştır" uyarısı gösterilir.
+    currentRunId: null,
+
+    // v3.12 — bkz. sohbet notu: "tıklıyım burdan bdd ye yine create test panelinde bdd kısmına
+    // götürsün ordan edit yapabileyim". Generated Tests sayfasındaki "BDD" butonuna tıklanınca
+    // (bkz. openBddEditorForGeneratedTest) buraya {bddDescription, runId} yazılır, sonra Create
+    // Test sayfasına navigateTo('create') edilir; initCreateTestPage() açılışta bu alanı kontrol
+    // edip DOLUYSA panel metnini/appState.currentRunId'yi bununla doldurup BDD sekmesini otomatik
+    // açar ve bu alanı `null`'a döndürür (bir sonraki normal navigasyonu ETKİLEMESİN diye — bkz.
+    // initCreateTestPage dosya başı NOT'u).
+    pendingBddEdit: null,
+
+    // v3.12 — bkz. sohbet notu: "generated testten test koştuğumda create test sayfasında olan
+    // panelden yine göreyim istiyorum". runExistingTest/replayExistingTest, run'ı BAŞLATTIKLARI
+    // AN (sonucu beklemeden) buraya `true` yazıp navigateTo('create') çağırır — initCreateTestPage
+    // açılışta bunu görüp "PENDING LIVE RUN" bloğunda canlı takibi başlatır ve bu alanı `null`'a
+    // döndürür (bkz. o bloğun dosya başı NOT'u).
+    pendingLiveRun: null,
 };
 
 
@@ -564,6 +588,15 @@ const pageConfig = {
         file: 'dashboard.html',
         menu: dashboardMenu,
         subtitle: 'Test automation workspace overview',
+    },
+
+    // v3.11 — bkz. sohbet notu: "Suit adında bir panel daha yapacağız bu dashboardın altında yer
+    // alsın". Generated Tests'ten "Add to Suite" ile taşınan testler burada, suite'lere göre
+    // gruplanmış olarak görünür ve checkbox ile toplu (regresyon gibi) çalıştırılabilir.
+    suites: {
+        file: 'suites.html',
+        menu: suitesMenu,
+        subtitle: 'Test Suites',
     },
 
     create: {
@@ -628,6 +661,7 @@ function setActiveSidebarMenu(activeMenu) {
 
     const menus = [
         dashboardMenu,
+        suitesMenu,
         createTestMenu,
         suggestionsMenu,
         generatedTestsMenu,
@@ -831,6 +865,11 @@ async function initializePage(pageName) {
 
     if (pageName === 'dashboard') {
         await initDashboardPage();
+        return;
+    }
+
+    if (pageName === 'suites') {
+        await initSuitesPage();
         return;
     }
 
@@ -1038,6 +1077,9 @@ function initCreateTestPage() {
     const testResultTab =
         document.getElementById('testResultTab');
 
+    const bddTab =
+        document.getElementById('bddTab');
+
 
     const generatedCodePanel =
         document.getElementById('generatedCodePanel');
@@ -1047,6 +1089,19 @@ function initCreateTestPage() {
 
     const testResultPanel =
         document.getElementById('testResultPanel');
+
+    const bddPanel =
+        document.getElementById('bddPanel');
+
+
+    const bddDescriptionOutput =
+        document.getElementById('bddDescriptionOutput');
+
+    const saveBddButton =
+        document.getElementById('saveBddButton');
+
+    const bddSaveStatus =
+        document.getElementById('bddSaveStatus');
 
 
     const headedModeInput =
@@ -1709,6 +1764,7 @@ function initCreateTestPage() {
             generatedCodeTab,
             executionLogTab,
             testResultTab,
+            bddTab,
         ];
 
 
@@ -1748,6 +1804,7 @@ function initCreateTestPage() {
             generatedCodePanel,
             executionLogPanel,
             testResultPanel,
+            bddPanel,
         ];
 
 
@@ -1809,6 +1866,22 @@ function initCreateTestPage() {
                 testResultTab,
             );
         }
+
+
+        if (panelName === 'bdd') {
+
+            bddPanel.classList.remove(
+                'hidden',
+            );
+
+            bddPanel.classList.add(
+                'flex',
+            );
+
+            setActiveTab(
+                bddTab,
+            );
+        }
     }
 
 
@@ -1835,6 +1908,15 @@ function initCreateTestPage() {
         () => {
 
             showPanel('result');
+        },
+    );
+
+
+    bddTab.addEventListener(
+        'click',
+        () => {
+
+            showPanel('bdd');
         },
     );
 
@@ -2085,6 +2167,18 @@ function initCreateTestPage() {
             'Run output not found.';
 
 
+        bddDescriptionOutput.value =
+            pending.result.bddDescription ||
+            '';
+
+        appState.currentRunId =
+            pending.result.runId ||
+            null;
+
+        bddSaveStatus.textContent =
+            '';
+
+
         updateTestResultUI(
             pending.result,
             pending.browser,
@@ -2329,6 +2423,46 @@ function initCreateTestPage() {
 
 
         await poll();
+    }
+
+
+    /* -----------------------------------------------------
+       PENDING LIVE RUN
+       ------------------------------------------------------
+       v3.12 — bkz. sohbet notu: "generated testten test koştuğumda create test sayfasında olan
+       panelden yine göreyim istiyorum". Generated Tests sayfasındaki "Run"/"Replay" butonları
+       (bkz. runExistingTest/replayExistingTest) artık run'ı BAŞLATTIKLARI AN bu sayfaya
+       yönlendiriyor (sonucu BEKLEMEDEN) — appState.pendingLiveRun BURADA true bulunursa, tıpkı
+       "Generate & Run" butonuna basılmış gibi Execution Log paneline geçip canlı takibi
+       (connectLiveExecutionLog — YUKARIDAKİ bölüm, bu yüzden bu blok ONDAN SONRA olmalı: aksi
+       halde liveLogSocket/liveLogPollTimer henüz TDZ'de olur) başlatıyoruz. Asıl/nihai sonuç,
+       runExistingTest/replayExistingTest arka planda beklemeye devam ettiği fetch tamamlanınca
+       AYNI appState.pendingTestResult köprüsüyle (yukarıdaki "RESTORE TEST RESULT" bloğu) ikinci
+       bir navigateTo('create') ile gelir — burada SADECE "running" ara durumunu kuruyoruz.
+    ----------------------------------------------------- */
+
+    if (appState.pendingLiveRun) {
+
+        appState.pendingLiveRun = null;
+
+        generateRunButton.disabled = true;
+
+        generateRunButton.innerHTML = `
+            <span class="spinner"></span>
+            Running...
+        `;
+
+        stopTestButton.disabled = false;
+
+        appState.currentRunId = null;
+        bddSaveStatus.textContent = '';
+
+        hideGridLiveViewLink();
+
+        updateStatusBadge('running');
+        showPanel('log');
+
+        void connectLiveExecutionLog();
     }
 
 
@@ -2644,6 +2778,17 @@ function initCreateTestPage() {
             executionLogOutput.textContent =
                 'Preparing test...';
 
+            // Önceki run'ın BDD özeti/kimliği bu yeni run'a ait değil — Save butonunun yanlış
+            // (eski) bir run'ın üzerine yazmasını önlemek için temizleniyor.
+            bddDescriptionOutput.value =
+                '';
+
+            appState.currentRunId =
+                null;
+
+            bddSaveStatus.textContent =
+                '';
+
             // Önceki bir Grid koşusundan kalmış olabilecek linki temizle — bu run Grid kullanmıyorsa
             // ya da henüz session açılmadıysa yanlışlıkla eski/geçersiz bir linkin görünmesini önler.
             hideGridLiveViewLink();
@@ -2785,6 +2930,18 @@ function initCreateTestPage() {
                     }`.trim() ||
                     result.message ||
                     'Run output not found.';
+
+
+                bddDescriptionOutput.value =
+                    result.bddDescription ||
+                    '';
+
+                appState.currentRunId =
+                    result.runId ||
+                    null;
+
+                bddSaveStatus.textContent =
+                    '';
 
 
                 updateTestResultUI(
@@ -3131,6 +3288,101 @@ function initCreateTestPage() {
 
 
     /* -----------------------------------------------------
+       SAVE BDD DESCRIPTION
+       ------------------------------------------------------
+       v3.10 — bkz. bddPanel/bddDescriptionOutput dosya başı NOT'ları. Run bitince otomatik dolan
+       (ya da kullanıcının elle düzenlediği) metni kalıcı kayda (test-runs-index.json'daki ilgili
+       run kaydı) yazar. `appState.currentRunId` YOKSA (henüz hiç run çalıştırılmadıysa) backend'e
+       hiç istek atmadan bilgilendirici bir toast gösterir.
+    ----------------------------------------------------- */
+
+    saveBddButton.addEventListener(
+        'click',
+        async () => {
+
+            if (!appState.currentRunId) {
+
+                showToast(
+                    'Run a test first, then you can save its BDD description.',
+                    'info',
+                );
+
+                return;
+            }
+
+
+            saveBddButton.disabled =
+                true;
+
+            bddSaveStatus.textContent =
+                'Saving...';
+
+
+            try {
+
+                const response =
+                    await fetch(
+                        `/api/test-runs/${encodeURIComponent(appState.currentRunId)}/bdd-description`,
+                        {
+                            method: 'PATCH',
+
+                            headers: {
+                                'Content-Type':
+                                    'application/json',
+                            },
+
+                            body:
+                                JSON.stringify({
+                                    bddDescription:
+                                        bddDescriptionOutput.value,
+                                }),
+                        },
+                    );
+
+                const result =
+                    await response.json();
+
+                if (!response.ok) {
+
+                    throw new Error(
+                        result.message ||
+                        'Failed to save BDD description.',
+                    );
+                }
+
+
+                bddSaveStatus.textContent =
+                    'Saved';
+
+                showToast(
+                    'BDD description saved.',
+                    'success',
+                );
+
+            } catch (error) {
+
+                console.error(error);
+
+                bddSaveStatus.textContent =
+                    '';
+
+                showToast(
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to save BDD description.',
+                    'error',
+                );
+
+            } finally {
+
+                saveBddButton.disabled =
+                    false;
+            }
+        },
+    );
+
+
+    /* -----------------------------------------------------
        DOWNLOAD
     ----------------------------------------------------- */
 
@@ -3340,7 +3592,39 @@ function initCreateTestPage() {
 
     updateArtifactButtons();
 
-    showPanel('code');
+
+    /* -----------------------------------------------------
+       PENDING BDD EDIT — bkz. appState.pendingBddEdit dosya başı NOT'u. Generated Tests
+       sayfasından "BDD" butonuyla buraya yönlendirildiysek (bkz. openBddEditorForGeneratedTest),
+       normal "code" sekmesi yerine BDD panelini metniyle DOLU açıyoruz — kullanıcı direkt
+       düzenlemeye başlayabilsin diye.
+    ----------------------------------------------------- */
+
+    if (appState.pendingBddEdit) {
+
+        const pending = appState.pendingBddEdit;
+        appState.pendingBddEdit = null;
+
+        bddDescriptionOutput.value = pending.bddDescription || '';
+        appState.currentRunId = pending.runId || null;
+        bddSaveStatus.textContent = '';
+
+        showPanel('bdd');
+
+        if (!pending.runId) {
+            // Bu alan eklenmeden ÖNCE üretilmiş eski bir kayıt (bkz. LegacyGeneratedTestMeta.runId
+            // dosya başı açıklaması) — metin görüntülenebilir ama Save'e basınca normal "run kimliği
+            // yok" uyarısı çıkacak, kullanıcı şaşırmasın diye burada da bilgilendiriyoruz.
+            showToast(
+                'This is an older record without a linked run — changes here cannot be saved.',
+                'info',
+            );
+        }
+
+    } else {
+
+        showPanel('code');
+    }
 }
 
 
@@ -5303,6 +5587,725 @@ async function initTestRunsPage() {
 
 
 /* =========================================================
+   SUITES
+   ------------------------------------------------------
+   v3.11 — bkz. sohbet notu: "Suit adında bir panel daha yapacağız bu dashboardın altında yer
+   alsın". Generated Tests'ten "Add to Suite" ile taşınan testler (bkz. app.js getVisibleTests
+   NOT'u ve LegacyGeneratedTestMeta.suiteIds) burada suite'lere göre gruplanır; sol tarafta
+   suite listesi, sağ tarafta seçili suite'in üye testleri checkbox'larla görünür ve mevcut
+   /api/generated-tests/run-batch mekanizması (initGeneratedTestsPage'deki trackBatchRuns ile
+   AYNI backend uç noktası) ile toplu çalıştırılabilir. BİLİNÇLİ TASARIM KARARI: burada
+   trackBatchRuns'ın tam canlı-adım-bazlı takibi YOK — sadece nihai durum rozeti (running →
+   passed/failed/error/cancelled), ayrıntılı Execution Log için kullanıcı ilgili run'ı Test
+   Runs sayfasından açabilir (bkz. sohbet planı: "lean" versiyon, effort kısıtı nedeniyle).
+========================================================= */
+
+async function initSuitesPage() {
+
+    const refreshSuitesButton =
+        document.getElementById('refreshSuitesButton');
+    const newSuiteButton =
+        document.getElementById('newSuiteButton');
+    const suitesListContainer =
+        document.getElementById('suitesListContainer');
+    const suitesListEmptyState =
+        document.getElementById('suitesListEmptyState');
+
+    const suiteDetailEmptyState =
+        document.getElementById('suiteDetailEmptyState');
+    const suiteDetailContent =
+        document.getElementById('suiteDetailContent');
+    const suiteDetailName =
+        document.getElementById('suiteDetailName');
+    const suiteDetailMeta =
+        document.getElementById('suiteDetailMeta');
+    const deleteSuiteButton =
+        document.getElementById('deleteSuiteButton');
+
+    const suiteSelectionBar =
+        document.getElementById('suiteSelectionBar');
+    const suiteSelectionCount =
+        document.getElementById('suiteSelectionCount');
+    const clearSuiteSelectionButton =
+        document.getElementById('clearSuiteSelectionButton');
+    const runSuiteSelectedButton =
+        document.getElementById('runSuiteSelectedButton');
+
+    const selectAllSuiteTestsCheckbox =
+        document.getElementById('selectAllSuiteTestsCheckbox');
+    const suiteTestsTableBody =
+        document.getElementById('suiteTestsTableBody');
+    const suiteTestsEmptyState =
+        document.getElementById('suiteTestsEmptyState');
+
+    const newSuiteModal =
+        document.getElementById('newSuiteModal');
+    const closeNewSuiteModalButton =
+        document.getElementById('closeNewSuiteModal');
+    const cancelNewSuiteButton =
+        document.getElementById('cancelNewSuiteButton');
+    const confirmNewSuiteButton =
+        document.getElementById('confirmNewSuiteButton');
+    const newSuiteNameInput =
+        document.getElementById('newSuiteNameInput');
+
+    // Sayfa markup'ı henüz DOM'da değilse (ör. çok hızlı ardışık navigasyon) sessizce çık —
+    // diğer init*Page fonksiyonlarıyla aynı savunmacı desen.
+    if (!suitesListContainer) {
+        return;
+    }
+
+    let allSuites = [];
+    let allTests = [];
+    let selectedSuiteId = null;
+    let selectedSuiteTestFiles = new Set();
+
+    // v3.11 — dosya başı NOT: lean/nihai-durum-only takip (bkz. trackSuiteBatchRuns).
+    let suiteRunStatusByFile = new Map();
+
+
+    function getSuiteTests(suiteId) {
+        return allTests.filter(
+            (test) =>
+                typeof test !== 'string' &&
+                Array.isArray(test.suiteIds) &&
+                test.suiteIds.includes(suiteId),
+        );
+    }
+
+
+    function renderSuitesList() {
+
+        suitesListContainer.innerHTML = allSuites
+            .map((suite) => {
+
+                const memberCount =
+                    getSuiteTests(suite.id).length;
+
+                const isActive =
+                    suite.id === selectedSuiteId;
+
+                return `
+                    <button
+                        class="suiteListItemButton w-full text-left px-md py-sm flex items-center justify-between gap-2 transition-colors ${
+                            isActive
+                                ? 'bg-primary-container/20 text-on-surface'
+                                : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                        }"
+                        data-suite-id="${escapeHtml(suite.id)}"
+                        type="button"
+                    >
+                        <span class="font-body-md text-body-md truncate">
+                            ${escapeHtml(suite.name)}
+                        </span>
+                        <span class="font-body-sm text-body-sm text-on-surface-variant/70 shrink-0">
+                            ${memberCount}
+                        </span>
+                    </button>
+                `;
+            })
+            .join('');
+
+        suitesListEmptyState.classList.toggle('hidden', allSuites.length > 0);
+        suitesListEmptyState.classList.toggle('flex', allSuites.length === 0);
+
+        suitesListContainer
+            .querySelectorAll('.suiteListItemButton')
+            .forEach((button) => {
+                button.addEventListener('click', () => {
+                    const suiteId = button.getAttribute('data-suite-id');
+                    if (!suiteId) return;
+                    selectSuite(suiteId);
+                });
+            });
+    }
+
+
+    function updateSuiteSelectionBar() {
+
+        const count =
+            selectedSuiteTestFiles.size;
+
+        suiteSelectionBar.classList.toggle('hidden', count === 0);
+        suiteSelectionBar.classList.toggle('flex', count > 0);
+        suiteSelectionCount.textContent = `${count} selected`;
+    }
+
+
+    // v3.11 — batchStatusBadgeLabel/Classes (initGeneratedTestsPage) ile AYNI durum kümesi,
+    // burada 'retrying' YOK (bkz. dosya başı NOT — bu sayfa replay_retry_started event'ini hiç
+    // dinlemiyor, sadece nihai durumu takip ediyor).
+    function suiteBatchStatusBadgeLabel(status) {
+        switch (status) {
+            case 'passed': return 'Passed';
+            case 'failed': return 'Failed';
+            case 'error': return 'Error';
+            case 'cancelled': return 'Cancelled';
+            default: return 'Running…';
+        }
+    }
+
+    function suiteBatchStatusBadgeClasses(status) {
+        switch (status) {
+            case 'passed': return 'bg-secondary/15 text-secondary';
+            case 'failed':
+            case 'error': return 'bg-error/15 text-error';
+            case 'cancelled': return 'bg-surface-container-highest text-on-surface-variant';
+            default: return 'bg-primary-container/60 text-on-primary-container animate-pulse';
+        }
+    }
+
+
+    function renderSuiteTests() {
+
+        if (!selectedSuiteId) {
+            return;
+        }
+
+        const tests =
+            getSuiteTests(selectedSuiteId);
+
+        // Seçim setinden artık bu suite'te olmayan dosyaları temizle (ör. başka bir sekmeden
+        // kaldırılmış olabilir) — checkbox'lar sadece hâlâ görünür satırlar için "checked" olsun.
+        Array.from(selectedSuiteTestFiles).forEach((fileName) => {
+            if (!tests.some((t) => t.fileName === fileName)) {
+                selectedSuiteTestFiles.delete(fileName);
+            }
+        });
+
+        suiteTestsTableBody.innerHTML = tests
+            .map((test) => {
+
+                const fileName = test.fileName;
+                const isSelected = selectedSuiteTestFiles.has(fileName);
+                const runStatus = suiteRunStatusByFile.get(fileName);
+
+                const createdLabel =
+                    test.createdAt
+                        ? new Date(test.createdAt).toLocaleString()
+                        : '—';
+
+                return `
+                    <tr class="hover:bg-surface-container-high/40">
+                        <td class="py-sm pl-md pr-xs">
+                            <input
+                                class="suiteTestCheckbox w-[16px] h-[16px] rounded border-outline-variant cursor-pointer"
+                                type="checkbox"
+                                data-file="${escapeHtml(fileName)}"
+                                ${isSelected ? 'checked' : ''}
+                            />
+                        </td>
+                        <td class="py-sm px-md">
+                            <div class="flex items-center gap-2">
+                                <span class="font-body-md text-body-md text-on-surface truncate">
+                                    ${escapeHtml(fileName)}
+                                </span>
+                                ${
+                                    runStatus
+                                        ? `<span class="font-body-sm text-[11px] px-2 py-[2px] rounded-full ${suiteBatchStatusBadgeClasses(runStatus.status)}">${suiteBatchStatusBadgeLabel(runStatus.status)}</span>`
+                                        : ''
+                                }
+                            </div>
+                        </td>
+                        <td class="py-sm px-md font-body-sm text-body-sm text-on-surface-variant">
+                            ${escapeHtml(createdLabel)}
+                        </td>
+                        <td class="py-sm px-md text-right">
+                            <button
+                                class="removeFromSuiteButton inline-flex items-center gap-xs text-on-surface-variant hover:text-error px-sm py-[6px] rounded-lg border border-outline-variant"
+                                data-file="${escapeHtml(fileName)}"
+                                title="Remove from this suite"
+                                type="button"
+                            >
+                                <span class="material-symbols-outlined text-[16px]">
+                                    remove_circle_outline
+                                </span>
+                                Remove
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            })
+            .join('');
+
+        suiteTestsEmptyState.classList.toggle('hidden', tests.length > 0);
+        suiteTestsEmptyState.classList.toggle('flex', tests.length === 0);
+
+        selectAllSuiteTestsCheckbox.checked =
+            tests.length > 0 &&
+            tests.every((t) => selectedSuiteTestFiles.has(t.fileName));
+
+        updateSuiteSelectionBar();
+
+        suiteTestsTableBody
+            .querySelectorAll('.suiteTestCheckbox')
+            .forEach((checkbox) => {
+                checkbox.addEventListener('change', () => {
+
+                    const fileName =
+                        checkbox.getAttribute('data-file');
+
+                    if (!fileName) return;
+
+                    if (checkbox.checked) {
+                        selectedSuiteTestFiles.add(fileName);
+                    } else {
+                        selectedSuiteTestFiles.delete(fileName);
+                    }
+
+                    updateSuiteSelectionBar();
+
+                    selectAllSuiteTestsCheckbox.checked =
+                        tests.length > 0 &&
+                        tests.every((t) => selectedSuiteTestFiles.has(t.fileName));
+                });
+            });
+
+        suiteTestsTableBody
+            .querySelectorAll('.removeFromSuiteButton')
+            .forEach((button) => {
+                button.addEventListener('click', async () => {
+
+                    const fileName =
+                        button.getAttribute('data-file');
+
+                    if (!fileName || !selectedSuiteId) return;
+
+                    button.disabled = true;
+
+                    try {
+
+                        const response = await fetch(
+                            `/api/generated-tests/${encodeURIComponent(fileName)}/suites/${encodeURIComponent(selectedSuiteId)}`,
+                            { method: 'DELETE' },
+                        );
+
+                        const result = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(result.message || 'Failed to remove test from suite.');
+                        }
+
+                        selectedSuiteTestFiles.delete(fileName);
+                        await loadAll();
+
+                    } catch (error) {
+                        console.error(error);
+                        showToast(
+                            error instanceof Error ? error.message : 'Failed to remove test from suite.',
+                            'error',
+                        );
+                        button.disabled = false;
+                    }
+                });
+            });
+    }
+
+
+    function selectSuite(suiteId) {
+
+        selectedSuiteId = suiteId;
+        selectedSuiteTestFiles = new Set();
+        suiteRunStatusByFile = new Map();
+
+        const suite =
+            allSuites.find((s) => s.id === suiteId);
+
+        if (!suite) {
+            selectedSuiteId = null;
+            suiteDetailContent.classList.add('hidden');
+            suiteDetailContent.classList.remove('flex');
+            suiteDetailEmptyState.classList.remove('hidden');
+            suiteDetailEmptyState.classList.add('flex');
+            renderSuitesList();
+            return;
+        }
+
+        suiteDetailName.textContent = suite.name;
+        suiteDetailMeta.textContent =
+            suite.createdAt
+                ? `Created ${new Date(suite.createdAt).toLocaleString()}`
+                : '';
+
+        suiteDetailEmptyState.classList.add('hidden');
+        suiteDetailEmptyState.classList.remove('flex');
+        suiteDetailContent.classList.remove('hidden');
+        suiteDetailContent.classList.add('flex');
+
+        renderSuitesList();
+        renderSuiteTests();
+    }
+
+
+    async function loadAll() {
+
+        try {
+
+            const [suitesResponse, testsResponse] = await Promise.all([
+                fetch('/api/suites'),
+                fetch('/api/generated-tests'),
+            ]);
+
+            const suitesResult = await suitesResponse.json();
+            const testsResult = await testsResponse.json();
+
+            if (!suitesResponse.ok) {
+                throw new Error(suitesResult.message || 'Failed to load suites.');
+            }
+
+            allSuites =
+                Array.isArray(suitesResult.suites) ? suitesResult.suites : [];
+
+            allTests =
+                testsResponse.ok && Array.isArray(testsResult.tests)
+                    ? testsResult.tests
+                    : [];
+
+            // Seçili suite bu arada silinmiş olabilir (ör. başka bir sekmeden) — bu durumda
+            // seçimi temizle ki "hayalet" bir suite detayı gösterilmesin.
+            if (selectedSuiteId && !allSuites.some((s) => s.id === selectedSuiteId)) {
+                selectedSuiteId = null;
+            }
+
+            if (selectedSuiteId) {
+                selectSuite(selectedSuiteId);
+            } else {
+                renderSuitesList();
+            }
+
+        } catch (error) {
+            console.error(error);
+            showToast(
+                error instanceof Error ? error.message : 'Failed to load suites.',
+                'error',
+            );
+        }
+    }
+
+
+    /* -----------------------------------------------------
+       NEW SUITE MODAL
+    ----------------------------------------------------- */
+
+    function openNewSuiteModal() {
+        if (!newSuiteModal) return;
+        newSuiteNameInput.value = '';
+        newSuiteModal.classList.remove('hidden');
+        newSuiteNameInput.focus();
+    }
+
+    function closeNewSuiteModal() {
+        newSuiteModal?.classList.add('hidden');
+    }
+
+    if (newSuiteButton) {
+        newSuiteButton.addEventListener('click', openNewSuiteModal);
+    }
+
+    if (closeNewSuiteModalButton) {
+        closeNewSuiteModalButton.addEventListener('click', closeNewSuiteModal);
+    }
+
+    if (cancelNewSuiteButton) {
+        cancelNewSuiteButton.addEventListener('click', closeNewSuiteModal);
+    }
+
+    if (confirmNewSuiteButton) {
+        confirmNewSuiteButton.addEventListener('click', async () => {
+
+            const name =
+                newSuiteNameInput.value.trim();
+
+            if (!name) {
+                showToast('Enter a suite name.', 'error');
+                return;
+            }
+
+            confirmNewSuiteButton.disabled = true;
+
+            try {
+
+                const response = await fetch('/api/suites', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to create suite.');
+                }
+
+                showToast('Suite created.', 'success');
+                closeNewSuiteModal();
+                await loadAll();
+                selectSuite(result.id);
+
+            } catch (error) {
+                console.error(error);
+                showToast(
+                    error instanceof Error ? error.message : 'Failed to create suite.',
+                    'error',
+                );
+            } finally {
+                confirmNewSuiteButton.disabled = false;
+            }
+        });
+    }
+
+
+    /* -----------------------------------------------------
+       DELETE SUITE — diğer yıkıcı işlemlerle (ör. deleteGeneratedTestButton) AYNI sade
+       confirm() deseni.
+    ----------------------------------------------------- */
+
+    if (deleteSuiteButton) {
+        deleteSuiteButton.addEventListener('click', async () => {
+
+            if (!selectedSuiteId) return;
+
+            const suite =
+                allSuites.find((s) => s.id === selectedSuiteId);
+
+            const confirmed = confirm(
+                `Delete suite "${suite?.name || selectedSuiteId}"? Its tests will move back to Generated Tests. This cannot be undone.`,
+            );
+
+            if (!confirmed) return;
+
+            deleteSuiteButton.disabled = true;
+
+            try {
+
+                const response = await fetch(
+                    `/api/suites/${encodeURIComponent(selectedSuiteId)}`,
+                    { method: 'DELETE' },
+                );
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to delete suite.');
+                }
+
+                showToast('Suite deleted.', 'success');
+                selectedSuiteId = null;
+                await loadAll();
+
+            } catch (error) {
+                console.error(error);
+                showToast(
+                    error instanceof Error ? error.message : 'Failed to delete suite.',
+                    'error',
+                );
+            } finally {
+                deleteSuiteButton.disabled = false;
+            }
+        });
+    }
+
+
+    /* -----------------------------------------------------
+       SELECTION / RUN SELECTED
+    ----------------------------------------------------- */
+
+    if (selectAllSuiteTestsCheckbox) {
+        selectAllSuiteTestsCheckbox.addEventListener('change', () => {
+
+            if (!selectedSuiteId) return;
+
+            const tests =
+                getSuiteTests(selectedSuiteId);
+
+            if (selectAllSuiteTestsCheckbox.checked) {
+                tests.forEach((t) => selectedSuiteTestFiles.add(t.fileName));
+            } else {
+                selectedSuiteTestFiles.clear();
+            }
+
+            renderSuiteTests();
+        });
+    }
+
+    if (clearSuiteSelectionButton) {
+        clearSuiteSelectionButton.addEventListener('click', () => {
+            selectedSuiteTestFiles.clear();
+            renderSuiteTests();
+        });
+    }
+
+
+    // v3.11 — trackBatchRuns'ın (initGeneratedTestsPage) LEAN karşılığı: aynı /ws/runs/:runId
+    // protokolü, ama sadece nihai durum rozeti için dinliyoruz (bkz. dosya başı NOT).
+    function trackSuiteBatchRuns(started) {
+
+        let remaining = started.length;
+
+        const protocol =
+            window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+        const TERMINAL_STATUSES =
+            new Set(['passed', 'failed', 'error', 'cancelled']);
+
+        const settle = (fileName, status) => {
+
+            if (status) {
+                suiteRunStatusByFile.set(fileName, { status });
+            } else {
+                // Durum bilinmiyor (ör. WS bağlantı hatası) — run backend'de devam ediyor olabilir,
+                // bu yüzden yanlış bir rozet basmak yerine rozeti kaldırıyoruz.
+                suiteRunStatusByFile.delete(fileName);
+            }
+
+            renderSuiteTests();
+
+            remaining -= 1;
+
+            if (remaining === 0) {
+                suiteRunStatusByFile.clear();
+                if (runSuiteSelectedButton) runSuiteSelectedButton.disabled = false;
+                void loadAll();
+            }
+        };
+
+        started.forEach(({ fileName, runId }) => {
+
+            suiteRunStatusByFile.set(fileName, { status: 'running' });
+
+            const socket =
+                new WebSocket(`${protocol}//${window.location.host}/ws/runs/${runId}`);
+
+            socket.addEventListener('message', (event) => {
+                try {
+
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'run_finished') {
+                        socket.close();
+                        settle(fileName, data.status);
+                    } else if (data.type === 'run_error') {
+                        socket.close();
+                        settle(fileName, 'error');
+                    } else if (
+                        data.type === 'run_snapshot' &&
+                        TERMINAL_STATUSES.has(data.summary?.status)
+                    ) {
+                        // Geç bağlanan istemci için: WS açılana kadar run zaten bitmiş olabilir.
+                        socket.close();
+                        settle(fileName, data.summary.status);
+                    }
+
+                } catch (error) {
+                    console.error('Suite toplu çalıştırma WS mesajı işlenemedi:', error);
+                }
+            });
+
+            socket.addEventListener('error', () => {
+                settle(fileName, null);
+            });
+        });
+
+        renderSuiteTests();
+    }
+
+    if (runSuiteSelectedButton) {
+        runSuiteSelectedButton.addEventListener('click', async () => {
+
+            const fileNames =
+                Array.from(selectedSuiteTestFiles);
+
+            if (fileNames.length === 0) return;
+
+            runSuiteSelectedButton.disabled = true;
+
+            try {
+
+                const response = await fetch('/api/generated-tests/run-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fileNames }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to start batch run.');
+                }
+
+                const results =
+                    Array.isArray(result.results) ? result.results : [];
+
+                const started =
+                    results.filter((r) => r.runId);
+
+                const failedToStart =
+                    results.filter((r) => r.error);
+
+                if (failedToStart.length > 0) {
+                    showToast(
+                        `${failedToStart.length} test could not be started: ${failedToStart
+                            .map((r) => r.fileName)
+                            .join(', ')}`,
+                        'error',
+                    );
+                }
+
+                if (started.length > 0) {
+                    trackSuiteBatchRuns(started);
+                } else {
+                    runSuiteSelectedButton.disabled = false;
+                }
+
+            } catch (error) {
+                console.error(error);
+                showToast(
+                    error instanceof Error ? error.message : 'Failed to start batch run.',
+                    'error',
+                );
+                runSuiteSelectedButton.disabled = false;
+            }
+        });
+    }
+
+    if (refreshSuitesButton) {
+        refreshSuitesButton.addEventListener('click', async () => {
+            refreshSuitesButton.disabled = true;
+            await loadAll();
+            refreshSuitesButton.disabled = false;
+        });
+    }
+
+    await loadAll();
+}
+
+
+/**
+ * v3.12 — bkz. sohbet notu: "bdd kısmı generated testte böyle gözükmesin... tıklıyım burdan bdd ye
+ * yine create test panelinde bdd kısmına götürsün ordan edit yapabileyim". Generated Tests
+ * sayfasındaki bir satırın "BDD" butonuna tıklanınca çağrılır (bkz. initGeneratedTestsPage
+ * içindeki .openBddFromGeneratedButton delegasyonu) — Create Test sayfasına geçip oradaki BDD
+ * sekmesini bu testin metniyle DOLU açar (bkz. initCreateTestPage "PENDING BDD EDIT" bloğu).
+ * GLOBAL bir fonksiyon: initCreateTestPage()'in kendi kapsamındaki (closure) DOM referanslarına
+ * (bddDescriptionOutput vb.) buradan doğrudan erişilemez — bunun yerine appState.pendingBddEdit
+ * üzerinden "bir sonraki initCreateTestPage() çalıştığında bunu uygula" şeklinde bir köprü kurulur.
+ */
+async function openBddEditorForGeneratedTest(test) {
+
+    if (!test) {
+        return;
+    }
+
+    appState.pendingBddEdit = {
+        bddDescription: test.bddDescription || '',
+        runId: test.runId || null,
+    };
+
+    await navigateTo('create');
+}
+
+
+/* =========================================================
    GENERATED TESTS
 ========================================================= */
 
@@ -5449,6 +6452,22 @@ async function initGeneratedTestsPage() {
 
     let scheduleModalFileName = null;
 
+    // v3.11 — "Add to Suite" modalı (bkz. pages/generated-tests.html "ADD TO SUITE MODAL" NOT'u).
+    const addToSuiteModal =
+        document.getElementById('addToSuiteModal');
+    const closeAddToSuiteModalButton =
+        document.getElementById('closeAddToSuiteModal');
+    const cancelAddToSuiteButton =
+        document.getElementById('cancelAddToSuiteButton');
+    const confirmAddToSuiteButton =
+        document.getElementById('confirmAddToSuiteButton');
+    const addToSuiteExistingSelect =
+        document.getElementById('addToSuiteExistingSelect');
+    const addToSuiteNewName =
+        document.getElementById('addToSuiteNewName');
+
+    let addToSuiteTargetFile = null;
+
     if (generatedTestScheduleDaysContainer) {
         createScheduleDayToggles(generatedTestScheduleDaysContainer);
     }
@@ -5545,6 +6564,116 @@ async function initGeneratedTestsPage() {
                 showToast('Schedule saved.', 'success');
                 closeScheduleModal();
                 await loadGeneratedTests();
+            }
+        });
+    }
+
+
+    /* -----------------------------------------------------
+       ADD TO SUITE MODAL
+       ------------------------------------------------------
+       v3.11 — bkz. pages/generated-tests.html "ADD TO SUITE MODAL" NOT'u ve
+       LegacyGeneratedTestMeta.suiteIds dosya başı açıklaması. Bir test bu modal üzerinden var olan
+       bir suite'e eklenebilir YA DA yeni bir isim girilip anında oluşturulup eklenebilir.
+    ----------------------------------------------------- */
+
+    async function openAddToSuiteModal(fileName) {
+        if (!addToSuiteModal) return;
+
+        addToSuiteTargetFile = fileName;
+        addToSuiteNewName.value = '';
+        addToSuiteExistingSelect.innerHTML = '<option value="">— Select —</option>';
+
+        try {
+            const response = await fetch('/api/suites');
+            const result = await response.json();
+            const suites = Array.isArray(result.suites) ? result.suites : [];
+
+            for (const suite of suites) {
+                const option = document.createElement('option');
+                option.value = suite.id;
+                option.textContent = suite.name;
+                addToSuiteExistingSelect.appendChild(option);
+            }
+        } catch (error) {
+            console.error(error);
+            // Sessizce yok say — kullanıcı yine de "New suite name" ile yeni bir suite oluşturabilir.
+        }
+
+        addToSuiteModal.classList.remove('hidden');
+    }
+
+    function closeAddToSuiteModal() {
+        addToSuiteTargetFile = null;
+        addToSuiteModal?.classList.add('hidden');
+    }
+
+    if (closeAddToSuiteModalButton) {
+        closeAddToSuiteModalButton.addEventListener('click', closeAddToSuiteModal);
+    }
+
+    if (cancelAddToSuiteButton) {
+        cancelAddToSuiteButton.addEventListener('click', closeAddToSuiteModal);
+    }
+
+    if (confirmAddToSuiteButton) {
+        confirmAddToSuiteButton.addEventListener('click', async () => {
+            if (!addToSuiteTargetFile) return;
+            const fileName = addToSuiteTargetFile;
+
+            const newName = addToSuiteNewName.value.trim();
+            const existingSuiteId = addToSuiteExistingSelect.value;
+
+            if (!newName && !existingSuiteId) {
+                showToast('Pick an existing suite or enter a name for a new one.', 'error');
+                return;
+            }
+
+            confirmAddToSuiteButton.disabled = true;
+
+            try {
+                let suiteId = existingSuiteId;
+
+                // Yeni isim girildiyse ÖNCE suite'i oluştur (mevcut seçimden BAĞIMSIZ — kullanıcı
+                // ikisini birden doldurursa "yeni oluştur" kazanır, çünkü niyeti daha AÇIK).
+                if (newName) {
+                    const createResponse = await fetch('/api/suites', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: newName }),
+                    });
+                    const created = await createResponse.json();
+                    if (!createResponse.ok) {
+                        throw new Error(created.message || 'Failed to create suite.');
+                    }
+                    suiteId = created.id;
+                }
+
+                const addResponse = await fetch(
+                    `/api/generated-tests/${encodeURIComponent(fileName)}/suites`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ suiteId }),
+                    },
+                );
+                const addResult = await addResponse.json();
+                if (!addResponse.ok) {
+                    throw new Error(addResult.message || 'Failed to add test to suite.');
+                }
+
+                showToast('Added to suite.', 'success');
+                closeAddToSuiteModal();
+                await loadGeneratedTests();
+
+            } catch (error) {
+                console.error(error);
+                showToast(
+                    error instanceof Error ? error.message : 'Failed to add test to suite.',
+                    'error',
+                );
+            } finally {
+                confirmAddToSuiteButton.disabled = false;
             }
         });
     }
@@ -5774,6 +6903,19 @@ async function initGeneratedTestsPage() {
 
                         : test.fileName;
 
+                // v3.11 — bkz. sohbet notu: "Sadece Suit'te görünür, Generated Tests'ten
+                // kaybolur". En az bir suite'e eklenmiş testler ana listeden gizlenir — Suites
+                // sayfasındaki ilgili suite(ler) içinde görünmeye devam ederler (bkz.
+                // initSuitesPage, aynı `allTests`/GET /generated-tests verisini kullanır).
+                const inAnySuite =
+                    typeof test !==
+                    'string' &&
+                    Array.isArray(test.suiteIds) &&
+                    test.suiteIds.length > 0;
+
+                if (inAnySuite) {
+                    return false;
+                }
 
                 return (
                     !searchValue ||
@@ -6067,6 +7209,17 @@ async function initGeneratedTestsPage() {
                         liveViewUrlByFile.get(
                             fileName,
                         );
+
+                    // v3.11 — bkz. LegacyGeneratedTestMeta.bddDescription dosya başı açıklaması.
+                    // Bir toplu koşum bu satırı canlı takip ediyorsa (isLive), bu run henüz
+                    // bitmediği için `test.bddDescription` HÂLÂ eski/önceki bir değer olurdu —
+                    // kafa karıştırmamak için SADECE canlı DEĞİLKEN gösteriyoruz.
+                    const bddDescription =
+                        !isLive &&
+                        typeof test !== 'string' &&
+                        test.bddDescription
+                            ? test.bddDescription
+                            : null;
 
 
                     return `
@@ -6449,6 +7602,39 @@ async function initGeneratedTestsPage() {
                                     </button>
 
 
+                                    <button
+                                        class="
+                                            addToSuiteButton
+                                            inline-flex
+                                            items-center
+                                            gap-xs
+                                            text-on-surface-variant
+                                            hover:text-on-surface
+                                            px-sm
+                                            py-[6px]
+                                            rounded-lg
+                                            border
+                                            border-outline-variant
+                                        "
+                                        data-file="${fileName}"
+                                        title="Bu testi bir Suite'e ekle"
+                                        type="button"
+                                    >
+
+                                        <span
+                                            class="
+                                                material-symbols-outlined
+                                                text-[16px]
+                                            "
+                                        >
+                                            playlist_add
+                                        </span>
+
+                                        Add to Suite
+
+                                    </button>
+
+
                                     <!-- Kenara, diğer aksiyonlardan ayrı duruyor (ince bir ayraçla)
                                          — yıkıcı bir işlem olduğu için "Run"a yanlışlıkla bitişik
                                          durmasın diye bilinçli olarak görsel bir boşluk bırakıldı. -->
@@ -6499,6 +7685,31 @@ async function initGeneratedTestsPage() {
                             data-file="${fileName}"
                         >
                             <td colspan="5" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
+                                ${
+                                bddDescription
+                                    ? `
+                                <div class="pt-sm pb-sm border-b border-outline-variant/30 mb-1">
+                                    <button
+                                        class="
+                                            openBddFromGeneratedButton
+                                            inline-flex items-center gap-xs
+                                            font-label-caps text-label-caps
+                                            text-primary
+                                            hover:underline
+                                        "
+                                        data-file="${fileName}"
+                                        type="button"
+                                        title="Open in the Create Test BDD tab to view or edit"
+                                    >
+                                        <span class="material-symbols-outlined text-[14px]">
+                                            edit_note
+                                        </span>
+                                        BDD — view / edit
+                                    </button>
+                                </div>
+                                `
+                                    : ''
+                            }
                                 ${
                                 isLive &&
                                 steps.length === 0
@@ -6729,6 +7940,49 @@ async function initGeneratedTestsPage() {
 
         document
             .querySelectorAll(
+                '.openBddFromGeneratedButton',
+            )
+            .forEach((button) => {
+
+                button.addEventListener(
+                    'click',
+                    async (event) => {
+
+                        // stepsRow'un kendisi ayrıca tıklamaya tepki vermiyor ama yine de
+                        // toggleGeneratedTestStepsButton ile aynı satırda olduğu için event
+                        // taşmasını önlemek adına durduruyoruz (bkz. .stepsRow yapısı).
+                        event.stopPropagation();
+
+                        const fileName =
+                            button.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        const test =
+                            allTests.find(
+                                (t) =>
+                                    typeof t !== 'string' &&
+                                    t.fileName === fileName,
+                            );
+
+                        if (!test) {
+                            return;
+                        }
+
+                        await openBddEditorForGeneratedTest(
+                            test,
+                        );
+                    },
+                );
+            });
+
+
+        document
+            .querySelectorAll(
                 '.viewGeneratedTestButton',
             )
             .forEach((button) => {
@@ -6780,6 +8034,33 @@ async function initGeneratedTestsPage() {
                         await runExistingTest(
                             fileName,
                             button,
+                        );
+                    },
+                );
+            });
+
+
+        document
+            .querySelectorAll(
+                '.addToSuiteButton',
+            )
+            .forEach((button) => {
+
+                button.addEventListener(
+                    'click',
+                    () => {
+
+                        const fileName =
+                            button.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        openAddToSuiteModal(
+                            fileName,
                         );
                     },
                 );
@@ -7847,50 +9128,70 @@ async function runExistingTest(
     }
 
 
+    // v3.12 — bkz. sohbet notu: "generated testten test koştuğumda create test sayfasında olan
+    // panelden yine göreyim istiyorum". ÖNCEDEN bu fetch tamamlanana kadar (test bitene kadar)
+    // hiçbir yere navigasyon YOKTU — kullanıcı sonucu SADECE bittiğinde görürdü. Artık isteği
+    // BAŞLATIP (await ETMEDEN, arka planda devam etsin diye) HEMEN appState.pendingLiveRun ile
+    // Create Test sayfasına geçiyoruz — orası açılışta bunu görüp canlı takibi (bkz.
+    // initCreateTestPage "PENDING LIVE RUN" bloğu) başlatıyor. Fetch tamamlanınca (aşağıda) asıl
+    // sonuç YİNE aynı appState.pendingTestResult köprüsüyle (mevcut/eski davranışla AYNI) ikinci
+    // bir navigateTo('create') ile gösterilir.
+    const resultPromise =
+        fetch(
+            '/api/generated-tests/run',
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type':
+                        'application/json',
+                },
+
+                body:
+                    JSON.stringify({
+                        fileName,
+
+                        headed:
+                        appState
+                            .executionSettings
+                            .headed,
+
+                        browser:
+                        appState
+                            .executionSettings
+                            .browser,
+
+                        screenshot:
+                        appState
+                            .executionSettings
+                            .screenshot,
+
+                        video:
+                        appState
+                            .executionSettings
+                            .video,
+
+                        trace:
+                        appState
+                            .executionSettings
+                            .trace,
+                    }),
+            },
+        );
+
+
+    appState.pendingLiveRun =
+        true;
+
+    await navigateTo(
+        'create',
+    );
+
+
     try {
 
         const response =
-            await fetch(
-                '/api/generated-tests/run',
-                {
-                    method: 'POST',
-
-                    headers: {
-                        'Content-Type':
-                            'application/json',
-                    },
-
-                    body:
-                        JSON.stringify({
-                            fileName,
-
-                            headed:
-                            appState
-                                .executionSettings
-                                .headed,
-
-                            browser:
-                            appState
-                                .executionSettings
-                                .browser,
-
-                            screenshot:
-                            appState
-                                .executionSettings
-                                .screenshot,
-
-                            video:
-                            appState
-                                .executionSettings
-                                .video,
-
-                            trace:
-                            appState
-                                .executionSettings
-                                .trace,
-                        }),
-                },
-            );
+            await resultPromise;
 
 
         const result =
@@ -7969,50 +9270,64 @@ async function replayExistingTest(
     }
 
 
+    // v3.12 — bkz. runExistingTest() dosya başı NOT'u — AYNI "önce navigate, sonuç ikinci
+    // navigasyonla gelir" deseni, burada da geçerli.
+    const resultPromise =
+        fetch(
+            '/api/generated-tests/replay',
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type':
+                        'application/json',
+                },
+
+                body:
+                    JSON.stringify({
+                        fileName,
+
+                        headed:
+                        appState
+                            .executionSettings
+                            .headed,
+
+                        browser:
+                        appState
+                            .executionSettings
+                            .browser,
+
+                        screenshot:
+                        appState
+                            .executionSettings
+                            .screenshot,
+
+                        video:
+                        appState
+                            .executionSettings
+                            .video,
+
+                        trace:
+                        appState
+                            .executionSettings
+                            .trace,
+                    }),
+            },
+        );
+
+
+    appState.pendingLiveRun =
+        true;
+
+    await navigateTo(
+        'create',
+    );
+
+
     try {
 
         const response =
-            await fetch(
-                '/api/generated-tests/replay',
-                {
-                    method: 'POST',
-
-                    headers: {
-                        'Content-Type':
-                            'application/json',
-                    },
-
-                    body:
-                        JSON.stringify({
-                            fileName,
-
-                            headed:
-                            appState
-                                .executionSettings
-                                .headed,
-
-                            browser:
-                            appState
-                                .executionSettings
-                                .browser,
-
-                            screenshot:
-                            appState
-                                .executionSettings
-                                .screenshot,
-
-                            video:
-                            appState
-                                .executionSettings
-                                .video,
-
-                            trace:
-                            appState
-                                .executionSettings
-                                .trace,
-                        }),
-                },
-            );
+            await resultPromise;
 
 
         const result =
@@ -11627,6 +12942,19 @@ dashboardMenu.addEventListener(
 
         navigateTo(
             'dashboard',
+        );
+    },
+);
+
+
+suitesMenu.addEventListener(
+    'click',
+    (event) => {
+
+        event.preventDefault();
+
+        navigateTo(
+            'suites',
         );
     },
 );

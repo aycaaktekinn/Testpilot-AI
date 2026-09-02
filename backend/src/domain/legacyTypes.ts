@@ -35,6 +35,27 @@ export interface LegacyTestResultResponse {
       trace?: string;
     };
   };
+  /**
+   * v3.10 — Create Test sayfasındaki "BDD" paneli için: bu run'ın (zaten maskelenmiş) adım
+   * kaydından, akıcı cümleler halinde (numaralı liste DEĞİL, klasik Given/When/And BDD kalıbı
+   * DEĞİL) otomatik üretilen düz metin özet — bkz. BddDescriptionGenerator dosya başı açıklaması.
+   * Üretimi best-effort'tur: LLM çağrısı başarısız olursa bu alan `undefined` kalır, panel boş
+   * açılır ve kullanıcı isterse elle doldurur. Kullanıcı paneli düzenleyip kaydettiğinde
+   * (PATCH /api/test-runs/:id/bdd-description) bu YANIT değil, `LegacyRunRecord.bddDescription`
+   * (kalıcı kayıt) güncellenir — buradaki alan SADECE run'ın anlık, ilk yanıtındaki başlangıç
+   * değeridir.
+   */
+  bddDescription?: string;
+  /**
+   * v3.10 — bkz. yukarıdaki `bddDescription` NOT'u. Frontend'in BDD panelindeki düzenlemeyi
+   * KAYDEDEBİLMESİ (PATCH /api/test-runs/:id/bdd-description) için bu run'ın kimliğini taşır —
+   * bu alan eklenmeden ÖNCE `LegacyTestResultResponse`'ta run'ın kendi ID'si HİÇ yoktu (`testFile`
+   * bir slug'tır, birincil anahtar DEĞİLDİR). `report.runId` ile birebir aynıdır, bkz.
+   * `LegacyRunRecord.id`. OPSİYONEL: bir run hiç BAŞLAMADAN (ör. istek doğrulama hatası) dönen
+   * `failedResultShape()` gibi erken-çıkış yanıtlarında yoktur — bu durumda frontend BDD panelini
+   * salt-okunur/kaydedilemez gösterir.
+   */
+  runId?: string;
 }
 
 /** GET /api/test-runs listesindeki tek bir kayıt. */
@@ -70,6 +91,15 @@ export interface LegacyRunRecord {
     video?: string;
     trace?: string;
   };
+  /**
+   * v3.10 — Create Test sayfasındaki "BDD" panelinin KALICI hali (bkz.
+   * LegacyTestResultResponse.bddDescription dosya başı açıklaması — orası SADECE run'ın anlık
+   * yanıtındaki başlangıç değeridir). Bu run bittiğinde otomatik üretilen özetle başlar; kullanıcı
+   * paneli düzenleyip kaydettiğinde (PATCH /api/test-runs/:id/bdd-description) BURASI güncellenir.
+   * `undefined` ise ya üretim başarısız oldu ya da bu alan eklenmeden ÖNCE üretilmiş eski bir
+   * kayıt — her iki durumda da frontend paneli boş/düzenlenebilir gösterir.
+   */
+  bddDescription?: string;
 }
 
 /**
@@ -170,6 +200,63 @@ export interface LegacyGeneratedTestMeta {
   /** v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması. OPSİYONEL: hiç zamanlanmamış bir
    * testte bu alan hiç yoktur (frontend'de "Zamanlanmadı" olarak gösterilir). */
   schedule?: GeneratedTestSchedule;
+  /**
+   * v3.11 — bkz. sohbet notu: "bu bdd kısmı generated test kısmında da göreceğimiz bir yer
+   * olsun". `BddStepView[]` (yukarıdaki `steps`, numaralı adım listesi) ile AYNI desen: bu KAYDI
+   * üreten run'ın (zaten maskelenmiş) adım kaydından akıcı cümleler halinde üretilen özet — bkz.
+   * BddDescriptionGenerator, RunReport.bddDescription. `steps` ile AYNI şekilde, PASS/FAIL fark
+   * etmeksizin ve SADECE bu kaydın oluşturulduğu run'a ait olarak doldurulur — `finalizeResult()`
+   * her run için (yeniden çalıştırma dahil) YENİ bir fileName/kayıt ürettiğinden (bkz.
+   * buildGeneratedFileName — her zaman o run'ın kendi runId'siyle benzersizdir) burada bir
+   * "üzerine yazma" durumu YOKTUR; her kayıt kendi run'ının özetini taşır. Üretimi best-effort'tur:
+   * LLM çağrısı başarısız olursa bu alan boş kalabilir.
+   */
+  bddDescription?: string;
+  /**
+   * v3.12 — bkz. sohbet notu: "tıklıyım burdan bdd ye yine create test panelinde bdd kısmına
+   * götürsün ordan edit yapabileyim". `bddDescription` ile AYNI kayda ait, bu kaydı üreten run'ın
+   * kimliği — `LegacyRunRecord.id` ile birebir aynıdır (bkz. `report.runId`). Generated Tests
+   * sayfasından "BDD" tıklanıp Create Test panelindeki BDD sekmesine gidildiğinde, oradaki Save
+   * butonunun hangi run kaydına (`PATCH /api/test-runs/:id/bdd-description`) yazacağını bilmesi
+   * İÇİN gerekli — bu alan olmadan panel metni GÖSTERİLEBİLİR ama KAYDEDİLEMEZ. OPSİYONEL: bu alan
+   * eklenmeden ÖNCE üretilmiş eski kayıtlarda bulunmaz — bu durumda frontend paneli salt-okunur
+   * (Save "run kimliği yok" der) gösterir, `bddDescription` ile AYNI eski-kayıt davranışı.
+   */
+  runId?: string;
+  /**
+   * v3.11 — bkz. LegacySuite dosya başı açıklaması. Bu testin AİT OLDUĞU suite'lerin id listesi —
+   * bir test AYNI ANDA birden fazla suite'e ait olabilir (bkz. sohbet notu: "Ayni test birden
+   * fazla suite'e eklenebilsin"). Bu dizi BOŞ DEĞİLKEN (en az bir suite'e eklenmişken) test ana
+   * Generated Tests listesinden GİZLENİR — SADECE ait olduğu suite(ler)in Suites sayfasındaki
+   * görünümünde yer alır (bkz. sohbet notu: "Sadece Suit'te görünür, Generated Tests'ten
+   * kaybolur"). OPSİYONEL/boş dizi: bu alan eklenmeden ÖNCE üretilmiş eski kayıtlarda yoktur —
+   * `undefined`/boş dizi "hiçbir suite'e ait değil, Generated Tests'te görünür" anlamına gelir.
+   */
+  suiteIds?: string[];
+}
+
+/**
+ * v3.11 — "Suites" paneli (bkz. sohbet notu: "Suit adında bir panel daha yapacağız... dashboardın
+ * altında yer alsın"). Bir suite SADECE bir isim ve kimlikten ibarettir — HANGİ testlerin bu
+ * suite'e ait olduğu, suite kaydının kendisinde DEĞİL, her `LegacyGeneratedTestMeta.suiteIds`
+ * alanında tutulur (bkz. o alanın dosya başı açıklaması) — bu sayede bir suite silindiğinde
+ * (bkz. LegacyTestService.deleteSuite) sadece bu tek kaydın silinip her testin `suiteIds`
+ * dizisinden bu id'nin çıkarılması yeterlidir, ayrı bir "üyelik listesi" senkron tutulmaz.
+ */
+export interface LegacySuite {
+  id: string;
+  name: string;
+  createdAt: string;
+  /**
+   * v3.11 — bkz. CallerContext / LegacyRunRecord.ownerId / isVisibleTo() dosya başı açıklamaları
+   * — AYNI kullanıcı-bazlı görünürlük kuralı burada da geçerlidir: ADMIN her suite'i görür/yönetir,
+   * MEMBER sadece kendi oluşturduğu suite'lere erişebilir. Bu, projedeki diğer TÜM legacy
+   * kayıtlarla (Test Runs, Generated Tests) TUTARLI kalmak için bilinçli bir seçimdir — "regresyon
+   * suite'i" kavramsal olarak takım-genelinde paylaşılabilir bir şey gibi görünse de, mevcut
+   * mimaride paylaşılan/takım-genelinde görünür bir kayıt türü YOKTUR; bu davranış istenmezse
+   * (ör. suite'lerin TÜM MEMBER'lara görünür olması) ayrıca belirtilmelidir.
+   */
+  ownerId?: number | null;
 }
 
 /**

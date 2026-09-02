@@ -10,6 +10,7 @@ import type {
   LegacyRunExistingOverrides,
   LegacyScheduleOnlyInput,
   LegacyRunRecord,
+  LegacySuite,
   LegacyTestResultResponse,
 } from '../../domain/legacyTypes.js';
 import { AgentLoop } from '../agent/AgentLoop.js';
@@ -19,6 +20,7 @@ import { synthesizeTestCode } from './codeSynthesizer.js';
 import { buildBddSteps } from './buildBddSteps.js';
 import { TestRunStore } from './TestRunStore.js';
 import { GeneratedTestStore, buildGeneratedFileName } from './GeneratedTestStore.js';
+import { SuiteStore } from './SuiteStore.js';
 import { applySchedule } from './TestScheduler.js';
 import { AllureReportService } from './AllureReportService.js';
 import { createScenario } from '../../db/scenarioStore.js';
@@ -55,6 +57,7 @@ function isVisibleTo(ownerId: number | null | undefined, caller: CallerContext):
 export class LegacyTestService {
   private readonly testRunStore = new TestRunStore();
   private readonly generatedTestStore = new GeneratedTestStore();
+  private readonly suiteStore = new SuiteStore();
   private readonly allureReportService = new AllureReportService();
   private activeLoop: AgentLoop | null = null;
   // Frontend'in POST /api/tests/generate-and-run bloklayan isteği HENÜZ sonuçlanmadan (test daha
@@ -262,6 +265,79 @@ export class LegacyTestService {
     return updated;
   }
 
+  /* =========================================================
+     SUITES — bkz. LegacySuite / LegacyGeneratedTestMeta.suiteIds dosya başı açıklamaları
+     (legacyTypes.ts). Frontend, GET /generated-tests'in döndürdüğü TAM listeyi `suiteIds`'e göre
+     KENDİSİ filtreler (bkz. sohbet notu: ana Generated Tests listesi vs. Suites sayfası) — burada
+     ayrıca "bu suite'in testleri" için özel bir liste endpoint'i YOKTUR, gerek yoktur.
+  ========================================================= */
+
+  async listSuites(caller: CallerContext): Promise<{ suites: LegacySuite[] }> {
+    const all = await this.suiteStore.list();
+    return { suites: all.filter((s) => isVisibleTo(s.ownerId, caller)) };
+  }
+
+  async createSuite(name: string, actingUserId?: number | null): Promise<LegacySuite> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new ValidationError('Suite adı boş olamaz.');
+    }
+    // v3.11 — bkz. isVisibleTo() dosya başı NOT'u: `ownerId` YOKSA (actingUserId undefined/null)
+    // suite "sahipsiz" sayılır ve SADECE admin görür — auth zaten TÜM bu router'ı koruduğundan
+    // (bkz. legacyTests.ts dosya başı NOT) bu pratikte sadece savunma amaçlıdır.
+    return this.suiteStore.create(trimmed, actingUserId ?? null);
+  }
+
+  /**
+   * Suite kaydını siler VE bu suite'e ait olan HER testin `suiteIds` dizisinden bu id'yi çıkarır
+   * (bkz. sohbet notu: "bir suite silinirse içindeki testler otomatik olarak Generated Tests
+   * listesine geri dönecek" — bu, testin suiteIds'i boşalınca kendiliğinden gerçekleşir, bkz.
+   * GeneratedTestStore.updateSuiteIds/removeSuiteIdFromAll dosya başı açıklamaları). Testlerin
+   * KENDİSİ (dosyaları/kayıtları) SİLİNMEZ — sadece bu suite'e olan bağları kaldırılır.
+   */
+  async deleteSuite(id: string, caller: CallerContext): Promise<{ id: string }> {
+    await this.assertSuiteAccess(id, caller);
+    await this.suiteStore.delete(id);
+
+    try {
+      const affected = await this.generatedTestStore.removeSuiteIdFromAll(id);
+      log.info({ suiteId: id, affected }, 'Silinen suite testlerin suiteIds listesinden temizlendi');
+    } catch (err) {
+      log.error({ err, suiteId: id }, 'Suite silindi ama testlerin suiteIds listesi temizlenemedi');
+    }
+
+    return { id };
+  }
+
+  /**
+   * v3.11 — "Add to Suite". Bir testi bir suite'e ekler (idempotent — zaten ekliyse no-op).
+   * Hem test hem suite üzerinde erişim kontrolü yapılır (ikisi de caller'a görünür olmalı).
+   */
+  async addTestToSuite(fileName: string, suiteId: string, caller: CallerContext): Promise<LegacyGeneratedTestMeta> {
+    await this.assertGeneratedTestAccess(fileName, caller);
+    await this.assertSuiteAccess(suiteId, caller);
+
+    const meta = await this.generatedTestStore.getMeta(fileName);
+    const current = new Set(meta.suiteIds ?? []);
+    current.add(suiteId);
+
+    return this.generatedTestStore.updateSuiteIds(fileName, [...current]);
+  }
+
+  /**
+   * Bir testi bir suite'ten çıkarır — testin `suiteIds` dizisi bu çıkarma SONUCUNDA boşalırsa
+   * (bkz. GeneratedTestStore.updateSuiteIds dosya başı NOT'u), test otomatik olarak ana Generated
+   * Tests listesinde TEKRAR görünür olur.
+   */
+  async removeTestFromSuite(fileName: string, suiteId: string, caller: CallerContext): Promise<LegacyGeneratedTestMeta> {
+    await this.assertGeneratedTestAccess(fileName, caller);
+
+    const meta = await this.generatedTestStore.getMeta(fileName);
+    const remaining = (meta.suiteIds ?? []).filter((id) => id !== suiteId);
+
+    return this.generatedTestStore.updateSuiteIds(fileName, remaining);
+  }
+
   /**
    * Sunucu başlangıcında (bkz. index.ts) BİR KEZ çağrılır — disk üzerindeki TÜM generated
    * testleri tarayıp `enabled: true` zamanlaması olan her biri için bir cron job kurar. Süreç
@@ -369,6 +445,15 @@ export class LegacyTestService {
     const meta = await this.generatedTestStore.getMeta(fileName);
     if (!isVisibleTo(meta.ownerId, caller)) {
       throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
+    }
+  }
+
+  /** bkz. assertRunAccess() dosya başı NOT'u — AYNI mantık, suite'ler için. */
+  private async assertSuiteAccess(id: string, caller: CallerContext): Promise<void> {
+    if (caller.role === 'ADMIN') return;
+    const suite = await this.suiteStore.getById(id);
+    if (!isVisibleTo(suite.ownerId, caller)) {
+      throw new NotFoundError(`Suite bulunamadı: ${id}`);
     }
   }
 
@@ -737,6 +822,10 @@ export class LegacyTestService {
           // BDD/step bazlı görüntüleme için — replaySteps'in aksine PASS/FAIL fark etmeksizin
           // doldurulur (bkz. BddStepView, buildBddSteps.ts dosya başı açıklaması).
           steps: bddSteps,
+          // v3.11 — bkz. LegacyGeneratedTestMeta.bddDescription dosya başı açıklaması.
+          bddDescription: report.bddDescription,
+          // v3.12 — bkz. LegacyGeneratedTestMeta.runId dosya başı açıklaması.
+          runId: report.runId,
           // v2.4 — bkz. LegacyGeneratedTestMeta.displayName dosya başı açıklaması. Kullanıcı isim
           // vermediyse `undefined` kalır — frontend bu durumda otomatik üretilen `fileName`'i
           // gösterir (davranış eskisiyle birebir aynı, bkz. renderGeneratedTests).
@@ -813,6 +902,10 @@ export class LegacyTestService {
       // v3.1 — bkz. LegacyRunRecord.ownerId / isVisibleTo() dosya başı açıklamaları.
       ownerId: actingUserId ?? null,
       artifacts: hasArtifacts ? artifactUrls : undefined,
+      // v3.10 — bkz. LegacyRunRecord.bddDescription dosya başı açıklaması. `report.bddDescription`
+      // AgentLoop.run() içinde (bkz. AgentLoop.finishRun) best-effort olarak doldurulur; üretim
+      // başarısız olduysa `undefined` kalır, panel boş açılır.
+      bddDescription: report.bddDescription,
     };
 
     try {
@@ -836,7 +929,35 @@ export class LegacyTestService {
         exitCode,
         artifacts: artifactUrls,
       },
+      // v3.10 — bkz. LegacyTestResultResponse.bddDescription/runId dosya başı açıklamaları.
+      bddDescription: report.bddDescription,
+      runId: report.runId,
     };
+  }
+
+  /**
+   * v3.10 — "BDD" paneli: kullanıcının panelde yaptığı düzenlemeyi kaydeder. `deleteTestRun` ile
+   * AYNI erişim kuralı (bkz. assertRunAccess dosya başı NOT'u) — ADMIN her koşumu düzenler, MEMBER
+   * sadece kendi `ownerId`'siyle eşleşen koşumları.
+   *
+   * v3.12 — bkz. sohbet notu: "tıklıyım burdan bdd ye yine create test panelinde bdd kısmına
+   * götürsün ordan edit yapabileyim". Asıl/kalıcı kayıt (testRunStore) güncellendikten SONRA,
+   * eşleşen bir Generated Tests kaydı varsa (bkz. GeneratedTestStore.updateBddDescription dosya
+   * başı NOT'u) onun görüntüleme ÖNBELLEĞİ de senkronlanır — Generated Tests/Suites sayfaları bu
+   * düzenlemeyi hemen yansıtsın diye. Best-effort: senkronizasyon başarısız olursa/kayıt yoksa
+   * SADECE loglanır, asıl kayıt zaten başarıyla güncellendiği için çağırana hata DÖNMEZ.
+   */
+  async updateBddDescription(id: string, bddDescription: string, caller: CallerContext): Promise<LegacyRunRecord> {
+    await this.assertRunAccess(id, caller);
+    const updated = await this.testRunStore.updateBddDescription(id, bddDescription);
+
+    try {
+      await this.generatedTestStore.updateBddDescription(updated.testFile, bddDescription);
+    } catch (err) {
+      log.error({ err, runId: id, fileName: updated.testFile }, 'Generated test BDD önbelleği senkronlanamadı');
+    }
+
+    return updated;
   }
 }
 

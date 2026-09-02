@@ -74,6 +74,18 @@ export class RunLogger {
     await this.persist(this.finalReport);
   }
 
+  /**
+   * v3.10 — "BDD" paneli için: run bitiminde otomatik üretilen özeti YA DA kullanıcının panelde
+   * sonradan yaptığı düzenlemeyi kalıcı hale getirir. `attachArtifacts` ile aynı desen:
+   * `finalize()` henüz çağrılmadıysa (rapor henüz yoksa) sessizce no-op'tur.
+   */
+  async attachBddDescription(text: string): Promise<void> {
+    if (!this.finalReport) return;
+
+    this.finalReport.bddDescription = text;
+    await this.persist(this.finalReport);
+  }
+
   private async persist(report: RunReport): Promise<void> {
     try {
       await mkdir(this.runDir, { recursive: true });

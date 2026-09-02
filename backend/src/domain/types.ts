@@ -257,6 +257,16 @@ export interface RunReport {
    * SADECE run'ın Grid ile mi çalıştığının/hangi node'a düştüğünün kaydı olarak tutulur.
    */
   seleniumGridLiveViewUrl?: string;
+  /**
+   * v3.10 — "BDD" sekmesi için: run bittikten hemen sonra, run'ın (zaten maskelenmiş) adım
+   * kaydından LLM tarafından üretilen, akıcı cümleler halinde (numaralı liste DEĞİL, klasik
+   * Given/When/And BDD kalıbı DEĞİL) düz metin özet. Kullanıcı bunu Create Test sayfasındaki
+   * "BDD" panelinde serbestçe DÜZENLEYEBİLİR — bu yüzden burası hem otomatik üretilen İLK hali
+   * hem de kullanıcının sonradan kaydettiği düzenlenmiş hali tutar (ayrım yapılmaz, en son
+   * kaydedilen değer neyse odur). Üretimi best-effort'tur: LLM çağrısı başarısız olursa bu alan
+   * `undefined` kalır, run'ın PASSED/FAILED durumunu ETKİLEMEZ.
+   */
+  bddDescription?: string;
 }
 
 /** Çalışma zamanında runId -> canlı durum için kullanılan hafif özet. */

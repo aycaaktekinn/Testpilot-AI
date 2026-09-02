@@ -29,3 +29,14 @@ export const testRunRequestSchema = z.object({
 });
 
 export type TestRunRequestInput = z.infer<typeof testRunRequestSchema>;
+
+/**
+ * v3.10 — "BDD" paneli: kullanıcının, otomatik üretilen (veya daha önce kendisinin kaydettiği)
+ * özeti serbestçe düzenleyip kaydetmesi için. Boş metin de kabul edilir (kullanıcı paneli
+ * temizleyebilir) — sadece üst sınır (8000, testRunRequestSchema.scenario ile tutarlı) var.
+ */
+export const bddDescriptionUpdateSchema = z.object({
+  bddDescription: z.string().max(8000),
+});
+
+export type BddDescriptionUpdateInput = z.infer<typeof bddDescriptionUpdateSchema>;

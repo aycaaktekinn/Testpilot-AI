@@ -20,6 +20,7 @@ import { SecretsVault } from '../secrets/SecretsVault.js';
 import { RunLogger } from '../logging/RunLogger.js';
 import { LoopGuard } from './LoopGuard.js';
 import type { LlmProvider } from '../llm/LlmProvider.js';
+import { generateBddDescription } from '../llm/BddDescriptionGenerator.js';
 import { buildSystemMessage, buildUserMessage, type HistoryEntry } from '../llm/PromptBuilder.js';
 import { parseAgentDecision } from '../llm/ResponseParser.js';
 import { env } from '../../config/env.js';
@@ -133,6 +134,22 @@ export class AgentLoop {
       // sayede bir replay'in kendisi de PASSED biterse, TEKRAR replay edilebilir kalır).
       const replayStepsForReport = status === 'passed' ? (isReplay ? input.replaySteps : collectedReplaySteps) : undefined;
       const report = await runLogger.finalize(status, llmCallCount, failureReason, replayStepsForReport, gridLiveViewUrl);
+
+      // v3.10 — "BDD" paneli: run raporu diske yazıldıktan HEMEN SONRA, run'ın kendi (zaten
+      // maskelenmiş) adım kaydından ayrı, best-effort bir LLM çağrısıyla akıcı cümleler halinde
+      // bir özet üretilip rapora eklenir (bkz. BddDescriptionGenerator dosya başı açıklaması).
+      // Bu adım run'ın PASSED/FAILED/ERROR sonucunu HİÇBİR ŞEKİLDE etkilemez — üretim başarısız
+      // olursa BDD paneli boş kalır, kullanıcı isterse elle doldurur.
+      try {
+        const bddDescription = await generateBddDescription(this.llm, runLogger.getSteps(), scenario, status);
+        if (bddDescription) {
+          await runLogger.attachBddDescription(bddDescription);
+          report.bddDescription = bddDescription;
+        }
+      } catch (err) {
+        log.warn({ err, runId }, 'BDD açıklaması eklenemedi (best-effort, run sonucunu etkilemez)');
+      }
+
       this.emit({ type: 'run_finished', runId, status, report });
       return report;
     };

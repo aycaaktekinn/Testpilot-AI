@@ -98,6 +98,24 @@ export class TestRunStore {
     return toDelete.length;
   }
 
+  /**
+   * v3.10 — "BDD" paneli: kullanıcının panelde yaptığı düzenlemeyi kalıcı hale getirir. Run
+   * bitiminde otomatik üretilen İLK hali zaten `append()` ile birlikte yazılmıştır — bu metod
+   * SADECE sonradan gelen bir düzenlemeyi (ya da kullanıcının paneli temizlemesini) kaydeder.
+   */
+  async updateBddDescription(id: string, bddDescription: string): Promise<LegacyRunRecord> {
+    const records = await this.list();
+    const record = records.find((r) => r.id === id);
+
+    if (!record) {
+      throw new NotFoundError(`Koşum bulunamadı: ${id}`);
+    }
+
+    record.bddDescription = bddDescription;
+    await this.persist(records);
+    return record;
+  }
+
   private async deleteRunFiles(id: string): Promise<void> {
     await Promise.all([
       rm(path.join(path.resolve(env.RUNS_DIR), `${id}.json`), { force: true }).catch((err) => {

@@ -77,6 +77,21 @@ const renameSchema = z.object({
   displayName: z.string().max(120, 'İsim en fazla 120 karakter olabilir'),
 });
 
+// v3.10 — bkz. LegacyRunRecord.bddDescription dosya başı açıklaması. Boş string BİLİNÇLİ olarak
+// izin verilir (kullanıcı paneli temizleyebilir) — sadece senaryo metniyle tutarlı bir üst sınır var.
+const bddDescriptionSchema = z.object({
+  bddDescription: z.string().max(8000),
+});
+
+// v3.11 — bkz. LegacySuite dosya başı açıklaması.
+const createSuiteSchema = z.object({
+  name: z.string().min(1, 'Suite adı boş olamaz').max(120, 'Suite adı en fazla 120 karakter olabilir'),
+});
+
+const addToSuiteSchema = z.object({
+  suiteId: z.string().min(1),
+});
+
 // v3.2 — bkz. GeneratedTestSchedule dosya başı açıklaması (legacyTypes.ts). `days` en az 1 öğe
 // içermelidir — 0 öğeli bir zamanlama hiçbir zaman tetiklenmez, bu kullanıcı hatasını erken
 // (kayıt anında, sessizce hiç çalışmayan bir cron job kurmak yerine) yakalamak içindir.
@@ -180,6 +195,71 @@ legacyTestsRouter.delete('/test-runs/:id', async (req, res) => {
   }
 });
 
+// v3.10 — "BDD" paneli: otomatik üretilen özeti YA DA kullanıcının panelde yaptığı düzenlemeyi
+// kaydeder. `/generated-tests/:fileName/name` ile AYNI desen — bu YENİ bir yüzeydir, eski
+// frontend'in "her zaman 200" sözleşmesine bağlı değildir, normal HTTP durum kodları kullanılır.
+legacyTestsRouter.patch('/test-runs/:id/bdd-description', async (req, res) => {
+  const parsed = bddDescriptionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const result = await legacyTestService.updateBddDescription(
+      req.params.id,
+      parsed.data.bddDescription,
+      getCaller(req as RequestWithAuthUser),
+    );
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'test-runs/:id/bdd-description başarısız');
+    res.status(404).json({ message: errorMessage(err, 'BDD açıklaması kaydedilemedi.') });
+  }
+});
+
+/* =========================================================
+   SUITES — bkz. LegacySuite dosya başı açıklaması (legacyTypes.ts). Bu YENİ bir yüzeydir, eski
+   frontend'in "her zaman 200" sözleşmesine bağlı değildir — normal HTTP durum kodları kullanılır.
+========================================================= */
+
+legacyTestsRouter.get('/suites', async (req, res) => {
+  try {
+    const result = await legacyTestService.listSuites(getCaller(req as RequestWithAuthUser));
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'suites listelenemedi');
+    res.status(500).json({ message: 'Suite listesi alınamadı.', suites: [] });
+  }
+});
+
+legacyTestsRouter.post('/suites', async (req, res) => {
+  const parsed = createSuiteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    const result = await legacyTestService.createSuite(parsed.data.name, actingUserId);
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'suite oluşturulamadı');
+    res.status(500).json({ message: errorMessage(err, 'Suite oluşturulamadı.') });
+  }
+});
+
+legacyTestsRouter.delete('/suites/:id', async (req, res) => {
+  try {
+    const result = await legacyTestService.deleteSuite(req.params.id, getCaller(req as RequestWithAuthUser));
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'suite silinemedi');
+    res.status(404).json({ message: errorMessage(err, 'Suite silinemedi.') });
+  }
+});
+
 legacyTestsRouter.get('/generated-tests', async (req, res) => {
   try {
     const result = await legacyTestService.listGeneratedTests(getCaller(req as RequestWithAuthUser));
@@ -248,6 +328,43 @@ legacyTestsRouter.patch('/generated-tests/:fileName/name', async (req, res) => {
   } catch (err) {
     log.error({ err }, 'generated-tests/:fileName/name başarısız');
     res.status(404).json({ message: errorMessage(err, 'Test yeniden adlandırılamadı.') });
+  }
+});
+
+// v3.11 — "Add to Suite". bkz. LegacyGeneratedTestMeta.suiteIds dosya başı açıklaması.
+legacyTestsRouter.post('/generated-tests/:fileName/suites', async (req, res) => {
+  const parsed = addToSuiteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: formatZodError(parsed.error) });
+    return;
+  }
+
+  try {
+    const result = await legacyTestService.addTestToSuite(
+      req.params.fileName,
+      parsed.data.suiteId,
+      getCaller(req as RequestWithAuthUser),
+    );
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/:fileName/suites (POST) başarısız');
+    res.status(404).json({ message: errorMessage(err, 'Test suite\'e eklenemedi.') });
+  }
+});
+
+// Testi bir suite'ten çıkarır — bkz. LegacyTestService.removeTestFromSuite dosya başı NOT'u
+// (suiteIds boşalırsa test ana Generated Tests listesinde tekrar görünür olur).
+legacyTestsRouter.delete('/generated-tests/:fileName/suites/:suiteId', async (req, res) => {
+  try {
+    const result = await legacyTestService.removeTestFromSuite(
+      req.params.fileName,
+      req.params.suiteId,
+      getCaller(req as RequestWithAuthUser),
+    );
+    res.status(200).json(result);
+  } catch (err) {
+    log.error({ err }, 'generated-tests/:fileName/suites/:suiteId (DELETE) başarısız');
+    res.status(404).json({ message: errorMessage(err, 'Test suite\'ten çıkarılamadı.') });
   }
 });
 

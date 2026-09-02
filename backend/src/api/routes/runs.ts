@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { testRunRequestSchema } from '../../domain/requestSchema.js';
+import { testRunRequestSchema, bddDescriptionUpdateSchema } from '../../domain/requestSchema.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { runManager } from '../runManager.js';
 import type { RequestWithAuthUser } from '../middleware/requireAdmin.js';
@@ -50,4 +50,15 @@ runsRouter.post('/runs/:id/cancel', (req, res) => {
   assertRunAccess(req as RequestWithAuthUser, summary.ownerId, req.params.id);
   const cancelled = runManager.cancelRun(req.params.id);
   res.json(cancelled);
+});
+
+/**
+ * v3.10 — "BDD" paneli: otomatik üretilen özeti YA DA kullanıcının panelde yaptığı düzenlemeyi
+ * kaydeder. Run tamamlanmış olmalıdır (bkz. RunManager.updateBddDescription dosya başı NOT'u).
+ */
+runsRouter.patch('/runs/:id/bdd-description', validateBody(bddDescriptionUpdateSchema), async (req, res) => {
+  const summary = runManager.getSummary(req.params.id);
+  assertRunAccess(req as RequestWithAuthUser, summary.ownerId, req.params.id);
+  const report = await runManager.updateBddDescription(req.params.id, req.body.bddDescription);
+  res.json(report);
 });
