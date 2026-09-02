@@ -47,9 +47,16 @@ backend/allure-results/
 # v2 — Docker bind-mount verisi (Milvus etcd/minio/standalone). Kaynak kod DEĞİL, çalışma zamanında
 # üretilen/büyüyen binary veri (bkz. docker-compose.milvus.yml volumes tanımları) — repoya asla
 # commit edilmemeli.
-ymlFiles/milvus/volumes/backend/.env_qwen
+# NOT — başında "/" OLMAYAN "volumes/" deseni git'te HER derinlikte eşleşir (bkz. gitignore
+# dokümantasyonu) — yani hem kök dizindeki eski "volumes/" hem de vakıfbank'ın taşıdığı
+# "ymlFiles/milvus/volumes/" konumu TEK satırla kapsanıyor, ayrı ayrı yazmaya gerek yok.
+volumes/
+volumes_local_backup/
 *.meta
-/ymlFiles/milvus/volumes_local_backup/
-ymlFiles/milvus/volumes/
-/ymlFiles/milvus/volumes/
-/volumes/
+
+# v3.5 — GÜVENLİK: bu satır ÖNCEDEN "volumes/backend/.env_qwen" (MacBook Air'de) ve
+# "ymlFiles/milvus/volumes/backend/.env_qwen" (vakıfbank PC'de) olarak İKİ AYRI YERDE de
+# YANLIŞLIKLA yukarıdaki volumes/ satırıyla BİRLEŞMİŞTİ (tek bir geçersiz yol haline gelmişti) —
+# bu yüzden secret/API anahtarı içeren bu dosya GERÇEKTE ignore edilmiyor olabilirdi (bkz. sohbet
+# notu: "asla backend/.env_qwen'i commit etme"). Artık AYRI, doğru bir satır olarak düzeltildi.
+backend/.env_qwen
