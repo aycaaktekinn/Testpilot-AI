@@ -51,6 +51,7 @@ export class ActionExecutor {
             (timeoutMs, force) => locator.click({ timeout: timeoutMs, force }),
             options.defaultActionTimeoutMs,
             `Tıklandı: ${decision.targetRef}`,
+            options.stepTimeoutMs,
           );
         }
 
@@ -63,6 +64,7 @@ export class ActionExecutor {
             (timeoutMs, force) => locator.dblclick({ timeout: timeoutMs, force }),
             options.defaultActionTimeoutMs,
             `Çift tıklandı: ${decision.targetRef}`,
+            options.stepTimeoutMs,
           );
         }
 
@@ -154,6 +156,7 @@ export class ActionExecutor {
             (timeoutMs, force) => locator.check({ timeout: timeoutMs, force }),
             options.defaultActionTimeoutMs,
             `İşaretlendi: ${decision.targetRef}`,
+            options.stepTimeoutMs,
           );
         }
 
@@ -166,6 +169,7 @@ export class ActionExecutor {
             (timeoutMs, force) => locator.uncheck({ timeout: timeoutMs, force }),
             options.defaultActionTimeoutMs,
             `İşaret kaldırıldı: ${decision.targetRef}`,
+            options.stepTimeoutMs,
           );
         }
 
@@ -178,6 +182,7 @@ export class ActionExecutor {
             (timeoutMs, force) => locator.hover({ timeout: timeoutMs, force }),
             options.defaultActionTimeoutMs,
             `Üzerine gelindi: ${decision.targetRef}`,
+            options.stepTimeoutMs,
           );
         }
 
@@ -304,12 +309,32 @@ export class ActionExecutor {
    * denenmediyse) - COK KISA bir butceyle (FORCE_FALLBACK_TIMEOUT_MS) son bir kez force:true ile
    * denenir. FARKLI bir elemente tiklamaz; InterceptingOverlayHandler zaten hedefin dogru konumda
    * oldugunu dogrulamisti. Diger hata turlerinde (element gercekten yok, navigasyon hatasi vb.) bu
-   * fallback DEVREYE GIRMEZ. Zaman butcesi: en kotu senaryoya en fazla ~1500ms ekler, 15000ms'lik dis
-   * limitin altinda guvenli bir marj birakir (bkz. yukaridaki RETRY_TIMEOUT_CAP_MS notu).
+   * fallback DEVREYE GIRMEZ.
+   *
+   * v3.7 — BUG FİX (bkz. sohbet notu: hepsiburada "ipad air" senaryosu — "Önerilen sıralama"
+   * dropdown'una tıklama adımında, run HİÇBİR adım/hata loglanmadan tamamen ÇÖKTÜ). Kök sebep:
+   * yukarıdaki zaman bütçesi hesabı (RETRY_TIMEOUT_CAP_MS + FORCE_FALLBACK_TIMEOUT_MS ile toplam
+   * ~13500ms), `options.defaultActionTimeoutMs`'in env.ts'teki VARSAYILANI (10000ms) ve
+   * `options.stepTimeoutMs`'in VARSAYILANI (15000ms) baz alınarak hesaplanmıştı. Ama Agent Settings
+   * ekranından (bkz. AgentSettingsStore) bu değerler kullanıcı tarafından DEĞİŞTİRİLEBİLİR — canlıda
+   * defaultActionTimeoutMs=20000ms, stepTimeoutMs=25000ms olarak ayarlanmıştı. Bu durumda TEK BAŞINA
+   * ilk deneme (20000ms) + kurtarma denemeleri (~3000+1500ms) toplamı stepTimeoutMs'e (25000ms) EŞİT
+   * hale geldi — yani ActionExecutor kendi zarif fail() dönüşünü hiç üretemeden, AgentLoop'un adım
+   * watchdog'u (AgentLoop.ts, "Adım zaman aşımına uğradı") devreye girip TÜM RUN'ı, bu adım hiç
+   * kayda geçmeden 'error' durumuna düşürdü. Çözüm: kurtarma denemelerine (dismissConsentBanners +
+   * tryRecoverFromIntercept + retry + force fallback) geçmeden önce, `stepTimeoutMs`'e göre GERÇEKTEN
+   * ne kadar bütçe kaldığı ölçülür — yeterli bütçe yoksa kurtarma HİÇ denenmez, orijinal hata (normal,
+   * loglanan bir adım başarısızlığı olarak) hemen döndürülür. Böylece kullanıcı Agent Settings'ten
+   * hangi değerleri seçerse seçsin, ActionExecutor kendi iç mantığıyla AgentLoop'un dış watchdog'unu
+   * asla aşmaz — en kötü ihtimalle "kurtarma denenemedi, adım normal şekilde başarısız oldu" olur,
+   * asla "run hiç loglanmadan çöktü" olmaz.
    */
   private static readonly RETRY_TIMEOUT_CAP_MS = 3000;
   private static readonly FORCE_FALLBACK_TIMEOUT_MS = 1500;
   private static readonly INTERCEPT_ERROR_PATTERN = /intercepts pointer events/i;
+  /** Kurtarma zincirinin TAMAMI (banner-dismiss + intercept-probe + retry + force fallback) için
+   * gereken asgari kalan adım bütçesi — bundan azı kaldıysa kurtarma hiç denenmez (bkz. v3.7 notu). */
+  private static readonly MIN_RECOVERY_BUDGET_MS = 2500;
 
   private async runInteractionWithOverlayRecovery(
     page: Page,
@@ -317,7 +342,9 @@ export class ActionExecutor {
     attempt: (timeoutMs: number, force?: boolean) => Promise<void>,
     timeoutMs: number,
     successMessage: string,
+    stepTimeoutMs: number,
   ): Promise<ActionResult> {
+    const recoveryDeadline = Date.now() + stepTimeoutMs;
     try {
       await attempt(timeoutMs);
       return ok(successMessage);
@@ -327,13 +354,29 @@ export class ActionExecutor {
         return classified;
       }
 
+      // v3.7 — bkz. yukarıdaki dosya-içi BUG FİX notu: kalan bütçe kurtarma zinciri için yetersizse
+      // (ör. kullanıcının Agent Settings'ten seçtiği defaultActionTimeoutMs, stepTimeoutMs'e çok
+      // yakınsa) kurtarmayı hiç denemeden çık — AgentLoop'un adım watchdog'unu tetikleyip TÜM RUN'ı
+      // hiçbir adım loglanmadan çökertmektense, bu adımı NORMAL, loglanan bir başarısızlık yap.
+      const remainingBudgetMs = recoveryDeadline - Date.now();
+      if (remainingBudgetMs < ActionExecutor.MIN_RECOVERY_BUDGET_MS) {
+        log.warn(
+          { remainingBudgetMs, stepTimeoutMs },
+          'Kurtarma denemesi için adım bütçesi yetersiz kaldı, orijinal hata (normal adım hatası olarak) döndürülüyor',
+        );
+        return classified;
+      }
+
       await dismissConsentBanners(page);
       const recovery = await tryRecoverFromIntercept(page, locator);
       if (!recovery.attempted) return classified;
 
       const alreadyForced = recovery.persistentBlocker;
       try {
-        const retryTimeoutMs = Math.min(timeoutMs, ActionExecutor.RETRY_TIMEOUT_CAP_MS);
+        // Retry'ın kendi timeout'u hem sabit tavanı (RETRY_TIMEOUT_CAP_MS) hem de GERÇEKTEN kalan
+        // adım bütçesini (force fallback'e de pay bırakacak şekilde) aşamaz.
+        const budgetForRetry = recoveryDeadline - Date.now() - ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS;
+        const retryTimeoutMs = Math.max(500, Math.min(timeoutMs, ActionExecutor.RETRY_TIMEOUT_CAP_MS, budgetForRetry));
         // `|| undefined`: force'u SADECE gerçekten gerekliyken (persistentBlocker) açıkça true
         // gönderiyoruz; aksi halde undefined bırakıyoruz ki Playwright'ın kendi varsayılanıyla
         // (force:false) davransın — "force:false" açıkça geçmekle "hiç geçmemek" işlevsel olarak
@@ -347,10 +390,12 @@ export class ActionExecutor {
       } catch (retryErr) {
         const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
         const isRepeatedIntercept = ActionExecutor.INTERCEPT_ERROR_PATTERN.test(retryMessage);
+        const remainingForForceFallback = recoveryDeadline - Date.now();
 
-        if (!alreadyForced && isRepeatedIntercept) {
+        if (!alreadyForced && isRepeatedIntercept && remainingForForceFallback >= 500) {
           try {
-            await attempt(ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS, true);
+            const forceFallbackTimeoutMs = Math.min(ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS, remainingForForceFallback);
+            await attempt(forceFallbackTimeoutMs, true);
             log.debug('Tekrarlayan engelleyici sonrasi son care force:true denemesi basarili oldu');
             return ok(successMessage);
           } catch (forceErr) {
