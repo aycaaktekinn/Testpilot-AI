@@ -328,6 +328,32 @@ export class ActionExecutor {
    * hangi değerleri seçerse seçsin, ActionExecutor kendi iç mantığıyla AgentLoop'un dış watchdog'unu
    * asla aşmaz — en kötü ihtimalle "kurtarma denenemedi, adım normal şekilde başarısız oldu" olur,
    * asla "run hiç loglanmadan çöktü" olmaz.
+   *
+   * v3.8 — İKİNCİ TUR BUG FİX (bkz. sohbet notu: v3.7 fix'i uygulandıktan SONRA bile aynı senaryo
+   * yine 5 adım sonunda hiçbir 6. adım kaydı olmadan çöktü). Kök sebep: v3.7'nin bütçe kontrolü
+   * sadece retry/force-fallback'in KENDİ süresini kısıtlıyordu — ama dismissConsentBanners() ve
+   * tryRecoverFromIntercept() (bkz. o dosyaların içi: isVisible(200ms)/click(1500ms) gibi birden
+   * çok kendi-içi zaman aşımı içerebiliyorlar) DIŞARIDAN hiçbir zaman aşımı kabul etmiyor — canlıda
+   * bu ikisi TEK BAŞINA saniyeler sürebiliyor. v3.7'deki `Math.max(500, ...)` tabanı da kalan bütçe
+   * sıfırın altına düşmüş olsa bile retry'ı yine de en az 500ms ile deniyordu, yani ActionExecutor'ın
+   * TOPLAM süresi yine stepTimeoutMs'i aşabiliyordu. Çözüm: banner-dismiss + intercept-probe + retry +
+   * force-fallback zincirinin TAMAMI, bu yardımcıların kendi içi ne kadar sürerse sürsün, GERÇEK kalan
+   * bütçeye eşit bir `Promise.race` zaman aşımıyla dışarıdan sarmalanıyor — böylece kurtarma zinciri
+   * hiçbir koşulda `stepTimeoutMs - SAFETY_MARGIN_MS`'i aşamaz; aşma riski varsa kurtarma yarıda
+   * bırakılır (arka planda çalışmaya devam edebilir ama sonucu yok sayılır — bkz. AgentLoop.
+   * withTimeout'taki aynı `.catch(() => undefined)` deseni) ve orijinal hata normal, loglanan bir adım
+   * hatası olarak döner.
+   *
+   * NOT (v3.8 taslağında denenip GERİ ALINDI): ilk denemenin (`attempt(timeoutMs)`) kendisini de
+   * kalan bütçeye göre tavanlamak düşünüldü, ANCAK bu (a) mevcut, kasıtlı bir test sözleşmesini
+   * ("retry denemesi... ORİJİNAL süreyi DEĞİL, kısaltılmış bir üst sınırı kullanır" — yani SADECE
+   * retry kısaltılır, ilk deneme LLM'in/kullanıcının seçtiği tam süreyi kullanmaya devam eder) bozar,
+   * (b) gerçek çözüm için gereksizdir: ilk deneme zaten AgentLoop.withTimeout()'un KENDİ dış
+   * Promise.race'i tarafından sarmalı durumda — ilk deneme tek başına stepTimeoutMs'i açıkça aşarsa
+   * (ör. defaultActionTimeoutMs stepTimeoutMs'e çok yakın/onu aşan patolojik bir Agent Settings
+   * yapılandırmasıysa) zaten AgentLoop'un watchdog'u devreye girer; bu ActionExecutor'ın içinde ayrıca
+   * önlenecek bir durum değil. Asıl kırılgan nokta HER ZAMAN kurtarma zinciriydi (aşağıya bkz.), o
+   * yüzden sadece o dışarıdan bütçeleniyor.
    */
   private static readonly RETRY_TIMEOUT_CAP_MS = 3000;
   private static readonly FORCE_FALLBACK_TIMEOUT_MS = 1500;
@@ -335,6 +361,13 @@ export class ActionExecutor {
   /** Kurtarma zincirinin TAMAMI (banner-dismiss + intercept-probe + retry + force fallback) için
    * gereken asgari kalan adım bütçesi — bundan azı kaldıysa kurtarma hiç denenmez (bkz. v3.7 notu). */
   private static readonly MIN_RECOVERY_BUDGET_MS = 2500;
+  /** AgentLoop'un kendi `stepTimeoutMs` watchdog'undan HER ZAMAN belirgin bir pay önce dönmek için
+   * ayrılan güvenlik marjı (bkz. v3.8 notu) — sınırda (milisaniyeler kala) dönmeye çalışmak, JS event
+   * loop gecikmeleri yüzünden yine de dış watchdog'un kazanmasına yol açabilir. */
+  private static readonly SAFETY_MARGIN_MS = 800;
+  /** attemptOverlayRecovery() zinciri bu bütçe içinde tamamlanamadığında race'i "kaybettiğini"
+   * işaretlemek için kullanılan iç sentinel değer — gerçek bir ActionResult ile asla karışmaz. */
+  private static readonly RECOVERY_BUDGET_EXCEEDED = Symbol('recovery_budget_exceeded');
 
   private async runInteractionWithOverlayRecovery(
     page: Page,
@@ -344,7 +377,9 @@ export class ActionExecutor {
     successMessage: string,
     stepTimeoutMs: number,
   ): Promise<ActionResult> {
-    const recoveryDeadline = Date.now() + stepTimeoutMs;
+    const recoveryDeadline = Date.now() + stepTimeoutMs - ActionExecutor.SAFETY_MARGIN_MS;
+    // İlk deneme kasıtlı olarak orijinal `timeoutMs`'in TAMAMINI kullanır (bkz. yukarıdaki "v3.8
+    // taslağında denenip GERİ ALINDI" notu) — sadece kurtarma zinciri dışarıdan bütçelenir.
     try {
       await attempt(timeoutMs);
       return ok(successMessage);
@@ -367,44 +402,70 @@ export class ActionExecutor {
         return classified;
       }
 
-      await dismissConsentBanners(page);
-      const recovery = await tryRecoverFromIntercept(page, locator);
-      if (!recovery.attempted) return classified;
+      // v3.8 — bkz. dosya-içi BUG FİX notu: banner-dismiss + intercept-probe + retry + force-fallback
+      // zincirinin TAMAMI, kendi içindeki yardımcıların (dismissConsentBanners/tryRecoverFromIntercept)
+      // ne kadar sürdüğünden BAĞIMSIZ olarak, GERÇEK kalan bütçeyle dışarıdan sınırlanıyor.
+      const runRecovery = async (): Promise<ActionResult> => {
+        await dismissConsentBanners(page);
+        const recovery = await tryRecoverFromIntercept(page, locator);
+        if (!recovery.attempted) return classified;
 
-      const alreadyForced = recovery.persistentBlocker;
-      try {
-        // Retry'ın kendi timeout'u hem sabit tavanı (RETRY_TIMEOUT_CAP_MS) hem de GERÇEKTEN kalan
-        // adım bütçesini (force fallback'e de pay bırakacak şekilde) aşamaz.
-        const budgetForRetry = recoveryDeadline - Date.now() - ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS;
-        const retryTimeoutMs = Math.max(500, Math.min(timeoutMs, ActionExecutor.RETRY_TIMEOUT_CAP_MS, budgetForRetry));
-        // `|| undefined`: force'u SADECE gerçekten gerekliyken (persistentBlocker) açıkça true
-        // gönderiyoruz; aksi halde undefined bırakıyoruz ki Playwright'ın kendi varsayılanıyla
-        // (force:false) davransın — "force:false" açıkça geçmekle "hiç geçmemek" işlevsel olarak
-        // aynı olsa da, ikincisi test/log çıktısında daha net (gereksiz bir "force" alanı yok).
-        await attempt(retryTimeoutMs, alreadyForced || undefined);
-        log.debug(
-          { forced: alreadyForced },
-          'Engelleyici öğe kurtarma denemesi sonrası aksiyon başarılı oldu',
-        );
-        return ok(successMessage);
-      } catch (retryErr) {
-        const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        const isRepeatedIntercept = ActionExecutor.INTERCEPT_ERROR_PATTERN.test(retryMessage);
-        const remainingForForceFallback = recoveryDeadline - Date.now();
+        const alreadyForced = recovery.persistentBlocker;
+        try {
+          // Retry'ın kendi timeout'u hem sabit tavanı (RETRY_TIMEOUT_CAP_MS) hem de GERÇEKTEN kalan
+          // adım bütçesini (force fallback'e de pay bırakacak şekilde) aşamaz. Pay yeterli değilse
+          // (v3.7'nin aksine artık zorla en az 500ms'lik bir deneme YAPILMAZ) doğrudan pes edilir.
+          const budgetForRetry = recoveryDeadline - Date.now() - ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS;
+          if (budgetForRetry < 300) return classified;
+          const retryTimeoutMs = Math.min(timeoutMs, ActionExecutor.RETRY_TIMEOUT_CAP_MS, budgetForRetry);
+          // `|| undefined`: force'u SADECE gerçekten gerekliyken (persistentBlocker) açıkça true
+          // gönderiyoruz; aksi halde undefined bırakıyoruz ki Playwright'ın kendi varsayılanıyla
+          // (force:false) davransın — "force:false" açıkça geçmekle "hiç geçmemek" işlevsel olarak
+          // aynı olsa da, ikincisi test/log çıktısında daha net (gereksiz bir "force" alanı yok).
+          await attempt(retryTimeoutMs, alreadyForced || undefined);
+          log.debug(
+            { forced: alreadyForced },
+            'Engelleyici öğe kurtarma denemesi sonrası aksiyon başarılı oldu',
+          );
+          return ok(successMessage);
+        } catch (retryErr) {
+          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          const isRepeatedIntercept = ActionExecutor.INTERCEPT_ERROR_PATTERN.test(retryMessage);
+          const remainingForForceFallback = recoveryDeadline - Date.now();
 
-        if (!alreadyForced && isRepeatedIntercept && remainingForForceFallback >= 500) {
-          try {
-            const forceFallbackTimeoutMs = Math.min(ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS, remainingForForceFallback);
-            await attempt(forceFallbackTimeoutMs, true);
-            log.debug('Tekrarlayan engelleyici sonrasi son care force:true denemesi basarili oldu');
-            return ok(successMessage);
-          } catch (forceErr) {
-            return this.classifyError(forceErr);
+          if (!alreadyForced && isRepeatedIntercept && remainingForForceFallback >= 300) {
+            try {
+              const forceFallbackTimeoutMs = Math.min(ActionExecutor.FORCE_FALLBACK_TIMEOUT_MS, remainingForForceFallback);
+              await attempt(forceFallbackTimeoutMs, true);
+              log.debug('Tekrarlayan engelleyici sonrasi son care force:true denemesi basarili oldu');
+              return ok(successMessage);
+            } catch (forceErr) {
+              return this.classifyError(forceErr);
+            }
           }
-        }
 
-        return this.classifyError(retryErr);
+          return this.classifyError(retryErr);
+        }
+      };
+
+      const recoveryPromise = runRecovery();
+      // AgentLoop.withTimeout()'taki AYNI desen: race'i biz kaybetsek bile arka planda çalışmaya devam
+      // edebilecek bu promise'in olası reddi burada "unhandled rejection" uyarısına yol açmasın.
+      recoveryPromise.catch(() => undefined);
+
+      const budgetTimeoutMs = Math.max(0, recoveryDeadline - Date.now());
+      const raceResult = await Promise.race([
+        recoveryPromise,
+        new Promise<typeof ActionExecutor.RECOVERY_BUDGET_EXCEEDED>((resolve) => {
+          setTimeout(() => resolve(ActionExecutor.RECOVERY_BUDGET_EXCEEDED), budgetTimeoutMs);
+        }),
+      ]);
+
+      if (raceResult === ActionExecutor.RECOVERY_BUDGET_EXCEEDED) {
+        log.warn({ stepTimeoutMs }, 'Kurtarma zinciri adım bütçesi içinde tamamlanamadı, orijinal hata döndürülüyor');
+        return classified;
       }
+      return raceResult;
     }
   }
 

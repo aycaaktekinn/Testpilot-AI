@@ -402,7 +402,10 @@ describe('ActionExecutor — engelleyici öğe kurtarma (hepsiburada.com e37 cli
 
     expect(result.ok).toBe(true);
     expect(clickMock).toHaveBeenNthCalledWith(1, { timeout: 3000 });
-    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 3000, force: true });
+    // v3.8 SAFETY_MARGIN_MS (800ms) recoveryDeadline hesabına dahil olduğu için, testin dar
+    // stepTimeoutMs'i (5000ms) altında retry bütçesi artık RETRY_TIMEOUT_CAP_MS'in (3000ms) DEĞİL,
+    // gerçek kalan bütçenin altına düşüyor (~2700ms) — kasıtlı, bkz. ActionExecutor v3.8 notu.
+    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 2700, force: true });
   });
 
   it('kalıcı engelleyici bulunamadıysa (persistentBlocker:false), retry normal şekilde (force OLMADAN) denenir', async () => {
@@ -417,7 +420,8 @@ describe('ActionExecutor — engelleyici öğe kurtarma (hepsiburada.com e37 cli
     const result = await executor.execute(createFakePage() as never, decision({ action: 'click', targetRef: 'e1' }), undefined, registryWith('e1', locator), fakeOptions());
 
     expect(result.ok).toBe(true);
-    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 3000, force: undefined });
+    // bkz. yukarıdaki "kalıcı (kapatılamayan) engelleyici" testindeki SAFETY_MARGIN_MS notu.
+    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 2700, force: undefined });
   });
 
   it('NAVIGATION_ERROR/UNKNOWN gibi engelleyici-öğe-DIŞI hatalarda kurtarma denemesi HİÇ tetiklenmez', async () => {
@@ -492,9 +496,11 @@ describe('ActionExecutor — engelleyici öğe kurtarma (hepsiburada.com e37 cli
     );
 
     expect(result.ok).toBe(true);
-    // İlk deneme tam süreyi kullanır...
+    // İlk deneme tam süreyi kullanır (v3.8 taslağında denenip GERİ ALINAN first-attempt tavanlaması
+    // bkz. ActionExecutor dosya-içi notu — bu sözleşme kasıtlı olarak korunuyor)...
     expect(clickMock).toHaveBeenNthCalledWith(1, { timeout: 10000 });
-    // ...ama retry denemesi çok daha kısa, sabit bir üst sınırla sınırlanır (10000 DEĞİL).
-    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 3000 });
+    // ...ama retry denemesi çok daha kısa, gerçek kalan bütçeyle sınırlanır (10000 DEĞİL; testin dar
+    // stepTimeoutMs'i (5000ms) ve SAFETY_MARGIN_MS (800ms) nedeniyle burada ~2700ms'e iniyor).
+    expect(clickMock).toHaveBeenNthCalledWith(2, { timeout: 2700 });
   });
 });
