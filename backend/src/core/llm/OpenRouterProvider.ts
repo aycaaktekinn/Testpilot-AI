@@ -59,8 +59,13 @@ export class OpenRouterProvider implements LlmProvider {
     // döndürüyordu, çağıranı (ör. ScenarioSuggester) kesik/bozuk JSON'u ayrıştırmaya çalışıp
     // başarısız olmaya mahkûm ediyordu. Şimdi HER İKİ durumda da AYNI çözümü uyguluyoruz: aynı
     // isteği daha yüksek bir max_tokens ile bir kez daha dene. Bkz. README > Sorun giderme.
-    if (finishReason === 'length' && requestedMaxTokens < 4000) {
-      const bumpedMaxTokens = Math.min(requestedMaxTokens * 3, 4000);
+    // v3.12 — bkz. sohbet notu: "yükseltelim onda token olayı zaten yokmuş". Üst sınır 4000'den
+    // 8000'e çıkarıldı — kullanılan ücretsiz model başına para derdi yok, tek gerçek kısıt
+    // sağlayıcının zaman aşımı (bkz. aşağıdaki timeoutMs), o da artık çağıran (ör.
+    // BddDescriptionGenerator) tarafından per-call olarak uzatılabiliyor.
+    const RETRY_MAX_TOKENS_CEILING = 8000;
+    if (finishReason === 'length' && requestedMaxTokens < RETRY_MAX_TOKENS_CEILING) {
+      const bumpedMaxTokens = Math.min(requestedMaxTokens * 3, RETRY_MAX_TOKENS_CEILING);
       log.warn(
         {
           model: this.model,
@@ -108,7 +113,10 @@ export class OpenRouterProvider implements LlmProvider {
     // bu istek asla zaman aşımına uğramaz ve tüm run (dolayısıyla frontend'deki istek) süresiz
     // "takılı" görünür. Bu yüzden burada açıkça bir zaman sınırı uyguluyoruz.
     const controller = new AbortController();
-    const timeoutMs = env.AGENT_LLM_TIMEOUT_MS;
+    // v3.12 — bkz. LlmCallOptions.timeoutMs dosya başı NOT'u: çağıran özel bir süre VERMEDİYSE
+    // sağlayıcının genel/varsayılan zaman aşımı (agent'ın canlı adım kararları için kısa tutulmuş)
+    // kullanılmaya devam eder — davranış AYNEN eskisi gibi kalır.
+    const timeoutMs = options.timeoutMs ?? env.AGENT_LLM_TIMEOUT_MS;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;

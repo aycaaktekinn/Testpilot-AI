@@ -6,6 +6,18 @@ export interface LlmMessage {
 export interface LlmCallOptions {
   temperature?: number;
   maxTokens?: number;
+  /**
+   * v3.12 — bkz. sohbet notu: "yükseltelim onda token olayı zaten yokmuş" (kullanılan model
+   * ücretsiz, token maliyeti derdi yok). Tek bir çağrının, sağlayıcının varsayılan zaman aşımından
+   * (bkz. OpenRouterProvider.request() — env.AGENT_LLM_TIMEOUT_MS, agent'ın canlı adım kararları
+   * İÇİN kısa tutulmuş genel bir süre) DAHA UZUN sürmesine izin vermek için — ör.
+   * BddDescriptionGenerator gibi, run bittikten SONRA arka planda çalışan, kullanıcıyı canlı
+   * beklemede TUTMAYAN best-effort çağrılar, büyük bir max_tokens bütçesiyle (reasoning modelleri
+   * için) daha uzun sürebilir; global zaman aşımını (agent'ın kendi adım kararlarını da etkiler)
+   * DEĞİŞTİRMEDEN sadece BU çağrıya özel bir üst sınır verir. Belirtilmezse sağlayıcı kendi
+   * varsayılanını (env.AGENT_LLM_TIMEOUT_MS) kullanır.
+   */
+  timeoutMs?: number;
 }
 
 /**

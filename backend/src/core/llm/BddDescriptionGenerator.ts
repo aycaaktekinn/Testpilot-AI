@@ -59,7 +59,26 @@ export async function generateBddDescription(
         { role: 'system', content: SYSTEM_MESSAGE },
         { role: 'user', content: userMessage },
       ],
-      { temperature: 0.3, maxTokens: 500 },
+      // v3.12 — bkz. sohbet notu/canlı log: "OpenRouter yanıtında içerik bulunamadı (model token
+      // bütçesini 'reasoning' için tüketmiş olabilir)". Kullanılan model (VakıfBank'ın iç ağ
+      // geçidi üzerinden Qwen 3.5) asıl cevabı yazmadan ÖNCE görünmez bir "iç düşünce" aşamasından
+      // geçiyor ve bu da AYNI max_tokens bütçesinden düşüyor. "yükseltelim onda token olayı zaten
+      // yokmuş" — kullanılan model ücretsiz, token başına maliyet YOK; tek gerçek kısıt süre
+      // (bkz. timeoutMs aşağıda). Bu yüzden bütçeyi cömertçe büyüttük: 3000 başlangıç, gerekirse
+      // otomatik yeniden deneme onu 8000'e kadar çıkarıyor (bkz. OpenRouterProvider.complete()
+      // RETRY_MAX_TOKENS_CEILING). Bu çağrı run bittikten SONRA, arka planda, kullanıcıyı canlı
+      // beklemede TUTMADAN çalıştığı için (best-effort) hem büyük bütçe hem uzun süre güvenle
+      // verilebilir.
+      {
+        temperature: 0.3,
+        maxTokens: 3000,
+        // Agent'ın kendi adım kararları için kısa tutulan genel zaman aşımından (env.
+        // AGENT_LLM_TIMEOUT_MS, varsayılan 45sn) BAĞIMSIZ, sadece bu çağrıya özel daha uzun bir
+        // süre — reasoning modeli büyük bir bütçeyle daha uzun sürebilir, bu run'ı YAVAŞLATIR ama
+        // ENGELLEMEZ (bkz. yukarıdaki dosya başı NOT — üretim başarısız/geç kalırsa panel sadece
+        // boş kalır).
+        timeoutMs: 90_000,
+      },
     );
     const trimmed = text.trim();
     return trimmed.length > 0 ? trimmed : undefined;
