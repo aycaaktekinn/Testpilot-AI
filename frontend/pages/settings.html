@@ -74,6 +74,19 @@
                             <input id="settingsTraceOption" checked class="rounded bg-surface-container border-outline-variant text-primary" type="checkbox" />
                             <span class="font-body-sm text-body-sm text-on-surface">Retain Trace</span>
                         </label>
+
+                        <!-- v3.13 — bkz. sohbet notu: "settingsten default ayarlarını düzenliyorduk,
+                             oraya selenium gridi de koyalım". Create Test sayfasındaki
+                             #useSeleniumGridOption ile AYNI appState.executionSettings.useSeleniumGrid
+                             alanını paylaşır; kullanılabilirlik koşulları (Chromium + backend'de
+                             yapılandırılmış olma) da AYNI mantıkla burada da uygulanır — bkz. app.js
+                             initSettingsPage() > updateSettingsSeleniumGridAvailability(). -->
+                        <label class="col-span-2 flex items-center gap-2 cursor-pointer p-1.5 hover:bg-surface-variant rounded transition-colors">
+                            <input id="settingsUseSeleniumGridOption" disabled class="rounded bg-surface-container border-outline-variant text-primary disabled:opacity-40 disabled:cursor-not-allowed" type="checkbox" />
+                            <span class="font-body-sm text-body-sm text-on-surface">Run via Selenium Grid (Chromium only)</span>
+                        </label>
+
+                        <div id="settingsSeleniumGridHint" class="col-span-2 font-body-sm text-[12px] text-on-surface-variant/70 italic -mt-1"></div>
                     </div>
                 </div>
 

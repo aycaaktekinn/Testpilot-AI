@@ -11888,6 +11888,19 @@ async function initSettingsPage() {
             'settingsTraceOption',
         );
 
+    // v3.13 — bkz. sohbet notu: "settingsten default ayarlarını düzenliyorduk, oraya selenium
+    // gridi de koyalım". Create Test sayfasındaki #useSeleniumGridOption ile birebir aynı
+    // desen — bkz. aşağıdaki EXECUTION DEFAULTS bloğu sonundaki kullanılabilirlik mantığı.
+    const settingsUseSeleniumGridOption =
+        document.getElementById(
+            'settingsUseSeleniumGridOption',
+        );
+
+    const settingsSeleniumGridHint =
+        document.getElementById(
+            'settingsSeleniumGridHint',
+        );
+
     const settingsSavedNotice =
         document.getElementById(
             'settingsSavedNotice',
@@ -11972,6 +11985,9 @@ async function initSettingsPage() {
         appState.executionSettings.trace =
             settingsTraceOption.checked;
 
+        appState.executionSettings.useSeleniumGrid =
+            settingsUseSeleniumGridOption.checked;
+
 
         persistExecutionSettings(
             appState.executionSettings,
@@ -12001,11 +12017,60 @@ async function initSettingsPage() {
     }
 
 
+    /* -----------------------------------------------------
+       SELENIUM GRID AVAILABILITY (v3.13)
+       ------------------------------------------------------
+       Create Test sayfasındaki updateSeleniumGridAvailability() ile BİREBİR AYNI kural: checkbox
+       yalnızca (1) seçili motor "chromium" VE (2) backend'de SELENIUM_GRID_URL yapılandırılmışsa
+       tıklanabilir. settingsSeleniumGridConfigured, aşağıdaki GET /api/settings çağrısı sonuçlanınca
+       doldurulur (bu sayfa zaten o çağrıyı "Selenium Grid" bilgi kartı için yapıyor — ikinci bir
+       istek atmaya gerek yok). Koşul sağlanmıyorsa işaret appState'e YAZILMADAN kaldırılır — kullanıcı
+       motoru geri Chromium'a alırsa önceki tercihi (işaretliyse) geri gelir.
+    ----------------------------------------------------- */
+
+    let settingsSeleniumGridConfigured = false;
+
+    function updateSettingsSeleniumGridAvailability() {
+
+        const selectedBrowser =
+            document.querySelector(
+                'input[name="settingsBrowser"]:checked',
+            )?.value || 'chromium';
+
+        const available =
+            selectedBrowser === 'chromium' &&
+            settingsSeleniumGridConfigured;
+
+        settingsUseSeleniumGridOption.disabled =
+            !available;
+
+        settingsUseSeleniumGridOption.checked =
+            available &&
+            appState.executionSettings.useSeleniumGrid;
+
+        if (!settingsSeleniumGridConfigured) {
+            settingsSeleniumGridHint.textContent =
+                'Selenium Grid is not configured on the backend (SELENIUM_GRID_URL missing).';
+        } else if (selectedBrowser !== 'chromium') {
+            settingsSeleniumGridHint.textContent =
+                'Selenium Grid is only supported with the Chromium engine.';
+        } else {
+            settingsSeleniumGridHint.textContent = '';
+        }
+    }
+
+
+    updateSettingsSeleniumGridAvailability();
+
+
     settingsBrowserInputs.forEach(
         (input) => {
             input.addEventListener(
                 'change',
-                saveSettingsFromForm,
+                () => {
+                    saveSettingsFromForm();
+                    updateSettingsSeleniumGridAvailability();
+                },
             );
         },
     );
@@ -12015,6 +12080,7 @@ async function initSettingsPage() {
         settingsScreenshotOption,
         settingsVideoOption,
         settingsTraceOption,
+        settingsUseSeleniumGridOption,
     ].forEach((input) => {
         input.addEventListener(
             'change',
@@ -12127,6 +12193,14 @@ async function initSettingsPage() {
 
         settingsSeleniumGridInfo.innerHTML =
             infoTile('Hub Status', gridStatus);
+
+        // v3.13 — Execution Defaults'taki "Run via Selenium Grid" checkbox'ı, tam olarak bu
+        // yanıttaki configured bilgisiyle etkin/pasif hale getirilir (bkz. yukarıdaki
+        // updateSettingsSeleniumGridAvailability()).
+        settingsSeleniumGridConfigured =
+            Boolean(data.seleniumGrid?.configured);
+
+        updateSettingsSeleniumGridAvailability();
 
         // v2.0 Faz 3 — bkz. GET /api/settings → vectorCache (Milvus/Ollama adresleri KENDİLERİ
         // BİLEREK dönülmez/gösterilmez, tıpkı Selenium Grid hub adresinde olduğu gibi — sadece
