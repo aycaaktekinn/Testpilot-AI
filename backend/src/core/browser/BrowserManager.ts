@@ -1,4 +1,4 @@
-import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page, type Video } from 'playwright';
+import { chromium, firefox, webkit, type Browser, type BrowserContext, type CDPSession, type Page, type Video } from 'playwright';
 import type { RunOptions } from '../../domain/types.js';
 import { env } from '../../config/env.js';
 import { SeleniumGridError } from '../../domain/errors.js';
@@ -68,12 +68,19 @@ export class BrowserManager {
     targetUrl?: string,
   ): Promise<Page> {
     // v3.2 — bkz. sohbet notu: "test için chrome sekmesi açılıyor ya o sekme tam ekran olsun".
-    // SADECE headed (görünür) + yerel (Selenium Grid'siz) + Chromium koşumlarında anlamlı: pencere
-    // gerçekten görünür olduğu için kullanıcı onu küçük sabit boyutlu (1366x900) bir pencere
-    // yerine ekranı kaplamış görmek istiyor. Headless koşumlarda (görünür pencere YOK), Grid'de
-    // (uzak node kendi ekranını kullanır) ya da Firefox/WebKit'te (`--start-maximized` Chromium'a
-    // özgü bir flag, karşılığı yok) BİLİNÇLİ OLARAK dokunulmuyor.
-    const shouldMaximize = !options.useSeleniumGrid && !options.headless && options.browserEngine === 'chromium';
+    // SADECE headed (görünür) + Chromium koşumlarında anlamlı: pencere gerçekten görünür olduğu
+    // için kullanıcı onu küçük sabit boyutlu (1366x900) bir pencere yerine ekranı kaplamış görmek
+    // istiyor. Headless koşumlarda (görünür pencere YOK) ya da Firefox/WebKit'te (`--start-maximized`
+    // Chromium'a özgü bir flag, karşılığı yok) BİLİNÇLİ OLARAK dokunulmuyor.
+    //
+    // v3.30 — DÜZELTME: Grid koşumları BİLEREK bu koşulun DIŞINDA tutuluyordu ("uzak node kendi
+    // ekranını kullanır" varsayımıyla) — ama sohbette paylaşılan ekran görüntüsünde görüldüğü gibi
+    // Grid node'unun kendi (sanal) ekranı da küçük/sabit boyutlu kalıyor ve pencere onu doldurmuyor.
+    // `maximizeWindow()` zaten SAF CDP (`Browser.setWindowBounds`) kullanıyor — bu, bağlantı yerel
+    // mi yoksa connectOverCDP() ile Grid'e mi kurulmuş olursa olsun AYNI şekilde çalışır (aynı
+    // `hidePreExistingGridWindows()`'un da kullandığı mekanizma) — bu yüzden Grid'i dışarıda
+    // bırakmanın artık bir gerekçesi yok.
+    const shouldMaximize = !options.headless && options.browserEngine === 'chromium';
 
     if (options.useSeleniumGrid) {
       this.browser = await this.launchViaSeleniumGrid(options, targetUrl);
@@ -81,17 +88,21 @@ export class BrowserManager {
       const launcher = ENGINES[options.browserEngine];
       this.browser = await launcher.launch({
         headless: options.headless,
+        // `--start-maximized` SADECE yerel `launcher.launch()` içindir (Chrome'un kendi başlangıç
+        // flag'i) — Grid modunda zaten bu dal hiç çalışmaz, node'un kendi başlattığı Chrome'u
+        // aşağıdaki CDP tabanlı `maximizeWindow()` maksimize eder.
         ...(shouldMaximize ? { args: ['--start-maximized'] } : {}),
       });
     }
 
     this.context = await this.browser.newContext({
-      // `--start-maximized` sadece PENCEREYİ maksimize eder; Playwright'a yine sabit bir viewport
-      // (1366x900) verilmeye devam edilirse sayfa içeriği eski küçük boyutunda kalır (pencere
-      // büyük ama içerik ortada, kenarlarda boşluk) — bu yüzden bu durumda viewport'u BİLEREK
-      // `null` bırakıyoruz, böylece sayfa gerçek (maksimize edilmiş) pencere boyutuna göre render
-      // olur. Headless/Grid/diğer motorlarda davranış AYNEN korunur (sabit viewport, ekran
-      // koordinatlarının/AI element keşfinin tutarlılığı için).
+      // Maksimize edilmiş pencerede (yerel `--start-maximized` YA DA Grid'de aşağıdaki CDP tabanlı
+      // maximizeWindow() ile) Playwright'a yine sabit bir viewport (1366x900) verilmeye devam
+      // edilirse sayfa içeriği eski küçük boyutunda kalır (pencere büyük ama içerik ortada,
+      // kenarlarda boşluk) — bu yüzden bu durumda viewport'u BİLEREK `null` bırakıyoruz, böylece
+      // sayfa gerçek (maksimize edilmiş) pencere boyutuna göre render olur. Headless/diğer
+      // motorlarda davranış AYNEN korunur (sabit viewport, ekran koordinatlarının/AI element
+      // keşfinin tutarlılığı için).
       viewport: shouldMaximize ? null : options.viewport,
       // Sadece Chromium için gerçekçi bir masaüstü Chrome user-agent'ı kullanıyoruz; diğer
       // motorlarda kendi varsayılan (ve tutarlı) user-agent'ları bırakılıyor.
@@ -120,19 +131,14 @@ export class BrowserManager {
     this.video = this.page.video();
     this.attachDialogHandler(this.page);
 
-    // v3.28 — GERİ ALINDI: v3.25/v3.26'da Grid'in kendi açtığı boş ilk context'i/sekmesini
-    // ("data:,") KAPATMAYA çalışıyorduk (noVNC'de "iki sekme" görünmesin diye). Canlıda İKİ KEZ
-    // doğrulandı ki bu, bu Grid kurulumunda GÜVENLİ DEĞİL: sırayla "browser.newContext: Target
-    // page, context or browser has been closed" (v3.25, kapatma newContext()'ten ÖNCE yapılıyordu)
-    // ve — sıralama newContext()'ten SONRAYA alınmasına rağmen (v3.26) — "page.goto: Target page,
-    // context or browser has been closed" (v3.28 vakası: run'ın İLK page.goto() çağrısı bile artık
-    // ÖLÜ bir browser'a rastlıyordu) hatalarına yol açtı. Bu Grid node'unun/CDP relay'inin, pre-
-    // existing default context'i (hatta bizim KENDİ context'imiz zaten açıkken bile) kapatmaya izin
-    // vermediği, bunun yerine (best-effort try/catch HİÇBİR ŞEY FIRLATMADIĞI için sessizce) TÜM CDP
-    // bağlantısını/oturumu bozduğu anlaşılıyor. Kalıcı, tekrarlayan bir "run'ın kendisi çöküyor"
-    // regresyonu, kozmetik bir "ekstra boş sekme görünüyor" sorunundan KESİNLİKLE DAHA KÖTÜDÜR — bu
-    // yüzden bu temizlik TAMAMEN KALDIRILDI. noVNC'de yine iki sekme görünecek (biri boş "data:,",
-    // diğeri gerçek koşum) ama run'lar artık GÜVENİLİR şekilde tamamlanacak.
+    if (options.useSeleniumGrid) {
+      // v3.29 — bkz. hidePreExistingGridWindows() dosya başı NOT'u: v3.25/v3.26'da Grid'in kendi
+      // açtığı boş pencereyi KAPATMAYI (context/page.close()) denedik, canlıda İKİ KEZ bunun TÜM
+      // CDP bağlantısını bozduğu doğrulandı. Bu sefer HİÇBİR ŞEYİ KAPATMIYORUZ — sadece o
+      // pencereyi ham CDP ile ekran dışına taşıyoruz (best-effort, asla fırlatmaz).
+      await this.hidePreExistingGridWindows();
+    }
+
     if (shouldMaximize) {
       await this.maximizeWindow(this.page);
     }
@@ -177,6 +183,64 @@ export class BrowserManager {
       }
     } catch (err) {
       log.warn({ err }, 'Tarayıcı penceresi tam ekran yapılamadı (görsel bir sorun, testi etkilemez)');
+    }
+  }
+
+  /**
+   * v3.29 — bkz. sohbette paylaşılan ekran görüntüsü: Grid'in canlı görünümünde (noVNC) İKİ AYRI
+   * PENCERE yan yana açılıyordu — biri Chrome'un connectOverCDP() ile bağlanmadan ÖNCE zaten
+   * açtığı boş "data:," penceresi, diğeri bizim asıl test penceremiz. v3.25/v3.26'da bu pencereyi
+   * Playwright'ın context/page API'siyle (`.close()`) KAPATMAYI denedik — CANLIDA İKİ AYRI VAKADA
+   * doğrulandı ki bu Grid kurulumunda GÜVENLİ DEĞİL: kapatma hiçbir hata FIRLATMADAN "başarıyla"
+   * tamamlanıyor ama arka planda TÜM CDP bağlantısını/oturumunu bozuyor, bir sonraki komut ("Target
+   * page, context or browser has been closed") ile patlıyordu.
+   *
+   * BU SEFER HİÇBİR TARGET'I KAPATMIYORUZ/DISPOSE ETMİYORUZ. Bunun yerine, aynı bu kod tabanında
+   * `maximizeWindow()`'un KENDİ penceremiz için zaten KANITLANMIŞ ŞEKİLDE kullandığı ham CDP
+   * `Browser.setWindowBounds` komutunu, BAŞKA bir target'ın (browser.newBrowserCDPSession() ile
+   * bulunan, kendi target'ımız HARİÇ her "page" tipi target'ın) penceresine uygulayıp onu ekranın
+   * FAR DIŞINA taşıyoruz — "minimized" durumu yerine bilerek somut negatif koordinatlar kullanıldı,
+   * çünkü Grid node'undaki minimal pencere yöneticisinin (fluxbox vb.) "minimize" durumunu
+   * destekleyip desteklemediği garanti değil, ama KOORDİNAT taşıma her pencere yöneticisinde çalışır.
+   * Target/context/page YAŞAM DÖNGÜSÜNE hiç dokunulmadığı için önceki iki regresyonun kök nedeni
+   * burada YOK. Tamamen best-effort'tur — herhangi bir adım başarısız olursa sadece loglanır, run
+   * ASLA bu yüzden etkilenmez.
+   */
+  private async hidePreExistingGridWindows(): Promise<void> {
+    if (!this.browser || !this.context || !this.page) return;
+
+    let ownSession: CDPSession | undefined;
+    let browserSession: CDPSession | undefined;
+    try {
+      ownSession = await this.context.newCDPSession(this.page);
+      const ownInfo = await ownSession.send('Target.getTargetInfo');
+      const ownTargetId = ownInfo.targetInfo.targetId;
+
+      browserSession = await this.browser.newBrowserCDPSession();
+      const { targetInfos } = await browserSession.send('Target.getTargets');
+
+      for (const info of targetInfos) {
+        if (info.type !== 'page' || info.targetId === ownTargetId) continue;
+        try {
+          const { windowId } = await browserSession.send('Browser.getWindowForTarget', {
+            targetId: info.targetId,
+          });
+          await browserSession.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: { left: -32000, top: -32000, width: 100, height: 100 },
+          });
+        } catch (err) {
+          log.warn(
+            { err, targetId: info.targetId },
+            "Grid'in önceden açık penceresi ekran dışına taşınamadı (görsel bir sorun, testi etkilemez)",
+          );
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, "Grid'in önceden açık pencereleri tespit edilemedi (görsel bir sorun, testi etkilemez)");
+    } finally {
+      await ownSession?.detach().catch(() => undefined);
+      await browserSession?.detach().catch(() => undefined);
     }
   }
 

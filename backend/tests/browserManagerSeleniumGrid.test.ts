@@ -90,14 +90,41 @@ describe('BrowserManager — Selenium Grid entegrasyonu (v2.0)', () => {
       video: vi.fn().mockReturnValue(null),
       on: vi.fn(),
     };
+    // v3.29 — bkz. BrowserManager.hidePreExistingGridWindows dosya başı NOT'u: KENDİ sayfamızın
+    // CDP target'ını bulmak için kullanılır (bu sahte target'a "own-target-1" diyoruz).
+    const ownCdpSession = {
+      send: vi.fn().mockResolvedValue({ targetInfo: { targetId: 'own-target-1' } }),
+      detach: vi.fn().mockResolvedValue(undefined),
+    };
     const fakeContext = {
       setDefaultTimeout: vi.fn(),
       setDefaultNavigationTimeout: vi.fn(),
       tracing: { start: vi.fn(), stop: vi.fn() },
       newPage: vi.fn().mockResolvedValue(fakePage),
+      newCDPSession: vi.fn().mockResolvedValue(ownCdpSession),
+    };
+    // Grid'in connectOverCDP() ÖNCESİNDE zaten açık olan boş "data:," penceresini simüle eder —
+    // "own-target-1" (bizim sayfamız) HARİÇ, "type: page" olan her target bir "pencere" sayılır.
+    const browserCdpSession = {
+      send: vi.fn(async (method: string, params?: unknown) => {
+        if (method === 'Target.getTargets') {
+          return {
+            targetInfos: [
+              { targetId: 'own-target-1', type: 'page', url: 'about:blank' },
+              { targetId: 'other-target-1', type: 'page', url: 'data:,' },
+            ],
+          };
+        }
+        if (method === 'Browser.getWindowForTarget') {
+          return { windowId: 42 };
+        }
+        return {};
+      }),
+      detach: vi.fn().mockResolvedValue(undefined),
     };
     const connectOverCDPMock = vi.fn().mockResolvedValue({
       newContext: vi.fn().mockResolvedValue(fakeContext),
+      newBrowserCDPSession: vi.fn().mockResolvedValue(browserCdpSession),
       close: vi.fn().mockResolvedValue(undefined),
     });
 
@@ -120,6 +147,18 @@ describe('BrowserManager — Selenium Grid entegrasyonu (v2.0)', () => {
     expect(createSessionSpy).toHaveBeenCalledTimes(1);
     expect(connectOverCDPMock).toHaveBeenCalledWith('ws://node-7:9222/devtools/browser/xyz');
     expect(page).toBe(fakePage);
+
+    // v3.29 — Grid'in önceden açtığı pencere (other-target-1) ekran dışına taşınmalı; KENDİ
+    // sayfamızın penceresi (own-target-1) İÇİN Browser.getWindowForTarget/setWindowBounds HİÇ
+    // çağrılmamalı — hiçbir target KAPATILMAMALI (bkz. dosya başı NOT'u: kapatma canlıda regresyona
+    // yol açmıştı, bu yüzden BİLEREK sadece taşıma kullanılıyor).
+    const windowCalls = browserCdpSession.send.mock.calls.filter(([method]) => method === 'Browser.getWindowForTarget');
+    expect(windowCalls).toHaveLength(1);
+    expect(windowCalls[0]?.[1]).toEqual({ targetId: 'other-target-1' });
+
+    const boundsCalls = browserCdpSession.send.mock.calls.filter(([method]) => method === 'Browser.setWindowBounds');
+    expect(boundsCalls).toHaveLength(1);
+    expect(boundsCalls[0]?.[1]).toMatchObject({ windowId: 42, bounds: { left: -32000, top: -32000 } });
 
     await manager.close();
 
