@@ -5938,7 +5938,6 @@ async function initSuitesPage() {
                     Array.isArray(test.steps) ? test.steps : [];
                 const hasSteps = steps.length > 0;
                 const isStepsExpanded = expandedSuiteTestSteps.has(fileName);
-                const bddDescription = test.bddDescription || null;
 
                 return `
                     <tr class="hover:bg-surface-container-high/40">
@@ -5985,17 +5984,30 @@ async function initSuitesPage() {
                             ${escapeHtml(createdLabel)}
                         </td>
                         <td class="py-sm px-md text-right">
-                            <button
-                                class="removeFromSuiteButton inline-flex items-center gap-xs text-on-surface-variant hover:text-error px-sm py-[6px] rounded-lg border border-outline-variant"
-                                data-file="${escapeHtml(fileName)}"
-                                title="Remove from this suite"
-                                type="button"
-                            >
-                                <span class="material-symbols-outlined text-[16px]">
-                                    remove_circle_outline
-                                </span>
-                                Remove
-                            </button>
+                            <div class="flex justify-end gap-sm">
+                                <button
+                                    class="openSuiteBddButton inline-flex items-center gap-xs text-on-surface-variant hover:text-on-surface px-sm py-[6px] rounded-lg border border-outline-variant"
+                                    data-file="${escapeHtml(fileName)}"
+                                    title="Open in the Create Test BDD tab to view or edit"
+                                    type="button"
+                                >
+                                    <span class="material-symbols-outlined text-[16px]">
+                                        edit_note
+                                    </span>
+                                    BDD
+                                </button>
+                                <button
+                                    class="removeFromSuiteButton inline-flex items-center gap-xs text-on-surface-variant hover:text-error px-sm py-[6px] rounded-lg border border-outline-variant"
+                                    data-file="${escapeHtml(fileName)}"
+                                    title="Remove from this suite"
+                                    type="button"
+                                >
+                                    <span class="material-symbols-outlined text-[16px]">
+                                        remove_circle_outline
+                                    </span>
+                                    Remove
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     ${
@@ -6004,23 +6016,16 @@ async function initSuitesPage() {
                     <tr class="suiteStepsRow ${isStepsExpanded ? '' : 'hidden'}" data-file="${escapeHtml(fileName)}">
                         <td colspan="4" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
                             ${
-                                bddDescription
-                                    ? `
-                            <div class="pt-sm pb-sm border-b border-outline-variant/30 mb-1">
-                                <button
-                                    class="openSuiteBddButton inline-flex items-center gap-xs font-label-caps text-label-caps text-primary hover:underline"
-                                    data-file="${escapeHtml(fileName)}"
-                                    type="button"
-                                    title="Open in the Create Test BDD tab to view or edit"
-                                >
-                                    <span class="material-symbols-outlined text-[14px]">
-                                        edit_note
-                                    </span>
-                                    BDD — view / edit
-                                </button>
-                            </div>
-                            `
-                                    : ''
+                                // v3.27 — bkz. sohbet notu: "suits kısmındaki senaryolara generated
+                                // test deki gibi BDD butonu ekle ve fonksiyonu aynı generated tests
+                                // deki gibi olsun". Bu buton artık DAİMA görünür ana satırda
+                                // (Remove'un yanında, bkz. yukarıdaki <td>) — Generated Tests
+                                // sayfasında yapılan AYNI değişiklikle (BDD butonu artık her zaman
+                                // görünür, sadece adım paneli açıkken/bddDescription varken DEĞİL)
+                                // tutarlı olsun diye buradaki eski, sadece adımlar açıldığında VE
+                                // bddDescription doluyken görünen kopya kaldırıldı — aksi halde aynı
+                                // dosya için İKİ ayrı "BDD" butonu görünürdü.
+                                ''
                             }
                             <ol class="flex flex-col gap-1 py-sm border-l-2 border-outline-variant/40 pl-md">
                                 ${steps
