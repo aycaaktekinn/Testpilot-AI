@@ -19,27 +19,38 @@ import { env } from '../config/env.js';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM için önerilen (96 bit) IV uzunluğu.
 const KEY_LENGTH = 32; // AES-256 -> 32 byte anahtar.
-const HKDF_INFO = 'testpilot-ldap-manager-password-v1';
+/** Geriye dönük uyumluluk için: `info` verilmeden çağrılan (mevcut) çağıranlar LDAP anahtarını almaya devam eder. */
+const DEFAULT_HKDF_INFO = 'testpilot-ldap-manager-password-v1';
+/**
+ * v3.20 — bkz. sohbet notu: "generated test/suit calistirirken create test'teki secret degeri de
+ * tutulsun". LDAP anahtarıyla AYNI kök sırdan (AUTH_TOKEN_SECRET) ama FARKLI bir HKDF "info" ile
+ * türetilir — yani KRİPTOGRAFİK OLARAK BAĞIMSIZ bir anahtar (biri sızsa diğerini çözmeye yaramaz),
+ * LDAP şifreleriyle AYNI anahtarı PAYLAŞMAZ.
+ */
+export const TEST_SECRET_HKDF_INFO = 'testpilot-generated-test-secrets-v1';
 
-let cachedKey: Buffer | null = null;
+const cachedKeys = new Map<string, Buffer>();
 
-function getEncryptionKey(): Buffer {
-  if (cachedKey) {
-    return cachedKey;
+function getEncryptionKey(info: string): Buffer {
+  const cached = cachedKeys.get(info);
+  if (cached) {
+    return cached;
   }
   if (!env.AUTH_TOKEN_SECRET) {
     // env.ts .superRefine bunu ORACLE_DB_HOST tanımlıyken zaten zorunlu kılıyor (LDAP config de
     // Oracle'a bağımlı) — buraya düşülmesi normalde imkansız olmalı, defensif hata.
-    throw new Error('AUTH_TOKEN_SECRET tanımlı değil (LDAP şifreleme anahtarı türetilemiyor).');
+    throw new Error('AUTH_TOKEN_SECRET tanımlı değil (şifreleme anahtarı türetilemiyor).');
   }
-  const derived = hkdfSync('sha256', env.AUTH_TOKEN_SECRET, '', HKDF_INFO, KEY_LENGTH);
-  cachedKey = Buffer.from(derived);
-  return cachedKey;
+  const derived = hkdfSync('sha256', env.AUTH_TOKEN_SECRET, '', info, KEY_LENGTH);
+  const key = Buffer.from(derived);
+  cachedKeys.set(info, key);
+  return key;
 }
 
-/** Çıktı formatı: "<iv-hex>:<authTag-hex>:<ciphertext-hex>" — tek metin sütununda saklanabilsin diye. */
-export function encryptSecret(plainText: string): string {
-  const key = getEncryptionKey();
+/** Çıktı formatı: "<iv-hex>:<authTag-hex>:<ciphertext-hex>" — tek metin sütununda saklanabilsin diye.
+ * `info` verilmezse (mevcut çağıranlar) LDAP anahtarı kullanılır — davranış DEĞİŞMEZ. */
+export function encryptSecret(plainText: string, info: string = DEFAULT_HKDF_INFO): string {
+  const key = getEncryptionKey(info);
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
 
@@ -50,10 +61,10 @@ export function encryptSecret(plainText: string): string {
 }
 
 /** Bozuk/eski formatta bir değerle karşılaşılırsa (ör. anahtar değiştiyse) null döner — çağıran
- * taraf bunu "LDAP şifresi çözülemedi, tekrar girilmeli" olarak ele almalı, uygulamayı çökertmemeli. */
-export function decryptSecret(encoded: string): string | null {
+ * taraf bunu "şifre çözülemedi, tekrar girilmeli" olarak ele almalı, uygulamayı çökertmemeli. */
+export function decryptSecret(encoded: string, info: string = DEFAULT_HKDF_INFO): string | null {
   try {
-    const key = getEncryptionKey();
+    const key = getEncryptionKey(info);
     const parts = encoded.split(':');
     if (parts.length !== 3) {
       return null;
@@ -74,4 +85,14 @@ export function decryptSecret(encoded: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** Generated Test/Suite'te kullanılan senaryo secret'ları için (LDAP anahtarından bağımsız). */
+export function encryptTestSecret(plainText: string): string {
+  return encryptSecret(plainText, TEST_SECRET_HKDF_INFO);
+}
+
+/** bkz. encryptTestSecret. */
+export function decryptTestSecret(encoded: string): string | null {
+  return decryptSecret(encoded, TEST_SECRET_HKDF_INFO);
 }

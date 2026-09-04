@@ -1129,9 +1129,23 @@
 
 <!-- ======================================================
      APP SCRIPT
-======================================================= -->
+     v3.21 — bkz. sohbet notu: "kod degisikligi yaptin ama tarayicida gorunmuyor" turu sorunlar
+     icin cache-busting. Bu proje aktif gelistirme altinda (build/hash adimi yok) — sabit
+     "./app.js" src'i tarayicinin (ve arada bir proxy'nin) app.js'i AGRESIF cache'lemesine yol
+     acabiliyordu: backend yeniden baslatilsa bile, sayfa TAM yenilenmeden (hatta bazen yenilense
+     bile) TARAYICIDA halihazirda YUKLENMIS/cache'lenmis ESKI app.js calismaya devam ediyordu —
+     yapilan degisiklikler koda YANSIMIS olsa da kullanicinin GORDUGU davranis DEGISMEMIS gibi
+     duruyordu. Cozum: <script src> STATIK degil, her sayfa yuklemesinde Date.now() ile TAZE bir
+     sorgu parametresi eklenerek DINAMIK olarak enjekte ediliyor — boylece her tam sayfa
+     yenilemesi app.js'in O ANKI disk halini garanti CEKER. -->
 
-<script src="./app.js"></script>
+<script>
+    (function () {
+        var s = document.createElement('script');
+        s.src = './app.js?v=' + Date.now();
+        document.body.appendChild(s);
+    })();
+</script>
 
 
 </body>

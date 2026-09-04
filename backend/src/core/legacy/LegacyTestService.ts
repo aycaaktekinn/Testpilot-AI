@@ -28,8 +28,58 @@ import { createRun, deleteRunsBefore, deleteRunByFinishedAt, deleteAllRuns } fro
 import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import { runManager } from '../../api/runManager.js';
+import { encryptTestSecret, decryptTestSecret } from '../../auth/secretCrypto.js';
 
 const log = createLogger('LegacyTestService');
+
+/**
+ * WEB_SCENARIOS.SCENARIO_NAME Oracle'da VARCHAR2(200 BYTE) — yani sinir KARAKTER degil BYTE
+ * (UTF-8). Turkce karakterler (ç, ş, ğ, ı, ö, ü, İ) UTF-8'de 2 byte tuttugu icin JS'in
+ * `.slice(0, 200)`'u (UTF-16 kod birimi/karakter sayar) 200 KARAKTERLIK bir string uretebilir
+ * ama bu string 200 byte'i asabilir (ör. ORA-12899 'actual: 224, maximum: 200') — INSERT o an
+ * hata verir. Bu fonksiyon byte sinirina gore, cok-byte'li bir karakteri ORTADAN BOLMEDEN
+ * kirpar (surrogate-pair guvenli: Array.from ile Unicode code point'lere ayirir).
+ */
+function truncateToUtf8ByteLength(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) {
+    return value;
+  }
+  let result = '';
+  let bytes = 0;
+  for (const char of Array.from(value)) {
+    const charBytes = Buffer.byteLength(char, 'utf8');
+    if (bytes + charBytes > maxBytes) {
+      break;
+    }
+    result += char;
+    bytes += charBytes;
+  }
+  return result;
+}
+
+/**
+ * v3.20 — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya basi aciklamasi. Saklanan
+ * secret'lari calistirma aninda coz. Bozuk/eski-anahtarli bir degerle karsilasilirsa
+ * (decryptTestSecret null doner) SADECE o secret'i atlar ve loglar -- tum run'i BASARISIZ
+ * KILMAZ (o secret'a gercekten ihtiyac duyan bir adim varsa AgentLoop zaten
+ * findUnknownReferences ile 'tanimsiz referans' hatasiyla guvenli durur).
+ */
+function decryptStoredSecrets(
+  encrypted: Record<string, string> | undefined,
+  fileName: string,
+): Record<string, string> | undefined {
+  if (!encrypted || Object.keys(encrypted).length === 0) return undefined;
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(encrypted)) {
+    const decrypted = decryptTestSecret(value);
+    if (decrypted === null) {
+      log.warn({ fileName, secretName: name }, 'Kayitli secret cozulemedi (anahtar degismis olabilir), atlaniyor');
+      continue;
+    }
+    result[name] = decrypted;
+  }
+  return result;
+}
 
 /**
  * v3.1 — kullanıcı bazlı görünürlük kuralı (bkz. CallerContext, LegacyRunRecord.ownerId dosya
@@ -104,11 +154,35 @@ export class LegacyTestService {
         url: input.url,
         scenario: input.scenario,
         variables: input.variables,
-        // Secrets sadece bu run'ın ömrü boyunca bellekte kalır; aşağıdaki finalizeResult/
-        // generatedTestStore.save() çağrısına ASLA geçirilmez (diske hiç yazılmaz).
+        // v3.20'den beri finalizeResult bunları şifreleyip meta.secretsEncrypted'e de yazıyor
+        // (bkz. o alanın dosya başı açıklaması) — burada LLM'e/loglara gitmeyeceği hâlâ geçerli.
         secrets: input.secrets,
         options,
       });
+    } catch (err) {
+      // v3.22 — bkz. sohbet notu: "koşum hata alsa dahi o bilgileri getirsin". loop.run()
+      // BEKLENMEDİK şekilde (crash — ör. tarayıcı başlatılamadı, ağ hatası; normal 'finish_failure'
+      // İŞ MANTIĞI sonucu DEĞİL) fırlatırsa, ÖNCEDEN bu deneme için HİÇBİR ŞEY (url/scenario/
+      // variables) kalıcı olmuyordu — kullanıcı bu denemeyi Generated Tests'te asla bulamıyordu.
+      // Elimizdeki (crash'ten ÖNCE bilinen) bilgilerle best-effort bir kayıt oluşturup orijinal
+      // hatayı YİNE DE fırlatıyoruz — route hâlâ 500 döner (bkz. dosya başı NOT: SADECE gerçek
+      // sistem hatalarında böyle davranılması BİLİNÇLİ), sadece artık veri KAYBOLMUYOR.
+      await this.persistCrashedAttempt(
+        runId,
+        input.url,
+        input.scenario,
+        input.variables,
+        options,
+        startedAtMs,
+        errorMessage(err, 'Beklenmeyen bir hata oluştu.'),
+        input.testName,
+        input.projectId,
+        actingUserId,
+        input.secrets,
+      ).catch((persistErr) => {
+        log.error({ persistErr, runId }, 'Çöken run için best-effort kayıt da başarısız oldu');
+      });
+      throw err;
     } finally {
       this.activeLoop = null;
       this.activeRunId = null;
@@ -122,6 +196,7 @@ export class LegacyTestService {
       input.testName,
       input.projectId,
       actingUserId,
+      input.secrets,
     );
   }
 
@@ -223,7 +298,15 @@ export class LegacyTestService {
 
   async listGeneratedTests(caller: CallerContext): Promise<{ tests: LegacyGeneratedTestMeta[] }> {
     const all = await this.generatedTestStore.list();
-    return { tests: all.filter((t) => isVisibleTo(t.ownerId, caller)) };
+    // v3.20 — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması. Şifreli olsa
+    // bile secret ciphertext'ini frontend'e/tarayıcıya HİÇ göndermeye gerek yok (sadece backend'in
+    // çözüp kullanması gerekiyor) — savunma katmanı olarak burada temizlenir. `variables` (hassas
+    // DEĞİL) ile AYNI muameleyi görmez, BİLEREK.
+    return {
+      tests: all
+        .filter((t) => isVisibleTo(t.ownerId, caller))
+        .map(({ secretsEncrypted, ...rest }) => rest),
+    };
   }
 
   async getGeneratedTestCode(fileName: string, caller: CallerContext): Promise<{ code: string; fileName: string }> {
@@ -388,8 +471,9 @@ export class LegacyTestService {
       trace: input.trace,
       useSeleniumGrid: input.useSeleniumGrid,
       // BİLİNÇLİ OLARAK yok: replaySteps/steps — bu test hiç çalıştırılmadı, henüz üretilecek bir
-      // sonuç/BDD adımı yok. `runGeneratedTestsBatch` bunu `hasReplay: false` olarak görüp ilk
-      // tetiklemede otomatik tam AI koşumu yapacak.
+      // sonuç/BDD adımı yok (zaten v3.20'den beri `runGeneratedTestsBatch` replaySteps'i HİÇBİR
+      // ZAMAN kullanmıyor — ilk tetiklemede de her zaman tam AI koşumu yapılacak, bkz. o metodun
+      // dosya başı NOT'u).
       displayName: trimmedTestName || undefined,
       projectId: input.projectId,
       ownerId: actingUserId ?? null,
@@ -458,19 +542,29 @@ export class LegacyTestService {
   }
 
   /**
-   * v2.4 — TEK "Run" butonu: önceden ayrı bir "Replay (No AI)" butonu vardı, kullanıcı artık
-   * bunu görmüyor — karar backend'e taşındı. Kayıtlı replaySteps varsa ÖNCE onunla (hızlı, LLM
-   * çağrısı yok) dener; 'replay_mismatch' (kayıtlı adım artık sayfayla eşleşmiyor) VEYA
-   * 'replay_step_failed' (kayıtlı hedef hâlâ eşleşiyor ama ör. bir overlay/banner tıklamayı ANLIK
-   * olarak engelledi — bkz. AgentLoop.ts "isReplay && !actionResult.ok" NOT'u) ile başarısız
-   * olursa OTOMATİK olarak, AYNI runId altında, tam AI moduna geçip yeniden dener. Kayıtlı adım
-   * hiç yoksa (ya da zaten tam AI'a düşüldüyse) davranış eskisiyle birebir aynıdır.
+   * v3.20 — bkz. sohbet notu: "generated testten ve suitten testi kostugumda create testten ayni
+   * senaryoyu calistirdigim gibi calismiyor ... create test'teki BDD verilerini ve Variables &
+   * Secrets'daki datalari kullanacak sekilde duzenle". KÖK SEBEP (ÖNCEKİ tasarım): kayıtlı
+   * `replaySteps` (bkz. ReplayStep) run'ın İLK yapıldığı andaki KONKRET/donuk değerleri (ör. bir
+   * değişkenin o anki metni) taşıyordu — Variables & Secrets sonradan değişse bile replay bunu asla
+   * yansıtmıyordu; secret'lar ise hiç saklanmadığından (bkz. bir alt not) replay/AI farketmeksizin
+   * "tanımsız referans" ile güvenli durmaya mahkumdu. ÇÖZÜM: `replaySteps` ARTIK HİÇ kullanılmıyor
+   * (bkz. AgentLoopInput.replaySteps — geçilmezse zaten tam AI moduna düşer) — Generated Tests/
+   * Suites'teki "Run" da TIPKI Create Test gibi HER ZAMAN güncel BDD senaryosunu (`meta.scenario`)
+   * ve güncel `meta.variables`'ı kullanarak tam AI modunda çalışır. Hız için AgentLoop zaten HER
+   * adımda önce VectorCacheStore'a bakıyor (aynı domain+aksiyon için önceki bir karar varsa LLM'e
+   * hiç danışmadan onu kullanıyor) — sadece cache'te yoksa VEYA cache'ten gelen karar geçersiz/
+   * başarısız olursa LLM'e düşülüyor (bkz. AgentLoop tryVectorCacheHit) — yani "kayıtlı adımları
+   * harfiyen tekrar oynatma" ile "her adımda LLM'e sor"un ORTASI, otomatik olarak zaten sağlanıyor.
    *
-   * NEDEN bu iki durumda (başka değil) AI'a geçiliyor: bkz. RunManager.startRunWithAutoRetry
-   * (isRecoverableReplayFailure) dosya başı açıklaması — aynı gerekçe ve AYNI koşul burada da
-   * geçerli (iki yer TUTARLI tutulmalı): ASSERTION_FAILED/loop_detected gibi başka bir başarısızlık
-   * nedeni gerçek bir test/site sorunu olabilir, körü körüne tekrar denemek yanlış bir izlenim
-   * verebilir — ama overlay kaynaklı geçici bir engel bu kategoriye girmez.
+   * "Replay (No AI)" (bkz. replayGeneratedTest/`/generated-tests/replay`) BİLEREK AYRI ve
+   * DEĞİŞTİRİLMEDEN bırakıldı — kullanıcının BİLEREK seçtiği, harfiyen/donuk tekrar oynatma isteyen
+   * ayrı bir özellik olarak var olmaya devam ediyor.
+   *
+   * SECRETS — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması: bu testi üreten/
+   * son çalıştıran run'da kullanılan secret'lar şifreli saklanır; burada çözülüp bu çalıştırmaya da
+   * (ve altta generateAndRun -> finalizeResult ile YENİ kayda da) aktarılır — zincir boyunca
+   * kullanıcının secret'ları HER seferinde yeniden girmesi gerekmez.
    */
   async runGeneratedTest(
     fileName: string,
@@ -483,111 +577,22 @@ export class LegacyTestService {
     if (!isVisibleTo(meta.ownerId, caller)) {
       throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
     }
-    const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
 
-    if (!hasReplay) {
-      // Kayıtlı adım yok — tek seçenek zaten tam AI, eski davranışla birebir aynı.
-      return this.generateAndRun(
-        {
-          url: meta.url,
-          scenario: meta.scenario,
-          variables: meta.variables,
-          headed: overrides.headed ?? meta.headed,
-          browser: overrides.browser ?? meta.browser,
-          screenshot: overrides.screenshot ?? meta.screenshot,
-          video: overrides.video ?? meta.video,
-          trace: overrides.trace ?? meta.trace,
-          useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
-          // v3.0 Faz 6 — bu testin oluşturulduğu projeyi korur (bkz. LegacyGeneratedTestMeta.projectId).
-          projectId: meta.projectId,
-        },
-        caller.userId,
-      );
-    }
-
-    if (this.activeLoop) {
-      throw new ValidationError('Zaten çalışan bir test var. Önce mevcut testi durdurun.');
-    }
-
-    const runId = nanoid(12);
-    const options: RunOptions = {
-      ...defaultRunOptions,
-      headless: !(overrides.headed ?? meta.headed),
-      browserEngine: overrides.browser ?? meta.browser,
-      captureScreenshot: overrides.screenshot ?? meta.screenshot,
-      captureVideo: overrides.video ?? meta.video,
-      captureTrace: overrides.trace ?? meta.trace,
-      useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
-    };
-
-    runManager.registerExternalRun(runId, meta.url, meta.scenario, caller.userId);
-
-    // NEDEN aynı runId'yi iki denemede de koruyoruz: `getActiveRunId()`'ı poll edip
-    // `/ws/runs/:runId`'ye bağlanmış olabilecek bir istemci varsa, bağlantısını hiç değiştirmeden
-    // (ikinci denemeye de) canlı adımları izlemeye devam edebilsin diye.
-    const runAttempt = async (replaySteps: ReplayStep[] | undefined): Promise<RunReport> => {
-      const loop = new AgentLoop(this.llmProvider, (event) => runManager.publishExternalEvent(runId, event));
-      this.activeLoop = loop;
-      this.activeRunId = runId;
-      try {
-        return await loop.run({
-          runId,
-          url: meta.url,
-          scenario: meta.scenario,
-          variables: meta.variables,
-          replaySteps,
-          options,
-        });
-      } finally {
-        this.activeLoop = null;
-        this.activeRunId = null;
-      }
-    };
-
-    const startedAtMs = Date.now();
-    let report = await runAttempt(meta.replaySteps);
-
-    // v3.2 — AI'a düşme (fallback) koşulu GENİŞLETİLDİ: eskiden SADECE 'replay_mismatch' (kayıtlı
-    // hedef elementin sayfa yapısı değişmiş) durumunda AI'a düşülüyordu; 'replay_step_failed' (ör.
-    // element bulundu/eşleşti AMA bir overlay/banner tıklamayı ANLIK olarak engelledi — bkz.
-    // InterceptingOverlayHandler dosya başı NOT) durumunda replay hemen pes edip kullanıcıyı elle
-    // "Run (AI ile)"yi tekrar tetiklemeye zorluyordu. Oysa TAM OLARAK bu tür geçici/ortamsal
-    // engeller AI modunun (adaptif DOM yeniden-taraması + overlay kurtarma) iyi olduğu senaryo —
-    // canlı gözlem: hepsiburada.com'da bir replay adımı overlay yüzünden 'replay_step_failed' ile
-    // başarısız oluyordu, halbuki AYNI senaryo AI moduyla normalde başarıyla tamamlanıyordu. Sadece
-    // 'unknown_reference'/'loop_detected' gibi GERÇEKTEN "senaryo/sayfa bambaşka" anlamına gelen
-    // durumlar bu genişletmenin DIŞINDA bırakıldı (bkz. orijinal tasarım notu: "başka bir başarısızlık
-    // nedeni gerçek bir test/site sorunu olabilir" — ama TIMEOUT/ELEMENT_NOT_INTERACTABLE bu
-    // kategoriye girmez, tam tersine AI modunun rutin olarak başa çıktığı bir sınıftır).
-    const shouldFallbackToAi =
-      report.status === 'failed' &&
-      (report.failureReason?.startsWith('replay_mismatch') || report.failureReason?.startsWith('replay_step_failed'));
-
-    if (shouldFallbackToAi) {
-      log.warn(
-        { fileName, runId, failureReason: report.failureReason },
-        'Replay (No AI) denemesi başarısız oldu, otomatik olarak AI ile yeniden deneniyor',
-      );
-      runManager.publishExternalEvent(runId, {
-        type: 'replay_retry_started',
-        runId,
-        // NOT: `shouldFallbackToAi` yukarıda zaten report.failureReason'ın TANIMLI bir string
-        // olduğunu (ve replay_mismatch/replay_step_failed ile başladığını) garanti ediyor — ama
-        // TypeScript bunu ayrı bir boolean değişken üzerinden (kontrol akışı daralması olmadan)
-        // çıkaramıyor, bu yüzden burada SADECE tip kontrolünü geçmek için (pratikte hiç
-        // tetiklenmeyecek) bir varsayılan değer veriyoruz.
-        reason: report.failureReason ?? 'unknown',
-      });
-      report = await runAttempt(undefined);
-    }
-
-    return this.finalizeResult(
-      report,
-      options,
-      (Date.now() - startedAtMs) / 1000,
-      meta.variables,
-      undefined,
-      meta.projectId,
+    return this.generateAndRun(
+      {
+        url: meta.url,
+        scenario: meta.scenario,
+        variables: meta.variables,
+        secrets: decryptStoredSecrets(meta.secretsEncrypted, fileName),
+        headed: overrides.headed ?? meta.headed,
+        browser: overrides.browser ?? meta.browser,
+        screenshot: overrides.screenshot ?? meta.screenshot,
+        video: overrides.video ?? meta.video,
+        trace: overrides.trace ?? meta.trace,
+        useSeleniumGrid: overrides.useSeleniumGrid ?? meta.useSeleniumGrid ?? false,
+        // v3.0 Faz 6 — bu testin oluşturulduğu projeyi korur (bkz. LegacyGeneratedTestMeta.projectId).
+        projectId: meta.projectId,
+      },
       caller.userId,
     );
   }
@@ -598,9 +603,11 @@ export class LegacyTestService {
    * ile AYNI "tek aktif run" bookkeeping'ini paylaşır (activeLoop/activeRunId) — aynı anda hem
    * normal bir run hem bir replay çalışamaz.
    *
-   * v2.4 NOT — frontend'de bu artık AYRI bir buton olarak GÖSTERİLMİYOR (tek "Run" butonu var,
-   * bkz. runGeneratedTest() dosya başı açıklaması — o zaten replay'i otomatik önce dener). Bu
-   * metod/endpoint (/generated-tests/replay) geriye dönük uyumluluk için olduğu gibi bırakıldı.
+   * v3.20 GÜNCELLEME — bkz. runGeneratedTest() dosya başı NOT'u: "Run" butonu ARTIK replay'i hiç
+   * denemiyor, her zaman güncel BDD + Variables & Secrets ile tam AI modunda çalışıyor. Bu metod/
+   * endpoint (/generated-tests/replay) buna rağmen BİLEREK KORUNDU — kullanıcının açıkça
+   * "Replay (No AI)" seçtiği (bkz. app.js replayExistingTest), harfiyen/donuk tekrar oynatma
+   * isteyen AYRI ve kasıtlı bir özellik olarak var olmaya devam ediyor.
    */
   async replayGeneratedTest(
     fileName: string,
@@ -638,6 +645,13 @@ export class LegacyTestService {
     this.activeLoop = loop;
     this.activeRunId = runId;
 
+    // v3.20 — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması. Replay
+    // adımlarından biri "{{secret.AD}}" placeholder'ı içeriyorsa (bkz. AgentLoop replaySteps
+    // dosya başı NOT — secret DEĞERİ asla replaySteps'e yazılmaz, sadece placeholder), bu run'a
+    // secrets GEÇİRİLMEZSE `findUnknownReferences` güvenli şekilde durur — bu yüzden burada da
+    // aynı şekilde çözülüp geçirilir.
+    const secrets = decryptStoredSecrets(meta.secretsEncrypted, fileName);
+
     const startedAtMs = Date.now();
     let report: RunReport;
     try {
@@ -646,9 +660,28 @@ export class LegacyTestService {
         url: meta.url,
         scenario: meta.scenario,
         variables: meta.variables,
+        secrets,
         replaySteps: meta.replaySteps,
         options,
       });
+    } catch (err) {
+      // v3.22 — bkz. persistCrashedAttempt() dosya başı NOT'u / generateAndRun'daki AYNI blok.
+      await this.persistCrashedAttempt(
+        runId,
+        meta.url,
+        meta.scenario,
+        meta.variables,
+        options,
+        startedAtMs,
+        errorMessage(err, 'Beklenmeyen bir hata oluştu.'),
+        undefined,
+        meta.projectId,
+        caller.userId,
+        secrets,
+      ).catch((persistErr) => {
+        log.error({ persistErr, runId }, 'Çöken replay için best-effort kayıt da başarısız oldu');
+      });
+      throw err;
     } finally {
       this.activeLoop = null;
       this.activeRunId = null;
@@ -662,6 +695,7 @@ export class LegacyTestService {
       undefined,
       meta.projectId,
       caller.userId,
+      secrets,
     );
   }
 
@@ -678,18 +712,30 @@ export class LegacyTestService {
    * run için `run_finished` olayını dinleyip aynı `finalizeResult()`'ı burada da (arka planda)
    * çağırarak köprülüyoruz; aksi halde bu run'lar Reports/Test Runs sayfalarında hiç görünmezdi.
    *
-   * v2.4 — "Mümkünse Replay (No AI)" denemesi sayfa değişmiş olduğu için 'replay_mismatch' ile
-   * başarısız olursa, `runManager.startRunWithAutoRetry()` bunu OTOMATİK olarak, AYNI runId
-   * altında, tam AI modunda yeniden dener (bkz. o metodun dosya başı açıklaması) — bu sayede
-   * "Run Selected" artık dinamik/değişken sayfalarda da güvenilir şekilde sonuçlanır, kullanıcının
-   * elle "Run (AI ile)" ile tek tek yeniden denemesi gerekmez. Sadece NİHAİ sonuç (başarısız replay
-   * denemesi DEĞİL) `persistBatchRunWhenFinished` ile geçmişe kaydedilir — aşağıda hiçbir değişiklik
-   * gerekmedi, çünkü o zaten sadece gerçek 'run_finished' olayını dinliyor.
+   * v3.20 GÜNCELLEME — bkz. sohbet notu: "generated testten ve suitten testi kostugumda create
+   * testten ayni senaryoyu calistirdigim gibi calismiyor ... BDD verilerini ve Variables &
+   * Secrets'daki datalari kullanacak sekilde duzenle". ÖNCEKİ (v2.4/v3.19) tasarım "Mümkünse
+   * Replay (No AI), yoksa Run" idi — kayıtlı `replaySteps` varsa ÖNCE o denenir, sadece
+   * 'replay_mismatch'/'replay_step_failed' ile başarısız olursa (v3.19'da SADECE Suites için
+   * `disableAutoRetry` ile) tam AI'a düşülürdü. KÖK SORUN: `replaySteps` run'ın İLK yapıldığı
+   * andaki DONUK değerleri taşıyordu (Variables & Secrets sonradan değişse replay bunu YOK
+   * SAYIYORDU) ve secret'lar hiç saklanmadığından replay/AI farketmeksizin eksik secret'lı
+   * senaryolar güvenli şekilde durmaya mahkumdu. ÇÖZÜM: `replaySteps` ARTIK HİÇ KULLANILMIYOR —
+   * her satır HER ZAMAN güncel BDD (`meta.scenario`) + güncel `meta.variables` + saklı/çözülmüş
+   * secrets ile tam AI modunda çalışır (bkz. runGeneratedTest() dosya başı NOT'u — AYNI gerekçe,
+   * iki yer TUTARLI). Hız AgentLoop'un HER adımda önce VectorCacheStore'a bakması (cache'te yoksa
+   * VEYA cache'ten gelen karar geçersiz/başarısız olursa LLM'e düşülür) ile zaten korunuyor.
+   * `disableAutoRetry` parametresi API/şema uyumluluğu için KORUNDU ama artık ETKİSİZ — replay hiç
+   * denenmediği için "replay başarısız olunca sessizce AI'a düş" senaryosu YAPISAL olarak
+   * gerçekleşemiyor, `startRun()`/`startRunWithAutoRetry()` bu koşullarda AYNI şekilde davranır.
    */
   async runGeneratedTestsBatch(
     fileNames: string[],
     // v3.1 — bkz. runGeneratedTest() dosya başı NOT (aynı gerekçe).
     caller: CallerContext,
+    // v3.19 — bkz. yukarıdaki v3.20 NOT'u: replay artık hiç denenmediği için bu parametre fiilen
+    // etkisiz kaldı, SADECE geriye dönük API uyumluluğu için tutuldu.
+    disableAutoRetry = false,
   ): Promise<BatchRunStartResult[]> {
     const results: BatchRunStartResult[] = [];
 
@@ -710,23 +756,25 @@ export class LegacyTestService {
           useSeleniumGrid: meta.useSeleniumGrid ?? false,
         };
 
-        // "Mümkünse Replay (No AI), yoksa Run" — bkz. TestRunRequest.replaySteps dosya başı NOT.
-        const hasReplay = Boolean(meta.replaySteps && meta.replaySteps.length > 0);
+        // v3.20 — bkz. dosya başı NOT'u: replaySteps ARTIK hiç geçilmiyor, her zaman tam AI.
+        const secrets = decryptStoredSecrets(meta.secretsEncrypted, fileName);
 
-        const summary = runManager.startRunWithAutoRetry(
-          {
-            url: meta.url,
-            scenario: meta.scenario,
-            variables: meta.variables,
-            options,
-            replaySteps: hasReplay ? meta.replaySteps : undefined,
-          },
-          caller.userId,
-        );
+        const runRequest = {
+          url: meta.url,
+          scenario: meta.scenario,
+          variables: meta.variables,
+          secrets,
+          options,
+          replaySteps: undefined,
+        };
 
-        this.persistBatchRunWhenFinished(summary.runId, meta, options, caller.userId);
+        const summary = disableAutoRetry
+          ? runManager.startRun(runRequest, caller.userId)
+          : runManager.startRunWithAutoRetry(runRequest, caller.userId);
 
-        results.push({ fileName, runId: summary.runId, mode: hasReplay ? 'replay' : 'run' });
+        this.persistBatchRunWhenFinished(summary.runId, meta, options, caller.userId, secrets);
+
+        results.push({ fileName, runId: summary.runId, mode: 'run' });
       } catch (err) {
         results.push({ fileName, error: errorMessage(err, 'Test başlatılamadı.') });
       }
@@ -737,15 +785,21 @@ export class LegacyTestService {
 
   /**
    * runGeneratedTestsBatch() için yardımcı — bir run bittiğinde (PASS/FAIL) sonucu Test Runs/
-   * Generated Tests geçmişine kalıcı hale getirir. Sadece run_finished'te çalışır: run_error
-   * (beklenmeyen çökme) durumunda elde bir RunReport olmadığından kaydedilecek bir şey yoktur —
-   * bu, runManager'ın kendisinin de run_error'da rapor ÜRETMEMESİYLE tutarlıdır.
+   * Generated Tests geçmişine kalıcı hale getirir. run_finished'te normal finalizeResult ile;
+   * run_error'da (beklenmeyen çökme — elde gerçek bir RunReport YOK) v3.22'den beri
+   * persistCrashedAttempt() ile best-effort MINIMAL bir kayıt oluşturur (bkz. o metodun dosya
+   * başı NOT'u / sohbet notu: "koşum hata alsa dahi o bilgileri getirsin") — kullanıcı çöken bir
+   * Suite/Generated Tests denemesini de artık tamamen kaybetmez.
    */
   private persistBatchRunWhenFinished(
     runId: string,
     meta: LegacyGeneratedTestMeta,
     options: RunOptions,
     actingUserId?: number | null,
+    // v3.20 — bkz. runGeneratedTestsBatch dosya başı NOT'u / LegacyGeneratedTestMeta.secretsEncrypted
+    // açıklaması. Bu run'da kullanılan (zaten çözülmüş) secrets — finalizeResult burada YENİDEN
+    // şifreleyip run'ın kendi YENİ kaydına yazar, zincir kopmaz.
+    secrets?: Record<string, string>,
   ): void {
     const startedAtMs = Date.now();
     const unsubscribe = runManager.subscribe(runId, (event) => {
@@ -753,7 +807,22 @@ export class LegacyTestService {
       unsubscribe();
 
       if (event.type === 'run_error') {
-        log.warn({ runId, message: event.message }, 'Toplu çalıştırmadaki bir run beklenmeyen şekilde çöktü, geçmişe kaydedilemiyor');
+        log.warn({ runId, message: event.message }, 'Toplu çalıştırmadaki bir run beklenmeyen şekilde çöktü, best-effort kaydediliyor');
+        void this.persistCrashedAttempt(
+          runId,
+          meta.url,
+          meta.scenario,
+          meta.variables,
+          options,
+          startedAtMs,
+          event.message,
+          undefined,
+          meta.projectId,
+          actingUserId,
+          secrets,
+        ).catch((persistErr) => {
+          log.error({ persistErr, runId }, 'Çöken toplu çalıştırma run\'ı için best-effort kayıt da başarısız oldu');
+        });
         return;
       }
 
@@ -765,10 +834,57 @@ export class LegacyTestService {
         undefined,
         meta.projectId,
         actingUserId,
+        secrets,
       ).catch((err) => {
         log.error({ err, runId }, 'Toplu çalıştırma sonucu geçmişe kaydedilemedi');
       });
     });
+  }
+
+  /**
+   * v3.22 — bkz. sohbet notu: "kosum hata alsa dahi o bilgileri getirsin". loop.run() normal
+   * bir 'finish_failure' (IS MANTIGI sonucu, RunReport ureterek doner) DEGIL de BEKLENMEDIK
+   * bir sekilde firlattiginda (crash — tarayici baslatilamadi, ag hatasi, vb.) cagrilir.
+   * O ana kadar bilinen url/scenario/variables ile, status:'error' olan MINIMAL bir RunReport
+   * uydurup finalizeResult() uzerinden normal akisla (Generated Tests kaydi + best-effort
+   * Oracle yazimi + secrets sifreleme) ayni sekilde kalici hale getirir — boylece kullanici bu
+   * denemeyi HICBIR ZAMAN tamamen kaybetmez (BDD butonuyla acip duzenleyip tekrar deneyebilir).
+   */
+  private async persistCrashedAttempt(
+    runId: string,
+    url: string,
+    scenario: string,
+    variables: Record<string, string>,
+    options: RunOptions,
+    startedAtMs: number,
+    failureMessage: string,
+    testName?: string,
+    projectId?: number,
+    actingUserId?: number | null,
+    secrets?: Record<string, string>,
+  ): Promise<void> {
+    const crashReport: RunReport = {
+      runId,
+      status: 'error',
+      url,
+      scenario,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date().toISOString(),
+      totalSteps: 0,
+      llmCallCount: 0,
+      failureReason: failureMessage,
+      steps: [],
+    };
+    await this.finalizeResult(
+      crashReport,
+      options,
+      (Date.now() - startedAtMs) / 1000,
+      variables,
+      testName,
+      projectId,
+      actingUserId,
+      secrets,
+    );
   }
 
   private async finalizeResult(
@@ -786,6 +902,12 @@ export class LegacyTestService {
     // Doluysa aşağıda WEB_SCENARIOS+WEB_RUNS'a best-effort bir Oracle yazımı da denenir.
     projectId?: number,
     actingUserId?: number | null,
+    // v3.20 — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması. Bu run'da
+    // KULLANILAN (ister kullanıcının Create Test'te az önce girdiği, ister önceki bir kayıttan
+    // çözülüp yeniden geçirilen) secret'lar — burada şifrelenip YENİ meta kaydına yazılır, böylece
+    // Generated Tests/Suites'ten sonraki her tekrar çalıştırma zincir boyunca aynı secret'ları
+    // kullanmaya devam edebilir.
+    secrets?: Record<string, string>,
   ): Promise<LegacyTestResultResponse> {
     const status = report.status === 'passed' ? 'passed' : 'failed';
     const createdAt = report.finishedAt ?? new Date().toISOString();
@@ -801,6 +923,13 @@ export class LegacyTestService {
     // DEĞİL) — bu sayede hem diskteki dosya adı hem index.json kaydı baştan "düzenli" olur, sadece
     // görüntüleme katmanında bir isim eklenmiş olmaz (bkz. buildGeneratedFileName dosya başı NOT).
     const fileName = buildGeneratedFileName(trimmedTestName || report.scenario, report.runId);
+    // v3.20 — bkz. finalizeResult() `secrets` parametresi / LegacyGeneratedTestMeta.secretsEncrypted
+    // dosya başı açıklamaları. Boş/undefined ise `undefined` kalır (eski davranışla aynı, index.json'a
+    // gereksiz boş obje yazılmaz) — sadece GERÇEKTEN kullanılan secret varsa şifrelenip saklanır.
+    const secretsEncrypted =
+      secrets && Object.keys(secrets).length > 0
+        ? Object.fromEntries(Object.entries(secrets).map(([name, value]) => [name, encryptTestSecret(value)]))
+        : undefined;
     try {
       await this.generatedTestStore.save(
         {
@@ -809,6 +938,7 @@ export class LegacyTestService {
           url: report.url,
           scenario: report.scenario,
           variables,
+          secretsEncrypted,
           browser: options.browserEngine,
           headed: !options.headless,
           screenshot: options.captureScreenshot,
@@ -848,7 +978,7 @@ export class LegacyTestService {
     // JSON kaydı zaten tamamlanmış olur).
     if (projectId) {
       try {
-        const scenarioName = (trimmedTestName || report.scenario).slice(0, 200);
+        const scenarioName = truncateToUtf8ByteLength(trimmedTestName || report.scenario, 200);
         const scenario = await createScenario({
           projectId,
           scenarioName,

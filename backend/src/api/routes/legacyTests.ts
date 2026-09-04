@@ -68,6 +68,14 @@ const runExistingSchema = z.object({
 
 const runBatchSchema = z.object({
   fileNames: z.array(z.string().min(1)).min(1, 'En az bir test seçilmeli'),
+  // v3.19 — bkz. sohbet notu: "Generated Test kısmındaki senaryoları suit kısmına taşıdığımızda ve
+  // çalıştırdığımızda senaryo hata aldığında uygulama senaryoyu tekrar çalıştırmaya çalışıyor. Bu
+  // sorun generated Test ve create test kısımlarında karşılaşılmamaktadır". BİLİNÇLİ OLARAK
+  // OPSİYONEL ve VARSAYILAN false: Generated Tests sayfasının KENDİ "Run Selected" toplu çalıştırma
+  // düğmesi (bkz. app.js ~satır 9034) bu alanı HİÇ göndermez, davranışı AYNEN korunur (bkz.
+  // LegacyTestService.runGeneratedTestsBatch dosya başı NOT'u — sadece Suites sayfası bunu `true`
+  // gönderir).
+  disableAutoRetry: z.boolean().optional(),
 });
 
 // v2.4 — bkz. LegacyTestService.renameGeneratedTest dosya başı açıklaması. Boş string BİLİNÇLİ
@@ -494,6 +502,7 @@ legacyTestsRouter.post('/generated-tests/run-batch', async (req, res) => {
     const results = await legacyTestService.runGeneratedTestsBatch(
       parsed.data.fileNames,
       getCaller(req as RequestWithAuthUser),
+      parsed.data.disableAutoRetry ?? false,
     );
     res.status(200).json({ results });
   } catch (err) {

@@ -18,6 +18,18 @@ export interface LlmCallOptions {
    * varsayılanını (env.AGENT_LLM_TIMEOUT_MS) kullanır.
    */
   timeoutMs?: number;
+  /**
+   * v3.14 — bkz. sohbet notu: vitwebpreprodauto canlı log analizi — Qwen3.5 (vLLM), 8000 tokenlık
+   * OpenRouterProvider yeniden deneme tavanına RAĞMEN bütçenin tamamını görünmez "reasoning"e
+   * harcayıp içerik üretemedi. OpenRouterProvider'daki MODÜL SEVİYESİNDEKİ RETRY_MAX_TOKENS_CEILING
+   * (varsayılan 8000) TÜM çağrı yerlerini (hem agent'ın canlı adım kararlarını HEM
+   * BddDescriptionGenerator'ı) etkiler — agent'ın adım kararları interaktif olduğundan bu tavanı
+   * herkes için büyütmek riskli (daha uzun, kullanıcıyı bekleten adımlara yol açar). Bu alan, YALNIZCA
+   * BU çağrı için o tavanı geçersiz kılar; belirtilmezse sağlayıcı kendi modül-seviyesi varsayılanını
+   * kullanır. BddDescriptionGenerator, koşum bittikten SONRA arka planda çalıştığı için bunu güvenle
+   * çok daha yükseğe (bkz. dosya başı yorumu) çekebilir.
+   */
+  maxTokensRetryCeiling?: number;
 }
 
 /**

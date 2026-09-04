@@ -16,8 +16,13 @@
 # admin panel/Oracle üzerinde çalışırken diğer ikisini durdurman daha güvenli olur.
 services:
   oracle-db:
-    image: gvenzl/oracle-free:23-slim
+    # DEĞİŞİKLİK 1: 'faststart' imajına geçildi. İlk kurulumu yapılmış hazır şablon kullandığı için açılışı ciddi derecede hızlandırır ve RAM yükünü azaltır.
+    image: gvenzl/oracle-free:23-slim-faststart
     container_name: testpilot-oracle-db
+
+    # DEĞİŞİKLİK 2: Kapanma durumunda Docker'ın container'ı otomatik ayağa kaldırması sağlandı.
+    restart: always
+
     ports:
       - "1521:1521"
     environment:
@@ -30,12 +35,15 @@ services:
       APP_USER_PASSWORD: TestPilotLocal2024
     volumes:
       - oracle-db-data:/opt/oracle/oradata
+
+    # DEĞİŞİKLİK 3: Healthcheck parametreleri optimize edildi. İlk açılış periyodu (start_period)
+    # ve test aralıkları uzatılarak veritabanı hazır olmadan container'ın "unhealthy" denilerek öldürülmesi engellendi.
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 5m
+      interval: 40s
+      timeout: 15s
+      retries: 15
+      start_period: 8m
 
 volumes:
   oracle-db-data:

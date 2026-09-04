@@ -148,6 +148,18 @@ export interface LegacyGeneratedTestMeta {
   url: string;
   scenario: string;
   variables: Record<string, string>;
+  /**
+   * v3.20 — bkz. sohbet notu: "generated test/suit calistirirken create test'teki secret degeri
+   * de tutulsun". Bu testi üreten/son çalıştıran run'da kullanılan secret'ların AES-256-GCM ile
+   * şifreli hali (ad -> "iv:authTag:ciphertext", bkz. secretCrypto.ts encryptTestSecret/
+   * decryptTestSecret — LDAP şifreleme anahtarından KRİPTOGRAFİK OLARAK BAĞIMSIZ, ayrı bir HKDF
+   * "info" ile türetilir). `variables`'ın aksine ASLA düz metin saklanmaz ve LLM'e hiçbir zaman
+   * gönderilmez (bkz. SecretsVault dosya başı açıklaması — çözülmüş değer SADECE bu testi
+   * Generated Tests/Suites'ten tekrar çalıştırırken, bellekte, Playwright aksiyonu uygulanmadan
+   * hemen önce kullanılır). OPSİYONEL: bu alan eklenmeden ÖNCE üretilmiş eski kayıtlarda ya da
+   * hiç secret kullanmamış bir senaryoda bulunmaz.
+   */
+  secretsEncrypted?: Record<string, string>;
   browser: BrowserEngine;
   headed: boolean;
   screenshot: boolean;
@@ -298,9 +310,14 @@ export interface LegacyGenerateAndRunInput {
   /**
    * Hassas değerler (şifre, token vb.). `variables`'tan BİLEREK ayrı tutulur: AgentLoop/SecretsVault
    * bunları LLM'e/loglara asla düz metin göndermez (bkz. SecretsVault dosya başı açıklaması).
-   * ÖNEMLİ: bu alan BİLEREK `LegacyGeneratedTestMeta`'ya (diske kaydedilen index.json) dahil
-   * EDİLMEZ — secret değerleri hiçbir zaman diske yazılmaz; bir "generated test"i secrets ile
-   * tekrar çalıştırmak isteyen kullanıcı bunları her seferinde yeniden girmelidir.
+   *
+   * v3.20 GÜNCELLEME — bkz. sohbet notu: "generated test/suit calistirirken create test'teki
+   * secret degeri de tutulsun". ÖNCEDEN bu alan BİLEREK `LegacyGeneratedTestMeta`'ya dahil
+   * EDİLMİYORDU (secret'lar hiç diske yazılmıyordu, her seferinde yeniden girilmesi gerekiyordu).
+   * ARTIK `LegacyTestService.finalizeResult()` bunları AES-256-GCM ile şifreleyip
+   * `LegacyGeneratedTestMeta.secretsEncrypted` içine kaydediyor (bkz. o alanın dosya başı
+   * açıklaması) — böylece Generated Tests/Suites'ten tekrar çalıştırırken kullanıcı secret'ları
+   * yeniden girmek zorunda kalmıyor. Düz metin değer YİNE DE diske yazılmaz, sadece şifreli hali.
    */
   secrets?: Record<string, string>;
   /** v3.0 Faz 6 — bkz. LegacyGeneratedTestMeta.projectId dosya başı açıklaması. OPSİYONEL. */

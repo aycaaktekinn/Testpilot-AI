@@ -49,6 +49,18 @@ const MAX_LLM_RETRIES_PER_STEP = 2;
  */
 const CACHE_HIT_SAFE_ACTIONS = new Set<ActionType>(['click', 'dblclick', 'check', 'uncheck', 'hover', 'scroll_into_view']);
 
+// v3.18 — bkz. sohbet notu: canlı logda agent'ın kendi adım kararı çağrısı (bu dosyadaki tek
+// `this.llm.complete(messages)` çağrısı — hiçbir `options` VERMEDİĞİ için OpenRouterProvider'ın
+// DEFAULT_MAX_TOKENS'ına, yani 1024'e düşüyordu) sık sık ilk denemede yetersiz kalıp (finish_reason=
+// length) 8000'e yeniden deniyordu — her seferinde ekstra bir round-trip (~3-8sn) demek. Kullanıcı
+// bu iki değeri BİLEREK yükseltti: başlangıç bütçesi 1024→8192 (çoğu adım kararı JSON'unu İLK
+// denemede, yeniden denemeye hiç gerek kalmadan bitirebilsin diye), yeniden deneme tavanı da
+// 8000→16384 (OpenRouterProvider'daki v3.17 "doğrudan tavana sıçra" mantığıyla BİRLİKTE çalışır —
+// bkz. o dosyadaki RETRY_MAX_TOKENS_CEILING NOT'u). ScenarioSuggester'ın KENDİ ayrı SUGGEST_MAX_TOKENS
+// sabiti VAR (bkz. o dosya) — BURADAN etkilenmez, bilerek ayrı tutulur.
+const AGENT_STEP_MAX_TOKENS = 8192;
+const AGENT_STEP_MAX_TOKENS_RETRY_CEILING = 16384;
+
 export interface AgentLoopInput {
   runId: string;
   url: string;
@@ -266,7 +278,10 @@ export class AgentLoop {
               llmCallCount++;
               let raw: string;
               try {
-                raw = await this.llm.complete(messages);
+                raw = await this.llm.complete(messages, {
+                  maxTokens: AGENT_STEP_MAX_TOKENS,
+                  maxTokensRetryCeiling: AGENT_STEP_MAX_TOKENS_RETRY_CEILING,
+                });
               } catch (err) {
                 if (err instanceof LlmConfigurationError) {
                   // Yapılandırma hataları (örn. model artık kullanılamıyor) RETRY EDİLEMEZ — aynı
@@ -514,6 +529,22 @@ export class AgentLoop {
           // sonra kısa bir yerleşme payı vererek bu gereksiz tekrarları azaltıyoruz — LLM'e hiç
           // danışılmaz (ekstra bir LLM çağrısı YOKTUR), ve Enter DIŞINDAKİ aksiyonları etkilemez.
           await page.waitForTimeout(800);
+        } else if (decision.action === 'click' || decision.action === 'dblclick') {
+          // v3.21 — VakıfBank giriş sayfasında canlı olarak gözlemlendi: "Giriş Yap" butonuna
+          // tıklamak URL'i HEMEN değiştirmiyor (giriş AJAX/SPA akışıyla, gerçek yönlendirme
+          // click'ten birkaç yüz ms SONRA gerçekleşiyor). Yukarıdaki URL-değişti kontrolü tam bu
+          // click ANINDA çalıştığı için URL henüz değişmemiş olur ve bu dalı YAKALAYAMAZ — bir
+          // sonraki adımın DOM taraması, tıklamanın tetiklediği GEÇİCİ istemci-tarafı doğrulama
+          // metnini (ör. "Şifre Zorunlu" uyarısı, boş bırakılan şifre alanı için anlık/senkron
+          // gösterilip asıl asenkron giriş sonucu gelince kaybolan bir uyarı) yakalıyordu — model
+          // bu geçici/kalıcı-olmayan durumu GERÇEK bir hata sanıp senaryoyu (yanlışlıkla)
+          // finish_failure ile bitiriyordu, oysa giriş bir an sonra aslında BAŞARILI oluyordu.
+          // Her click sonrası (URL hâlâ değişmemiş olsa bile) kısa bir yerleşme payı vererek DOM'un
+          // gerçek/kalıcı son haline gelmesini bekliyoruz — LLM'e hiç danışılmaz (ekstra bir LLM
+          // çağrısı YOKTUR); zaten navigasyona yol açmış click'ler yukarıdaki dal tarafından
+          // kapsanıyor, bu sadece "URL değişmedi görünse de sayfa hâlâ tepki veriyor olabilir"
+          // durumunu ele alır.
+          await page.waitForTimeout(400);
         }
 
         const stepLog = this.buildStepLog(stepIndex, snapshot.url, decision, vault, actionResult, Date.now() - stepStarted);

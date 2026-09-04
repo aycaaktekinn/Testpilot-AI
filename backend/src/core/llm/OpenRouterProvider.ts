@@ -42,11 +42,11 @@ export class OpenRouterProvider implements LlmProvider {
     const started = Date.now();
     const requestedMaxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-    const data = await this.request(messages, options, requestedMaxTokens);
-    const choice = data.choices?.[0];
-    const content = choice?.message?.content;
+    let data = await this.request(messages, options, requestedMaxTokens);
+    let choice = data.choices?.[0];
+    let content = choice?.message?.content;
     const reasoning = choice?.message?.reasoning ?? choice?.message?.reasoning_content;
-    const finishReason = choice?.finish_reason ?? choice?.native_finish_reason;
+    let finishReason = choice?.finish_reason ?? choice?.native_finish_reason;
 
     // finish_reason === 'length': model, VERİLEN max_tokens bütçesi bitmeden yanıtı TAMAMLAYAMADAN
     // kesildi. Bu İKİ farklı şekilde ortaya çıkabilir: (a) "reasoning" modelleri tüm bütçeyi
@@ -63,9 +63,26 @@ export class OpenRouterProvider implements LlmProvider {
     // 8000'e çıkarıldı — kullanılan ücretsiz model başına para derdi yok, tek gerçek kısıt
     // sağlayıcının zaman aşımı (bkz. aşağıdaki timeoutMs), o da artık çağıran (ör.
     // BddDescriptionGenerator) tarafından per-call olarak uzatılabiliyor.
-    const RETRY_MAX_TOKENS_CEILING = 8000;
+    // v3.14 — bkz. sohbet notu: vitwebpreprodauto canlı log analizi. Bu tavan artık `options.
+    // maxTokensRetryCeiling` ile ÇAĞRIYA ÖZEL geçersiz kılınabiliyor (bkz. LlmProvider.ts) — agent'ın
+    // canlı adım kararları varsayılan (8000) tavanda kalırken, BddDescriptionGenerator gibi arka
+    // planda çalışan çağrılar çok daha yüksek bir tavan isteyebiliyor.
+    // v3.17 — bkz. env.ts OPENROUTER_MAX_OUTPUT_TOKENS dosya başı NOT'u (VakıfBank'ın gerçek Qwen3.5
+    // dağıtımının doğrulanmış azami çıktısı — 65536). Çağıranın istediği tavan NE OLURSA OLSUN bunun
+    // ÜZERİNE çıkılmaz — modelin desteklemediği bir max_tokens istemek sadece sağlayıcıdan hata
+    // almaya yol açardı.
+    const RETRY_MAX_TOKENS_CEILING = Math.min(
+      options.maxTokensRetryCeiling ?? 8000,
+      env.OPENROUTER_MAX_OUTPUT_TOKENS,
+    );
     if (finishReason === 'length' && requestedMaxTokens < RETRY_MAX_TOKENS_CEILING) {
-      const bumpedMaxTokens = Math.min(requestedMaxTokens * 3, RETRY_MAX_TOKENS_CEILING);
+      // v3.17 — bkz. sohbet notu: canlı logda, x3 çarpanla bile ARA bir bütçeye (ör. 16000)
+      // sıçramanın yetmediği, modelin "reasoning"in TAMAMINI yine o ara bütçeye harcayıp içerik
+      // ÜRETEMEDİĞİ gözlemlendi. Sadece TEK bir yeniden deneme hakkımız olduğu için (aşağıda ikinci
+      // bir bumpedMaxTokens denemesi YOK) artık x3 yerine DOĞRUDAN tavana sıçrıyoruz — elimizdeki
+      // TEK şansı en geniş bütçeyle kullanmak, onu israf edip yine yetersiz kalma riskinden HER ZAMAN
+      // daha iyidir.
+      const bumpedMaxTokens = RETRY_MAX_TOKENS_CEILING;
       log.warn(
         {
           model: this.model,
@@ -82,6 +99,18 @@ export class OpenRouterProvider implements LlmProvider {
         log.debug({ durationMs: Date.now() - started, model: this.model }, 'LLM çağrısı (bütçe artırılarak) tamamlandı');
         return retryContent;
       }
+      // v3.14 — HATA DÜZELTMESİ: yeniden deneme de içerik üretemediğinde, aşağıdaki `content`/
+      // `data` ESKİDEN hâlâ İLK (düşük bütçeli) isteğin yanıtını gösteriyordu — yani hem "içerik var
+      // mı" kontrolü hem de teşhis için loglanan `rawResponse`, aslında artırılmış bütçeyle yapılan
+      // DENEMEYİ değil, ondan ÖNCEKİ (zaten başarısız olduğu bilinen) yanıtı yansıtıyordu. Canlı
+      // logda "bumpedMaxTokens: 8000" uyarısından hemen sonra gelen ERROR'ın rawResponse.usage.
+      // completion_tokens'ının hâlâ 3000 (ilk bütçe) görünmesinin sebebi tam olarak buydu. Şimdi
+      // `data`/`choice`/`content`/`finishReason`'ı retryData ile GÜNCELLİYORUZ ki hem aşağıdaki
+      // kontrol hem de hata logu gerçekten SON denenen (artırılmış bütçeli) yanıtı yansıtsın.
+      data = retryData;
+      choice = retryData.choices?.[0];
+      content = choice?.message?.content;
+      finishReason = choice?.finish_reason ?? choice?.native_finish_reason;
     }
 
     if (content) {
@@ -94,11 +123,13 @@ export class OpenRouterProvider implements LlmProvider {
     }
 
     // Teşhis için tüm ham yanıtı logla (secret/kullanıcı verisi İÇERMEZ — yalnızca modelin
-    // ürettiği metin). Böylece bir sonraki oluşumda backend loglarından kök neden görülebilir.
+    // ürettiği metin). Bir yeniden deneme yapıldıysa bu artık SON (artırılmış bütçeli) denemenin
+    // yanıtıdır (bkz. yukarıdaki v3.14 notu) — böylece bir sonraki oluşumda backend loglarından
+    // gerçek kök neden (ör. 8000 tokenin TAMAMININ yine reasoning'e gitmesi) doğru görülebilir.
     log.error({ model: this.model, finishReason, rawResponse: data }, 'OpenRouter yanıtında içerik bulunamadı');
     const hint =
       finishReason === 'length'
-        ? ' (model token bütçesini "reasoning" için tüketmiş olabilir; farklı bir ücretsiz model deneyin)'
+        ? ' (model token bütçesini "reasoning" için tüketmiş olabilir; farklı bir ücretsiz model deneyin ya da OPENROUTER_DISABLE_REASONING=true deneyin)'
         : ' (openrouter.ai/activity üzerinden bu isteğin ham kaydını inceleyebilirsiniz)';
     throw new Error(`OpenRouter yanıtında içerik bulunamadı${hint}`);
   }
@@ -139,6 +170,19 @@ export class OpenRouterProvider implements LlmProvider {
           // modellerin bir kısmı bu parametreyi desteklemiyor ve isteği tamamen reddedebiliyor.
           // Bunun yerine JSON çıktısı, sistem prompt'undaki talimat + ResponseParser'daki
           // (kod bloğu ayıklama + zod doğrulama + otomatik yeniden deneme) katmanlarıyla sağlanıyor.
+          //
+          // v3.14 — bkz. env.OPENROUTER_DISABLE_REASONING dosya başı NOT'u: vitwebpreprodauto canlı
+          // logunda görülen system_fingerprint ("vllm-0.25.1-...") bu ağ geçidinin vLLM ile sunulan
+          // bir Qwen3(.5) modeli olduğunu doğruluyor — bu model ailesi "hibrit thinking" modundadır
+          // ve vLLM'in OpenAI-uyumlu sunucusu, `chat_template_kwargs` alanını olduğu gibi sohbet
+          // şablonuna geçirir; Qwen3'ün şablonu da `enable_thinking` bayrağını tanır. VARSAYILAN
+          // KAPALI olduğundan bu alan yalnızca .env'de açıkça istenirse eklenir — bunu tanımayan bir
+          // sunucu (ör. openrouter.ai'nin gerçek halka açık servisi) fazladan/bilinmeyen bir JSON
+          // alanını sessizce yok sayar (OpenAI-uyumlu sunucuların standart davranışı), bu yüzden
+          // yanlışlıkla açık bırakılsa bile diğer sağlayıcılarda zarar vermesi beklenmez.
+          ...(env.OPENROUTER_DISABLE_REASONING
+            ? { chat_template_kwargs: { enable_thinking: false } }
+            : {}),
         }),
       });
     } catch (err) {

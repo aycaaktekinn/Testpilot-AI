@@ -1,6 +1,7 @@
 import type { LlmProvider } from './LlmProvider.js';
 import type { RunReport, StepLogEntry } from '../../domain/types.js';
 import { createLogger } from '../../config/logger.js';
+import { env } from '../../config/env.js';
 
 const log = createLogger('BddDescriptionGenerator');
 
@@ -59,25 +60,37 @@ export async function generateBddDescription(
         { role: 'system', content: SYSTEM_MESSAGE },
         { role: 'user', content: userMessage },
       ],
-      // v3.12 — bkz. sohbet notu/canlı log: "OpenRouter yanıtında içerik bulunamadı (model token
-      // bütçesini 'reasoning' için tüketmiş olabilir)". Kullanılan model (VakıfBank'ın iç ağ
-      // geçidi üzerinden Qwen 3.5) asıl cevabı yazmadan ÖNCE görünmez bir "iç düşünce" aşamasından
-      // geçiyor ve bu da AYNI max_tokens bütçesinden düşüyor. "yükseltelim onda token olayı zaten
-      // yokmuş" — kullanılan model ücretsiz, token başına maliyet YOK; tek gerçek kısıt süre
-      // (bkz. timeoutMs aşağıda). Bu yüzden bütçeyi cömertçe büyüttük: 3000 başlangıç, gerekirse
-      // otomatik yeniden deneme onu 8000'e kadar çıkarıyor (bkz. OpenRouterProvider.complete()
-      // RETRY_MAX_TOKENS_CEILING). Bu çağrı run bittikten SONRA, arka planda, kullanıcıyı canlı
-      // beklemede TUTMADAN çalıştığı için (best-effort) hem büyük bütçe hem uzun süre güvenle
-      // verilebilir.
+      // v3.14 — bkz. sohbet notu/CANLI PRODÜKSİYON LOGU: vitwebpreprodauto.vakifbank.intra üzerinde
+      // 8000 tokenlık yeniden deneme bile YETMEDİ — model (qwen35, vLLM üzerinde çalışıyor;
+      // system_fingerprint: "vllm-0.25.1-tp8-e20f34fe") bu isteğin "reasoning" alanında SADECE
+      // formatı nasıl uygulayacağını düşünmeye 3000 tokenin TAMAMINI harcadığı görüldü (leaked
+      // "Thinking Process: ..." içeriği bunu doğruluyor). "yükseltelim onda token olayı zaten
+      // yokmuş" ilkesi burada da geçerli — bu çağrı run bittikten SONRA, arka planda, kullanıcıyı
+      // canlı beklemede TUTMADAN çalıştığı için (best-effort) daha büyük bir bütçeyi güvenle
+      // deneyebiliriz.
+      //
+      // v3.17 — GÜNCELLEME: 16000'lik tavan da YETERSİZ kaldı (canlı logda yine
+      // hadReasoning:true/contentWasTruncated:false ile aynı "bütçenin tamamı reasoning'e gitti"
+      // deseni tekrarlandı). Kullanıcı bu dağıtımın GERÇEK azami çıktısını doğruladı (65536) — tavan
+      // artık env.OPENROUTER_MAX_OUTPUT_TOKENS'a (bkz. env.ts dosya başı NOT'u) bağlandı, yani
+      // OpenRouterProvider'ın izin verdiği MUTLAK üst sınırın TAMAMINI kullanabiliyoruz (agent'ın
+      // kendi adım kararlarının varsayılan 8000'lik tavanını ETKİLEMEZ, sadece BU çağrıyı).
+      //
+      // Bu yine de köklü bir çözüm DEĞİL — model her bütçede tamamını "reasoning"e harcamaya devam
+      // edebilir; eğer 65536'da bile aynı desen tekrarlanırsa asıl köklü çözüm devreye alınmalı:
+      // env.OPENROUTER_DISABLE_REASONING=true (bkz. env.ts dosya başı NOT'u) — vLLM+Qwen3
+      // kurulumlarında `chat_template_kwargs: {enable_thinking:false}` ile modelin iç-düşünce
+      // aşamasını TAMAMEN atlaması sağlanabilir; bu .env'de açıkça açılmadıkça devre dışıdır (diğer
+      // sağlayıcılara zarar vermemesi için varsayılan kapalı).
       {
         temperature: 0.3,
-        maxTokens: 3000,
-        // Agent'ın kendi adım kararları için kısa tutulan genel zaman aşımından (env.
-        // AGENT_LLM_TIMEOUT_MS, varsayılan 45sn) BAĞIMSIZ, sadece bu çağrıya özel daha uzun bir
-        // süre — reasoning modeli büyük bir bütçeyle daha uzun sürebilir, bu run'ı YAVAŞLATIR ama
-        // ENGELLEMEZ (bkz. yukarıdaki dosya başı NOT — üretim başarısız/geç kalırsa panel sadece
-        // boş kalır).
-        timeoutMs: 90_000,
+        maxTokens: 6000,
+        maxTokensRetryCeiling: env.OPENROUTER_MAX_OUTPUT_TOKENS,
+        // v3.17 — tavan 65536'ya çıktığı için süre de orantılı büyütüldü (eski 180sn, 16000'lik bir
+        // deneme için ekstrapole edilmişti — 65536 dört katından fazla, aynı oranda ~7-8 dakikaya
+        // kadar sürebilir). Bu run'ı YAVAŞLATIR ama ENGELLEMEZ (bkz. yukarıdaki dosya başı NOT —
+        // üretim başarısız/geç kalırsa panel sadece boş kalır, run'ın PASS/FAIL sonucunu etkilemez).
+        timeoutMs: 600_000,
       },
     );
     const trimmed = text.trim();

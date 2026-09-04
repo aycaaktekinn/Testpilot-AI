@@ -918,7 +918,10 @@ async function initializePage(pageName) {
    CREATE TEST PAGE
 ========================================================= */
 
-function initCreateTestPage() {
+// v3.21 — bkz. asagidaki PENDING BDD EDIT blogundaki `await projectsLoadPromise` NOT'u.
+// ESKIDEN sync'ti; caller (navigateTo) zaten sonucunu await ETMIYOR (satirici degismedi,
+// fire-and-forget) — async yapmak sayfanin acilis davranisini DEGISTIRMEZ.
+async function initCreateTestPage() {
 
     const targetUrlInput =
         document.getElementById('targetUrl');
@@ -964,7 +967,10 @@ function initCreateTestPage() {
         }
     }
 
-    void loadProjectsIntoSelect();
+    // v3.21 — bkz. asagidaki PENDING BDD EDIT blogu: proje secimini dogru doldurabilmek icin
+    // bu fetch'in <option>'lari EKLEMIS olmasi lazim; promise'i saklayip SADECE o blokta await
+    // ediyoruz (sayfanin geri kalani ESKISI GIBI bunu beklemeden acilmaya devam eder).
+    const projectsLoadPromise = loadProjectsIntoSelect();
 
 
     /* -----------------------------------------------------
@@ -1099,6 +1105,9 @@ function initCreateTestPage() {
 
     const saveBddButton =
         document.getElementById('saveBddButton');
+
+    const copyBddButton =
+        document.getElementById('copyBddButton');
 
     const bddSaveStatus =
         document.getElementById('bddSaveStatus');
@@ -3288,6 +3297,40 @@ function initCreateTestPage() {
 
 
     /* -----------------------------------------------------
+       COPY BDD DESCRIPTION
+       ------------------------------------------------------
+       v3.16 — bkz. sohbet notu: "bdd kısmına yazılan cümlecikleri copy kısmımız olsun". Panoya
+       kopyalama — kaydetmeden BAĞIMSIZ, `appState.currentRunId` gerektirmez (henüz hiç run
+       çalıştırılmamış olsa bile textarea'daki metni — ör. elle yazılmış bir taslağı — kopyalayabilir).
+       Diğer "Copy" butonlarıyla (bkz. copySuggestionButton/copyAllButton) AYNI navigator.clipboard
+       deseni kullanılır.
+    ----------------------------------------------------- */
+
+    if (copyBddButton) {
+        copyBddButton.addEventListener(
+            'click',
+            async () => {
+
+                const text = bddDescriptionOutput.value;
+
+                if (!text.trim()) {
+                    showToast('Nothing to copy yet.', 'info');
+                    return;
+                }
+
+                try {
+                    await navigator.clipboard.writeText(text);
+                    showToast('BDD description copied to clipboard.', 'success');
+                } catch (error) {
+                    console.error(error);
+                    showToast('Could not copy to clipboard.', 'error');
+                }
+            },
+        );
+    }
+
+
+    /* -----------------------------------------------------
        SAVE BDD DESCRIPTION
        ------------------------------------------------------
        v3.10 — bkz. bddPanel/bddDescriptionOutput dosya başı NOT'ları. Run bitince otomatik dolan
@@ -3605,6 +3648,44 @@ function initCreateTestPage() {
         const pending = appState.pendingBddEdit;
         appState.pendingBddEdit = null;
 
+        // v3.21 — bkz. openBddEditorForGeneratedTest() dosya başı NOT'u. Sağdaki "BDD" sekmesi
+        // ESKİSİ GİBİ bu run'ın özetini gösterir/kaydeder (DEĞİŞMEDİ) — ama ARTIK soldaki TÜM giriş
+        // alanları da (url/isim/değişkenler/tarayıcı ayarları) bu testten doldurulur, VE "Test
+        // Scenario Instructions" KESİNLİKLE orijinal senaryo metni DEĞİL, BDD verisiyle (aynı
+        // metin) doldurulur — kullanıcı "Generate & Run" ile doğrudan BDD'yi baz alarak devam
+        // edebilsin diye. Secrets BİLEREK doldurulmaz (bkz. openBddEditorForGeneratedTest NOT'u).
+        targetUrlInput.value = pending.url || '';
+        testNameInput.value = pending.testName || '';
+        testScenarioInput.value = pending.bddDescription || '';
+
+        if (projectSelectInput) {
+            // bkz. yukarıdaki projectsLoadPromise dosya başı NOT'u — <option>'lar hazır olmadan
+            // .value ataması sessizce hiçbir şey seçmez.
+            await projectsLoadPromise;
+            projectSelectInput.value = pending.projectId != null ? String(pending.projectId) : '';
+        }
+
+        const browserRadio = document.querySelector(
+            `input[name="browser"][value="${pending.browser || 'chromium'}"]`,
+        );
+        if (browserRadio) browserRadio.checked = true;
+
+        if (headedModeInput) headedModeInput.checked = Boolean(pending.headed);
+        if (screenshotOption) screenshotOption.checked = Boolean(pending.screenshot);
+        if (videoOption) videoOption.checked = Boolean(pending.video);
+        if (traceOption) traceOption.checked = Boolean(pending.trace);
+        if (useSeleniumGridOption) useSeleniumGridOption.checked = Boolean(pending.useSeleniumGrid);
+
+        if (variablesContainer) {
+            variablesContainer.querySelectorAll('.variableRow').forEach((row) => row.remove());
+            const variableEntries = Object.entries(pending.variables || {});
+            if (variableEntries.length > 0) {
+                variableEntries.forEach(([key, value]) => createVariableRow(key, value, 'text'));
+            } else {
+                createVariableRow();
+            }
+        }
+
         bddDescriptionOutput.value = pending.bddDescription || '';
         appState.currentRunId = pending.runId || null;
         bddSaveStatus.textContent = '';
@@ -3618,6 +3699,11 @@ function initCreateTestPage() {
             showToast(
                 'This is an older record without a linked run — changes here cannot be saved.',
                 'info',
+            );
+        } else {
+            showToast(
+                'Filled in from this test — Test Scenario Instructions uses the BDD steps.',
+                'success',
             );
         }
 
@@ -5663,6 +5749,14 @@ async function initSuitesPage() {
     // v3.11 — dosya başı NOT: lean/nihai-durum-only takip (bkz. trackSuiteBatchRuns).
     let suiteRunStatusByFile = new Map();
 
+    // v3.15 — bkz. sohbet notu: "suite eklediğimiz testlerin stepleri ve bdd kısmı generated
+    // testteki gibi olsun biz yine editleyebilelim". Generated Tests sayfasındaki
+    // expandedGeneratedTestSteps (bkz. initGeneratedTestsPage) ile AYNI amaç — hangi satırların
+    // step listesi açık tutulduğunu render'dan BAĞIMSIZ hatırlar, sadece bu sayfaya özel AYRI bir
+    // Set (iki sayfa aynı anda DOM'da olmadığı için paylaşmaya gerek yok, ama state'i karıştırmamak
+    // için de bilerek ayrı tutulur).
+    let expandedSuiteTestSteps = new Set();
+
 
     function getSuiteTests(suiteId) {
         return allTests.filter(
@@ -5785,6 +5879,19 @@ async function initSuitesPage() {
                         ? new Date(test.createdAt).toLocaleString()
                         : '—';
 
+                // v3.15 — bkz. sohbet notu: "suite eklediğimiz testlerin stepleri ve bdd kısmı
+                // generated testteki gibi olsun biz yine editleyebilelim". `test` burada Generated
+                // Tests sayfasıyla AYNI /api/generated-tests kaydıdır (bkz. loadAll — suite üyeliği
+                // sadece bir filtre, ayrı bir veri modeli DEĞİL), yani `.steps`/`.bddDescription`
+                // zaten kalıcı meta'da mevcuttur — initGeneratedTestsPage'deki AYNI render/aç-kapa
+                // desenini burada da BİREBİR uyguluyoruz (canlı adım takibi HARİÇ — bkz. dosya başı
+                // "lean" NOT'u, suite koşumları burada sadece nihai rozetle izlenir).
+                const steps =
+                    Array.isArray(test.steps) ? test.steps : [];
+                const hasSteps = steps.length > 0;
+                const isStepsExpanded = expandedSuiteTestSteps.has(fileName);
+                const bddDescription = test.bddDescription || null;
+
                 return `
                     <tr class="hover:bg-surface-container-high/40">
                         <td class="py-sm pl-md pr-xs">
@@ -5796,15 +5903,34 @@ async function initSuitesPage() {
                             />
                         </td>
                         <td class="py-sm px-md">
-                            <div class="flex items-center gap-2">
-                                <span class="font-body-md text-body-md text-on-surface truncate">
-                                    ${escapeHtml(fileName)}
-                                </span>
+                            <div class="flex items-start gap-sm">
                                 ${
-                                    runStatus
-                                        ? `<span class="font-body-sm text-[11px] px-2 py-[2px] rounded-full ${suiteBatchStatusBadgeClasses(runStatus.status)}">${suiteBatchStatusBadgeLabel(runStatus.status)}</span>`
-                                        : ''
+                                    hasSteps
+                                        ? `
+                                <button
+                                    class="toggleSuiteTestStepsButton text-on-surface-variant hover:text-on-surface flex items-center justify-center w-[20px] h-[20px] shrink-0 mt-[2px]"
+                                    data-file="${escapeHtml(fileName)}"
+                                    type="button"
+                                    aria-label="Toggle steps for ${escapeHtml(fileName)}"
+                                    aria-expanded="${isStepsExpanded ? 'true' : 'false'}"
+                                >
+                                    <span class="material-symbols-outlined text-[18px] transition-transform" style="${isStepsExpanded ? 'transform: rotate(90deg);' : ''}">
+                                        chevron_right
+                                    </span>
+                                </button>
+                                `
+                                        : `<span class="w-[20px] h-[20px] shrink-0"></span>`
                                 }
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <span class="font-body-md text-body-md text-on-surface truncate">
+                                        ${escapeHtml(fileName)}
+                                    </span>
+                                    ${
+                                        runStatus
+                                            ? `<span class="font-body-sm text-[11px] px-2 py-[2px] rounded-full ${suiteBatchStatusBadgeClasses(runStatus.status)}">${suiteBatchStatusBadgeLabel(runStatus.status)}</span>`
+                                            : ''
+                                    }
+                                </div>
                             </div>
                         </td>
                         <td class="py-sm px-md font-body-sm text-body-sm text-on-surface-variant">
@@ -5824,6 +5950,81 @@ async function initSuitesPage() {
                             </button>
                         </td>
                     </tr>
+                    ${
+                        hasSteps
+                            ? `
+                    <tr class="suiteStepsRow ${isStepsExpanded ? '' : 'hidden'}" data-file="${escapeHtml(fileName)}">
+                        <td colspan="4" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
+                            ${
+                                bddDescription
+                                    ? `
+                            <div class="pt-sm pb-sm border-b border-outline-variant/30 mb-1">
+                                <button
+                                    class="openSuiteBddButton inline-flex items-center gap-xs font-label-caps text-label-caps text-primary hover:underline"
+                                    data-file="${escapeHtml(fileName)}"
+                                    type="button"
+                                    title="Open in the Create Test BDD tab to view or edit"
+                                >
+                                    <span class="material-symbols-outlined text-[14px]">
+                                        edit_note
+                                    </span>
+                                    BDD — view / edit
+                                </button>
+                            </div>
+                            `
+                                    : ''
+                            }
+                            <ol class="flex flex-col gap-1 py-sm border-l-2 border-outline-variant/40 pl-md">
+                                ${steps
+                                    .map(
+                                        (step) => `
+                                <li class="flex items-start gap-sm">
+                                    <span class="material-symbols-outlined text-[16px] mt-[1px] ${step.ok ? 'text-secondary' : 'text-error'}">
+                                        ${step.ok ? 'check_circle' : 'cancel'}
+                                    </span>
+                                    <span class="font-mono text-xs text-on-surface-variant shrink-0">
+                                        ${step.index + 1}.
+                                    </span>
+                                    <span class="font-body-sm text-body-sm text-on-surface flex-1">
+                                        ${escapeHtml(step.description)}
+                                    </span>
+                                    ${
+                                        step.decisionSource
+                                            ? `
+                                    <span
+                                        class="inline-flex items-center px-2 py-[2px] rounded-full text-[10px] font-bold uppercase tracking-wider shrink-0 mt-[2px] ${
+                                            step.decisionSource === 'vector_cache'
+                                                ? 'bg-primary/15 text-primary'
+                                                : step.decisionSource === 'replay'
+                                                    ? 'bg-secondary/15 text-secondary'
+                                                    : 'bg-surface-container-high text-on-surface-variant'
+                                        }"
+                                        title="${
+                                            step.decisionSource === 'vector_cache'
+                                                ? 'Vector cache — LLM’e hiç danışılmadı'
+                                                : step.decisionSource === 'replay'
+                                                    ? 'Replay (No AI)'
+                                                    : 'Gerçek LLM çağrısı'
+                                        }"
+                                    >
+                                        ${escapeHtml(DECISION_SOURCE_LABELS[step.decisionSource] || step.decisionSource)}
+                                    </span>
+                                    `
+                                            : ''
+                                    }
+                                    <span class="font-mono text-[10px] uppercase tracking-wider text-on-surface-variant/70 shrink-0 mt-[2px]">
+                                        ${escapeHtml(step.action)}
+                                    </span>
+                                </li>
+                                `,
+                                    )
+                                    .join('')}
+                            </ol>
+                        </td>
+                    </tr>
+                    `
+                            : ''
+                    }
                 `;
             })
             .join('');
@@ -5897,6 +6098,60 @@ async function initSuitesPage() {
                         );
                         button.disabled = false;
                     }
+                });
+            });
+
+        // v3.15 — bkz. yukarıdaki render bloğu NOT'u: initGeneratedTestsPage'deki
+        // .toggleGeneratedTestStepsButton / .openBddFromGeneratedButton delegasyonlarıyla AYNI
+        // desen, sadece bu sayfaya özel sınıf adlarıyla (iki sayfa aynı anda DOM'da olmadığı için
+        // çakışma riski yok, ama karışıklığı önlemek için bilerek ayrı tutuldu).
+        suiteTestsTableBody
+            .querySelectorAll('.toggleSuiteTestStepsButton')
+            .forEach((button) => {
+                button.addEventListener('click', () => {
+
+                    const fileName = button.getAttribute('data-file');
+                    if (!fileName) return;
+
+                    const stepsRow = document.querySelector(
+                        `.suiteStepsRow[data-file="${CSS.escape(fileName)}"]`,
+                    );
+                    if (!stepsRow) return;
+
+                    const nowHidden = stepsRow.classList.toggle('hidden');
+
+                    if (nowHidden) {
+                        expandedSuiteTestSteps.delete(fileName);
+                    } else {
+                        expandedSuiteTestSteps.add(fileName);
+                    }
+
+                    button.setAttribute('aria-expanded', String(!nowHidden));
+
+                    const chevron = button.querySelector('.material-symbols-outlined');
+                    if (chevron) {
+                        chevron.style.transform = nowHidden ? '' : 'rotate(90deg)';
+                    }
+                });
+            });
+
+        suiteTestsTableBody
+            .querySelectorAll('.openSuiteBddButton')
+            .forEach((button) => {
+                button.addEventListener('click', async (event) => {
+
+                    event.stopPropagation();
+
+                    const fileName = button.getAttribute('data-file');
+                    if (!fileName) return;
+
+                    const test = allTests.find((t) => t.fileName === fileName);
+                    if (!test) return;
+
+                    // v3.12'de Generated Tests için tanımlanmış GLOBAL fonksiyon (bkz. dosya başı
+                    // NOT'u) — Create Test sayfasına geçip BDD sekmesini bu testin metniyle dolu
+                    // açar, aynen Generated Tests sayfasındaki "BDD — view / edit" ile birebir.
+                    await openBddEditorForGeneratedTest(test);
                 });
             });
     }
@@ -6224,7 +6479,11 @@ async function initSuitesPage() {
                 const response = await fetch('/api/generated-tests/run-batch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fileNames }),
+                    // v3.19 fix — LegacyTestService.runGeneratedTestsBatch dosya basi NOT'una
+                    // gore Suites sayfasinin bunu gondermesi gerekiyordu ama hic gonderilmiyordu;
+                    // bu yuzden 'replay_step_failed' gercek bir senaryo/site sorunu oldugunda bile
+                    // sessizce ikinci bir AI denemesine dusuluyordu. Artik TEK deneme yapiliyor.
+                    body: JSON.stringify({ fileNames, disableAutoRetry: true }),
                 });
 
                 const result = await response.json();
@@ -6296,9 +6555,31 @@ async function openBddEditorForGeneratedTest(test) {
         return;
     }
 
+    // v3.21 — bkz. sohbet notu: "yönlendirilen sayfada önceki koşumdaki tüm giriş dataları yer
+    // alsın... fakat Test Scenario Instructions kısmında bdd verileri yazılmış şekilde ekran
+    // açılsın". Önceden SADECE bddDescription+runId taşınıyordu (Test Scenario Instructions ve
+    // diğer alanlar bomboş/eski kalıyordu) — artık bu testin ÜRETİLDİĞİ/son çalıştığı run'daki TÜM
+    // giriş verileri (url, isim, değişkenler, tarayıcı/koşum ayarları) da taşınıyor; sadece
+    // "Test Scenario Instructions" BİLEREK orijinal senaryo metni DEĞİL, BDD verisiyle doldurulacak
+    // (bkz. initCreateTestPage "PENDING BDD EDIT" bloğu). Secrets BİLEREK dahil edilmez — değerleri
+    // şifreli saklanıyor ve tarayıcıya hiç gönderilmiyor (bkz. LegacyGeneratedTestMeta.secretsEncrypted
+    // dosya başı açıklaması); kullanıcı burada tekrar çalıştırmak isterse Secret satırını elle girer.
     appState.pendingBddEdit = {
         bddDescription: test.bddDescription || '',
         runId: test.runId || null,
+        url: typeof test.url === 'string' ? test.url : '',
+        testName: test.displayName || '',
+        variables:
+            test.variables && typeof test.variables === 'object'
+                ? test.variables
+                : {},
+        browser: test.browser || 'chromium',
+        headed: Boolean(test.headed),
+        screenshot: Boolean(test.screenshot),
+        video: Boolean(test.video),
+        trace: Boolean(test.trace),
+        useSeleniumGrid: Boolean(test.useSeleniumGrid),
+        projectId: typeof test.projectId === 'number' ? test.projectId : null,
     };
 
     await navigateTo('create');
@@ -7210,18 +7491,6 @@ async function initGeneratedTestsPage() {
                             fileName,
                         );
 
-                    // v3.11 — bkz. LegacyGeneratedTestMeta.bddDescription dosya başı açıklaması.
-                    // Bir toplu koşum bu satırı canlı takip ediyorsa (isLive), bu run henüz
-                    // bitmediği için `test.bddDescription` HÂLÂ eski/önceki bir değer olurdu —
-                    // kafa karıştırmamak için SADECE canlı DEĞİLKEN gösteriyoruz.
-                    const bddDescription =
-                        !isLive &&
-                        typeof test !== 'string' &&
-                        test.bddDescription
-                            ? test.bddDescription
-                            : null;
-
-
                     return `
                         <tr
                             class="
@@ -7572,6 +7841,39 @@ async function initGeneratedTestsPage() {
 
                                     <button
                                         class="
+                                            openBddFromGeneratedButton
+                                            inline-flex
+                                            items-center
+                                            gap-xs
+                                            text-on-surface-variant
+                                            hover:text-on-surface
+                                            px-sm
+                                            py-[6px]
+                                            rounded-lg
+                                            border
+                                            border-outline-variant
+                                        "
+                                        data-file="${fileName}"
+                                        type="button"
+                                        title="Open in the Create Test BDD tab to view or edit"
+                                    >
+
+                                        <span
+                                            class="
+                                                material-symbols-outlined
+                                                text-[16px]
+                                            "
+                                        >
+                                            edit_note
+                                        </span>
+
+                                        BDD
+
+                                    </button>
+
+
+                                    <button
+                                        class="
                                             runGeneratedTestButton
                                             inline-flex
                                             items-center
@@ -7584,7 +7886,7 @@ async function initGeneratedTestsPage() {
                                             font-bold
                                         "
                                         data-file="${fileName}"
-                                        title="Kayıtlı adımlar varsa önce onunla (AI'sız, hızlı) dener; sayfa değişmişse otomatik olarak AI ile yeniden dener"
+                                        title="Bu testin kayitli BDD senaryosunu ve degiskenlerini kullanarak calisir (view code'daki donuk veriler DEGIL)"
                                         type="button"
                                     >
 
@@ -7685,31 +7987,6 @@ async function initGeneratedTestsPage() {
                             data-file="${fileName}"
                         >
                             <td colspan="5" class="pl-[52px] pr-md pb-sm pt-0 bg-surface-container-lowest/40">
-                                ${
-                                bddDescription
-                                    ? `
-                                <div class="pt-sm pb-sm border-b border-outline-variant/30 mb-1">
-                                    <button
-                                        class="
-                                            openBddFromGeneratedButton
-                                            inline-flex items-center gap-xs
-                                            font-label-caps text-label-caps
-                                            text-primary
-                                            hover:underline
-                                        "
-                                        data-file="${fileName}"
-                                        type="button"
-                                        title="Open in the Create Test BDD tab to view or edit"
-                                    >
-                                        <span class="material-symbols-outlined text-[14px]">
-                                            edit_note
-                                        </span>
-                                        BDD — view / edit
-                                    </button>
-                                </div>
-                                `
-                                    : ''
-                            }
                                 ${
                                 isLive &&
                                 steps.length === 0

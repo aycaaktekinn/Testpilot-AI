@@ -14,6 +14,41 @@ const envSchema = z.object({
   OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
   OPENROUTER_SITE_URL: z.string().optional(),
   OPENROUTER_APP_NAME: z.string().optional(),
+  // v3.14 — bkz. sohbet notu: "vitwebpreprodauto ... qwen3.5" canlı log analizi. VakıfBank'ın iç
+  // ağ geçidi, vLLM ile sunulan bir Qwen3(.5) modeli (system_fingerprint: "vllm-0.25.1-..." canlı
+  // hata loglarında görüldü) — bu aile "hibrit thinking" modundadır ve OpenAI-uyumlu chat/completions
+  // isteğine `chat_template_kwargs: {"enable_thinking": false}` eklenirse (vLLM'in Qwen3 sohbet
+  // şablonuna doğrudan geçirdiği, standart olmayan ama zararsız bir ek alan) modelin görünmez "iç
+  // düşünce" aşamasını TAMAMEN atlaması beklenir — bu, max_tokens'ı büyütmekten çok daha güvenilir
+  // bir çözümdür (büyük bütçeler bile reasoning'in TAMAMINI doldurabiliyor, bkz. BddDescriptionGenerator
+  // canlı log — 8000 tokenlık yeniden deneme bile içerik üretemedi). VARSAYILAN KAPALI: bu alan
+  // openrouter.ai'nin GERÇEK halka açık servisine veya vLLM/Qwen3 DIŞINDAKİ bir sağlayıcıya
+  // gönderildiğinde tanınmayan bir JSON alanı olarak sessizce YOK SAYILMASI beklenir (OpenAI-uyumlu
+  // sunucuların standart davranışı), ancak bunu doğrulama imkânımız olmadığından yalnızca
+  // LLM_PROVIDER=openrouter VE bu bayrak .env'de açıkça 'true' yapılan kurulumlarda gönderilir.
+  OPENROUTER_DISABLE_REASONING: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+
+  // v3.17 — bkz. sohbet notu: VakıfBank'ın iç ağ geçidindeki gerçek Qwen3.5 dağıtımının doğrulanmış
+  // context/çıktı limitleri (262144 giriş / 65536 çıkış). Bu ikisi BİLİNÇLİ OLARAK FARKLI amaçlar
+  // taşır:
+  //   - OPENROUTER_MAX_OUTPUT_TOKENS: OpenRouterProvider'ın "bütçe yetersiz kaldı, tekrar dene"
+  //     mantığındaki (bkz. RETRY_MAX_TOKENS_CEILING) MUTLAK üst sınır — bir çağıran (ör.
+  //     BddDescriptionGenerator) `maxTokensRetryCeiling` ile kendi tavanını istese bile bu değerin
+  //     ÜZERİNE asla çıkamaz (modelin gerçekten desteklediği azami çıktı budur, üzerini istemek
+  //     sadece sağlayıcıdan hata almaya yol açar). AKTİF OLARAK KULLANILIYOR (bkz. OpenRouterProvider).
+  //   - OPENROUTER_MAX_INPUT_TOKENS: modelin gerçek context penceresi — ŞU AN SADECE BELGE/REFERANS
+  //     amaçlıdır, herhangi bir prompt/DOM kırpma mantığını TETİKLEMEZ (böyle bir mekanizma bu
+  //     projede henüz YOK — PromptBuilder/DomAnalyzer şu an prompt boyutunu token bazında ölçüp
+  //     kırpmıyor). İleride bir giriş-tarafı bütçe kontrolü eklenirse buradan okunması düşünülebilir;
+  //     şimdilik yanlışlıkla "aktif bir limit uyguluyor" sanılmasın diye bu NOT bilerek net tutuldu.
+  // Varsayılanlar BİLEREK OpenRouter'ın GERÇEK halka açık servisi/başka modeller için de makul kalsın
+  // diye yüksek tutuldu (çoğu model bunun altında kalır) — spesifik bir dağıtımda farklıysa .env'den
+  // override edilebilir.
+  OPENROUTER_MAX_INPUT_TOKENS: z.coerce.number().int().positive().default(262144),
+  OPENROUTER_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(65536),
 
   // Gemini yalnızca LLM_PROVIDER="gemini" iken zorunludur. Anahtar https://aistudio.google.com/
   // üzerinden alınır.
