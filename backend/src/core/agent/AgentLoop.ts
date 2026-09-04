@@ -251,7 +251,7 @@ export class AgentLoop {
 
       // `let`: bir click aksiyonu YENİ bir sekme açarsa (bkz. BrowserManager.adoptNewestPageIfOpened
       // dosya başındaki NOT), aktif sayfa referansı bu döngü boyunca değişebilir.
-      let page = await browserManager.launch(options, videoDir);
+      let page = await browserManager.launch(options, videoDir, undefined, input.url);
 
       // v2.2 — Grid session'ı gerçekten açıldıktan HEMEN SONRA (bkz. gridLiveViewUrl dosya başı
       // NOT'u) — burada `undefined` kalması NORMALDİR (Grid kullanılmıyorsa ya da noVNC eşlemesi
@@ -269,6 +269,32 @@ export class AgentLoop {
       for (let stepIndex = 0; stepIndex < options.maxSteps; stepIndex++) {
         if (this.cancelled) {
           return await finishRun('cancelled', 'Kullanıcı tarafından iptal edildi');
+        }
+
+        // v3.27 — bkz. sohbet notu: "page.screenshot: Target page, context or browser has been
+        // closed" (run SONUNDA görülüyordu, ama KÖK NEDEN döngü SIRASINDA oluşuyor). EN OLASI
+        // SENARYO: `adoptNewestPageIfOpened()` bir popup'ı (ör. OTP/2FA doğrulama penceresi) aktif
+        // sayfa yaptı, SONRA SİTENİN KENDİSİ o popup'ı kapattı (yaygın bir davranış) — `page`
+        // artık KAPALI bir referans, ama döngü bunu FARK ETMEDEN `domAnalyzer.analyze(page, ...)`
+        // çağırmaya devam ediyordu; bu da (Playwright'ın hata mesajı JENERİK olduğu için) run'ı
+        // ANLAŞILMASI GÜÇ bir "Target page, context or browser has been closed" hatasıyla
+        // durduruyordu — hatta bazen bu, döngüden TAMAMEN kaçıp `finally` bloğundaki ekran
+        // görüntüsü adımına kadar hiç yakalanmıyordu (görülen DEBUG log tam bu durumdu). Burada
+        // ERKEN, HER ADIM BAŞINDA tespit edip (bkz. BrowserManager.getLivePage dosya başı NOT'u)
+        // context'teki başka açık bir sekmeye (ör. popup'ın açtığı orijinal ebeveyn sekme) geri
+        // dönüyoruz — hiçbiri açık değilse run, opak bir Playwright hatası yerine NET bir mesajla
+        // ('browser_error: ...') düzgünce sonlandırılır.
+        if (page.isClosed()) {
+          const recovered = browserManager.getLivePage();
+          if (!recovered) {
+            return await finishRun(
+              'error',
+              'browser_error: Aktif tarayıcı sayfası beklenmedik şekilde kapandı ve geri kurtarılamadı ' +
+                '(ör. bir popup/OTP penceresi kendini kapatmış olabilir, ya da Grid session\'ı sonlanmış olabilir).',
+            );
+          }
+          log.warn({ runId, stepIndex }, 'Aktif sayfa kapanmış bulundu, başka bir açık sekmeye geçildi');
+          page = recovered;
         }
 
         // hepsiburada.com üzerinde canlı olarak gözlemlendi: banner ilk yüklemede DEĞİL, birkaç

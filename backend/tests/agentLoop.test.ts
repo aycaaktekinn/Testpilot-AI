@@ -26,11 +26,17 @@ let currentFakePage: unknown;
 const launchMock = vi.fn();
 const closeMock = vi.fn().mockResolvedValue({});
 const adoptNewestMock = vi.fn().mockResolvedValue(false);
+// v3.27 — bkz. BrowserManager.getLivePage dosya başı NOT'u ("page.isClosed()" kurtarma akışı).
+// Varsayılan `null` (hiçbir kurtarma sayfası yok) — SADECE ilgili testler bunu bir sahte sayfayla
+// override eder; happy-path testlerinde `page.isClosed()` hep `false` döndüğü için bu mock hiç
+// çağrılmaz.
+const getLivePageMock = vi.fn(() => null as unknown);
 
 vi.mock('../src/core/browser/BrowserManager.js', () => ({
   BrowserManager: vi.fn().mockImplementation(() => ({
     launch: launchMock,
     getPage: vi.fn(() => currentFakePage),
+    getLivePage: getLivePageMock,
     adoptNewestPageIfOpened: adoptNewestMock,
     // v2.2 — bkz. BrowserManager.getGridLiveViewUrl dosya başı açıklaması. Bu test dosyasındaki
     // senaryoların hiçbiri Selenium Grid kullanmıyor — bu yüzden sabit `null` yeterli (AgentLoop
@@ -114,11 +120,16 @@ function setupHappyBrowserDefaults(): void {
     url: vi.fn().mockReturnValue('https://example.com'),
     waitForLoadState: vi.fn().mockResolvedValue(undefined),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    // v3.27 — bkz. AgentLoop.run döngü başındaki "page.isClosed()" kontrolü (BrowserManager.getLivePage
+    // dosya başı NOT'u) — gerçek Playwright Page'lerinde HER ZAMAN var olan bir metod, testlerde de
+    // olması gerekiyor; aksi halde HER adımda çağrılıp "isClosed is not a function" ile patlar.
+    isClosed: vi.fn().mockReturnValue(false),
   };
   currentFakePage = fakePage;
   launchMock.mockReset().mockResolvedValue(fakePage);
   closeMock.mockReset().mockResolvedValue({});
   adoptNewestMock.mockReset().mockResolvedValue(false);
+  getLivePageMock.mockReset().mockReturnValue(null);
   analyzeMock.mockReset().mockResolvedValue({ snapshot: fakeSnapshot(), registry: new Map() });
   executeMock.mockReset().mockResolvedValue({ ok: true, message: 'ok' });
 }
@@ -247,6 +258,43 @@ describe('AgentLoop — güvenlik kapıları', () => {
     expect(report.status).toBe('failed');
     expect(report.failureReason).toBe('max_steps_reached: azami adım sayısına ulaşıldı');
     expect(report.totalSteps).toBe(2);
+  });
+});
+
+describe('AgentLoop — sayfa kapanma kurtarma (v3.27 — ör. bir OTP/2FA popup\'ının kendi kendini kapatması)', () => {
+  it('adım başında page.isClosed() true dönerse VE BrowserManager.getLivePage() başka açık bir sayfa bulursa, run o sayfayla SORUNSUZCA devam eder', async () => {
+    setupHappyBrowserDefaults();
+    const closedPage = currentFakePage as { isClosed: ReturnType<typeof vi.fn> };
+    closedPage.isClosed.mockReturnValue(true);
+
+    const recoveredPage = { isClosed: vi.fn().mockReturnValue(false) };
+    getLivePageMock.mockReturnValue(recoveredPage);
+
+    const { provider } = scriptedLlm([decisionJson({ action: 'finish_success', confidence: 0.95, summary: 'Kurtarılan sayfada tamamlandı', targetRef: undefined })]);
+    const loop = new AgentLoop(provider);
+
+    const report = await loop.run({ runId: 'r-page-recovered', url: 'https://example.com', scenario: 'test', options: fakeOptions() });
+
+    expect(getLivePageMock).toHaveBeenCalledTimes(1);
+    expect(report.status).toBe('passed');
+  });
+
+  it('adım başında page.isClosed() true dönerse VE BrowserManager.getLivePage() hiçbir açık sayfa bulamazsa (null), run opak bir Playwright hatası yerine NET bir "browser_error:" mesajıyla "error" olarak biter', async () => {
+    setupHappyBrowserDefaults();
+    const closedPage = currentFakePage as { isClosed: ReturnType<typeof vi.fn> };
+    closedPage.isClosed.mockReturnValue(true);
+    getLivePageMock.mockReturnValue(null);
+
+    const { provider, completeMock } = scriptedLlm([decisionJson({ action: 'click', targetRef: 'e1', confidence: 0.9 })]);
+    const loop = new AgentLoop(provider);
+
+    const report = await loop.run({ runId: 'r-page-unrecoverable', url: 'https://example.com', scenario: 'test', options: fakeOptions() });
+
+    expect(report.status).toBe('error');
+    expect(report.failureReason).toContain('browser_error:');
+    // Sayfa zaten kapalıyken hiç DOM taraması/LLM çağrısı yapılmamalı — hata ERKEN yakalanmalı.
+    expect(analyzeMock).not.toHaveBeenCalled();
+    expect(completeMock).not.toHaveBeenCalled();
   });
 });
 

@@ -38,9 +38,19 @@ export interface GridSession {
 export class SeleniumGridClient {
   constructor(private readonly hubUrl: string) {}
 
-  async createSession(): Promise<GridSession> {
+  async createSession(targetUrl?: string): Promise<GridSession> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SESSION_CREATE_TIMEOUT_MS);
+
+    // v3.24 — VakıfBank'ın kendi Java/Selenium (RemoteWebDriver) testlerinde AYNI Grid'e karşı
+    // KANITLANMIŞ ŞEKİLDE ÇALIŞAN ChromeOptions'tan uyarlandı (bkz. sohbette paylaşılan
+    // `capabilitiesForRemote()`). Java tarafı standart WebDriver protokolüyle TÜM komutları
+    // (navigasyon dahil) hub üzerinden PROXY'LER — bu yüzden onun başarılı çalışması, hub-node
+    // ağ erişilebilirliğiyle ilgili SORUNUMUZU (connectOverCDP'nin node'a DOĞRUDAN bağlanma
+    // ihtiyacı) KANITLAMAZ/ÇÖZMEZ (bkz. rewriteHostInUrl v3.23 NOT'u — o ayrı ve GEREKLİ bir
+    // düzeltmeydi). Ama BİR KERE bağlantı kurulduktan SONRA Chrome'un `.intra` sertifikasıyla/
+    // orijiniyle nasıl davrandığı ORTAK bir sorun — bu yüzden aşağıdaki flag'ler buradan alındı.
+    const insecureOriginArg = this.buildInsecureOriginArg(targetUrl);
 
     let response: Response;
     try {
@@ -53,7 +63,32 @@ export class SeleniumGridClient {
         // vardır).
         body: JSON.stringify({
           capabilities: {
-            alwaysMatch: { browserName: 'chrome' },
+            alwaysMatch: {
+              browserName: 'chrome',
+              // v3.22 -- VakifBank ic agindaki (.intra) HTTPS adresleri genelde kurumsal/ic CA
+              // imzali sertifikalar kullanir; bu sertifikalar Grid node'unun guvenilir kok
+              // sertifika deposunda OLMAYABILIR. Bu durumda Chrome navigasyonu tamamlanmadan
+              // "Baglantiniz ozel degil" interstitial uyarisinda TAKILI KALIR -- CDP uzerinden bu
+              // uyari otomatik gecilemez, adres cubugunda "data:," gorunmeye devam eder.
+              // acceptInsecureCerts + asagidaki Chrome flag'leri, gecersiz/guvenilmeyen
+              // sertifikalari SESSIZCE kabul ederek bu interstitial'i bastan engeller.
+              acceptInsecureCerts: true,
+              'goog:chromeOptions': {
+                args: [
+                  '--ignore-certificate-errors',
+                  '--ignore-ssl-errors',
+                  '--allow-insecure-localhost',
+                  '--allow-running-insecure-content',
+                  // v3.24 — Java tarafındaki kanıtlanmış ayarlarla hizalandı.
+                  '--disable-notifications',
+                  '--disable-popup-blocking',
+                  ...(insecureOriginArg ? [insecureOriginArg] : []),
+                ],
+                // v3.24 — "Chrome is being controlled by automated test software" banner'ını
+                // gizler (Java tarafındaki excludeSwitches ile aynı) — kozmetik, testi etkilemez.
+                excludeSwitches: ['enable-automation'],
+              },
+            },
           },
         }),
       });
@@ -104,11 +139,49 @@ export class SeleniumGridClient {
     // döndürür, yani orijinal IP'yi hâlâ `cdpUrl`'den okuyabiliriz.
     const originalNodeHost = this.extractHostname(cdpUrl);
 
-    const finalCdpUrl = this.rewriteHostInUrl(cdpUrl, env.SELENIUM_GRID_NODE_HOST_MAP, 'SELENIUM_GRID_NODE_HOST_MAP');
+    // v3.23 -- Grid ARTIK bu makinenin disinda, UZAK bir sunucuda calisiyor (ör. 10.30.165.144) --
+    // node'un IP'sini bizim ELİMİZDE olan bir docker-compose.override.yml ile SABİTLEYEMİYORUZ, bu
+    // yuzden SELENIUM_GRID_NODE_HOST_MAP'te (yerel gelistirme icin, sabit 172.28.0.11-15 IP'leri
+    // icin yazilmis) bu node'un IP'si (ör. "172.18.0.6") ASLA bulunamayacak -- eskiden bu durumda
+    // (harita tanimli ama eslesme yok) adres OLDUGU GIBI (erisilmez ic Docker IP'siyle) kullanilip
+    // connectOverCDP 30sn sonra timeout aliyordu. FALLBACK: eslesme yoksa artik host kismini hub'in
+    // KENDI adresiyle (10.30.165.144) DEGISTIRIYORUZ, PORTU ise oldugu gibi (node'un self-report
+    // ettigi port, genelde hub ile AYNI -- bkz. asagidaki rewriteHostInUrl NOT'u) birakiyoruz. Bu,
+    // hub+node'larin AYNI fiziksel sunucuda calistigi (ki port numarasi yukaridaki timeout log'unda
+    // hub'inkiyle AYNI -- 4444 -- oldugu icin oyle oldugu ortada) en yaygin Grid-Docker kurulumu
+    // icin dogru sonucu verir. Eger bir gun node'lar GERCEKTEN farkli bir sunucuda/portta olursa,
+    // SELENIUM_GRID_NODE_HOST_MAP'e o node'un IP'si icin ACIK bir eslesme eklemek bu fallback'i
+    // (oncelik hala haritada) GECERSIZ KILAR -- yani bu degisiklik var olan haritali akisi BOZMAZ.
+    const gridHubHost = this.extractHostname(this.hubUrl) ?? undefined;
+
+    const finalCdpUrl = this.rewriteHostInUrl(
+      cdpUrl,
+      env.SELENIUM_GRID_NODE_HOST_MAP,
+      'SELENIUM_GRID_NODE_HOST_MAP',
+      gridHubHost,
+    );
     const liveViewUrl = originalNodeHost ? this.computeLiveViewUrl(originalNodeHost) : undefined;
 
     log.info({ sessionId, liveViewUrl }, "Selenium Grid session'ı açıldı");
     return { sessionId, cdpUrl: finalCdpUrl, liveViewUrl };
+  }
+
+  /**
+   * v3.24 — Java tarafındaki `--unsafely-treat-insecure-origin-as-secure=<BASEURL>` flag'inin
+   * karşılığı. `targetUrl` geçerli bir URL DEĞİLSE (ör. verilmediyse — bkz. BrowserManager.launch
+   * targetUrl NOT'u, ya da parse edilemiyorsa) `undefined` döner ve flag HİÇ EKLENMEZ — davranış
+   * eskisi gibi kalır. Sadece origin'i (protokol+host+port, path'siz) alır — Chrome bu flag'i tam
+   * origin bekler.
+   */
+  private buildInsecureOriginArg(targetUrl: string | undefined): string | undefined {
+    if (!targetUrl) return undefined;
+    try {
+      const origin = new URL(targetUrl).origin;
+      return `--unsafely-treat-insecure-origin-as-secure=${origin}`;
+    } catch (err) {
+      log.warn({ err, targetUrl }, "Hedef URL'nin origin'i çıkarılamadı, --unsafely-treat-insecure-origin-as-secure eklenmiyor");
+      return undefined;
+    }
   }
 
   private extractHostname(url: string): string | null {
@@ -138,45 +211,78 @@ export class SeleniumGridClient {
    * kullanılır — bu yüzden hangi env değişkeninin kaynaklandığı (`mapEnvVarName`) sadece log
    * mesajlarında doğru ismi göstermek için parametre olarak alınır.
    */
-  private rewriteHostInUrl(url: string, mapEnvValue: string | undefined, mapEnvVarName: string): string {
-    if (!mapEnvValue) {
-      return url;
+  private rewriteHostInUrl(
+    url: string,
+    mapEnvValue: string | undefined,
+    mapEnvVarName: string,
+    fallbackHost?: string,
+  ): string {
+    const nodeHost = this.extractHostname(url);
+    const replacement = mapEnvValue ? this.lookupReplacement(mapEnvValue, nodeHost, mapEnvVarName) : undefined;
+
+    if (replacement) {
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch (err) {
+        log.warn({ err, url }, 'Adres ayrıştırılamadı, olduğu gibi kullanılıyor');
+        return url;
+      }
+
+      const [replacementHost, replacementPort] = replacement.split(':');
+      if (!replacementHost) {
+        log.warn({ mapEnvVarName, replacement }, '"host:port" formatında olmalı, adres olduğu gibi kullanılıyor');
+        return url;
+      }
+      parsed.hostname = replacementHost;
+      if (replacementPort) {
+        parsed.port = replacementPort;
+      }
+
+      const rewritten = parsed.toString();
+      log.debug({ from: url, to: rewritten }, "Adres host'tan erişilebilir olacak şekilde (haritadan) yeniden yazıldı");
+      return rewritten;
     }
 
-    const nodeHost = this.extractHostname(url);
-    const replacement = this.lookupReplacement(mapEnvValue, nodeHost, mapEnvVarName);
-    if (!replacement) {
-      // Harita TANIMLI ama bu node için karşılığı YOKSA sessizce devam ETMİYORUZ — bu, host'tan
-      // erişilemeyecek bir adresle bağlanmaya çalışılıp anlaşılması güç bir ECONNREFUSED/ECONNRESET
-      // almaktansa, NEDEN başarısız olabileceğini şimdiden loglara yazmak içindir.
+    // v3.23 — Harita TANIMLI DEĞİL ya da bu node için bir karşılığı YOK. `fallbackHost` verilmişse
+    // (çağıran taraf hub'ın kendi host'unu geçiyor) VE dönen node adresi KLASİK bir Docker
+    // bridge-içi IP'ye BENZİYORSA (172.16.0.0/12 — bkz. isDockerBridgeLikeIp), bunu hub'ın KENDİ
+    // adresiyle (PORTU KORUYARAK) değiştiriyoruz — hub+node'ların aynı sunucuda/container'da
+    // çalıştığı (canlıda gözlemlendi: dönen CDP portu hub'ınkiyle AYNIYDI — 4444) en yaygın
+    // Grid-Docker kurulumu için doğru sonucu verir.
+    //
+    // BİLİNÇLİ OLARAK sadece 172.16.0.0/12'ye bakıyoruz (10.0.0.0/8 veya 192.168.0.0/16'ya DEĞİL):
+    // VakıfBank gibi kurumsal ağlarda "gerçek", host'tan zaten doğrudan erişilebilir node'lar da
+    // GAYET NORMAL şekilde 10.x adresler kullanabilir (ör. hub'ın kendisi 10.30.165.144) — böyle
+    // bir adresi de "erişilemez" sayıp hub host'uyla ezmek, DOĞRU ÇALIŞAN bir çok-node kurulumunu
+    // BOZAR. 172.16.0.0/12 ise Docker'ın hem varsayılan bridge ağının hem de bu projenin kendi
+    // özel ağının (bkz. docker-compose.override.yml — 172.28.0.0/24) neredeyse her zaman kullandığı
+    // aralıktır — bu yüzden "muhtemelen container-içi, host'tan erişilemez" için GÜVENİLİR bir
+    // işaret sayılabilir.
+    if (fallbackHost && nodeHost && isDockerBridgeLikeIp(nodeHost) && nodeHost !== fallbackHost) {
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch (err) {
+        log.warn({ err, url }, 'Adres ayrıştırılamadı, olduğu gibi kullanılıyor');
+        return url;
+      }
+      parsed.hostname = fallbackHost;
+      const rewritten = parsed.toString();
+      log.info(
+        { nodeHost, fallbackHost, from: url, to: rewritten },
+        "Node için haritada eşleme yok ve adres bir Docker bridge IP'sine benziyor — Grid hub'ının kendi adresiyle (port korunarak) yeniden yazıldı",
+      );
+      return rewritten;
+    }
+
+    if (!replacement && mapEnvValue) {
       log.warn(
         { nodeHost, mapEnvVarName },
         'Bu node için haritada bir eşleme bulunamadı, adres olduğu gibi kullanılıyor (host makineden erişilemeyebilir)',
       );
-      return url;
     }
-
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch (err) {
-      log.warn({ err, url }, 'Adres ayrıştırılamadı, olduğu gibi kullanılıyor');
-      return url;
-    }
-
-    const [replacementHost, replacementPort] = replacement.split(':');
-    if (!replacementHost) {
-      log.warn({ mapEnvVarName, replacement }, '"host:port" formatında olmalı, adres olduğu gibi kullanılıyor');
-      return url;
-    }
-    parsed.hostname = replacementHost;
-    if (replacementPort) {
-      parsed.port = replacementPort;
-    }
-
-    const rewritten = parsed.toString();
-    log.debug({ from: url, to: rewritten }, "Adres host'tan erişilebilir olacak şekilde yeniden yazıldı");
-    return rewritten;
+    return url;
   }
 
   /**
@@ -238,4 +344,19 @@ interface GridSessionResponse {
 function truncate(text: string, maxLength: number): string {
   const trimmed = text.trim();
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}…` : trimmed;
+}
+
+/**
+ * v3.23 — `host`, Docker'ın klasik özel adres bloğu olan 172.16.0.0/12 içinde mi? (172.16.x.x —
+ * 172.31.x.x). Bilerek SADECE bu aralığa bakılıyor (10.0.0.0/8 veya 192.168.0.0/16'ya DEĞİL) —
+ * bkz. rewriteHostInUrl içindeki v3.23 NOT'u: kurumsal ağlarda 10.x/192.168.x adresler GERÇEKTEN
+ * doğrudan erişilebilir olabilir (ör. bu projede Grid hub'ının kendisi 10.30.165.144), bu yüzden
+ * onlara DOKUNULMAMASI gerekir — 172.16.0.0/12 ise container-içi bir adres için güvenilir bir
+ * işarettir.
+ */
+function isDockerBridgeLikeIp(host: string): boolean {
+  const match = host.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (!match) return false;
+  const secondOctet = Number(match[1]);
+  return secondOctet >= 16 && secondOctet <= 31;
 }

@@ -86,6 +86,10 @@ async function loadAgentLoopWithVectorCache(envOverrides: Record<string, unknown
     url: vi.fn().mockReturnValue('https://example.com'),
     waitForLoadState: vi.fn().mockResolvedValue(undefined),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
+    // v3.27 — bkz. AgentLoop.run döngü başındaki "page.isClosed()" kontrolü (BrowserManager.getLivePage
+    // dosya başı NOT'u) — gerçek Playwright Page'lerinde HER ZAMAN var olan bir metod, testlerde de
+    // olması gerekiyor; aksi halde HER adımda çağrılıp "isClosed is not a function" ile patlar.
+    isClosed: vi.fn().mockReturnValue(false),
   };
   vi.doMock(BROWSER_MANAGER_MODULE, () => ({
     BrowserManager: vi.fn().mockImplementation(() => ({

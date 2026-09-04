@@ -61,6 +61,11 @@ export class BrowserManager {
     options: RunOptions,
     videoDir?: string,
     storageState?: Awaited<ReturnType<BrowserContext['storageState']>>,
+    // v3.24 — SADECE Selenium Grid modunda kullanılır (bkz. SeleniumGridClient.createSession
+    // dosya başı NOT'u): Chrome'a "--unsafely-treat-insecure-origin-as-secure=<origin>" flag'i
+    // vermek için testin hedef URL'sinin origin'i gerekir. Verilmezse (yerel koşumlar, ya da bu
+    // parametreyi henüz geçmeyen eski çağrı yerleri) davranış AYNEN korunur — flag eklenmez.
+    targetUrl?: string,
   ): Promise<Page> {
     // v3.2 — bkz. sohbet notu: "test için chrome sekmesi açılıyor ya o sekme tam ekran olsun".
     // SADECE headed (görünür) + yerel (Selenium Grid'siz) + Chromium koşumlarında anlamlı: pencere
@@ -71,7 +76,7 @@ export class BrowserManager {
     const shouldMaximize = !options.useSeleniumGrid && !options.headless && options.browserEngine === 'chromium';
 
     if (options.useSeleniumGrid) {
-      this.browser = await this.launchViaSeleniumGrid(options);
+      this.browser = await this.launchViaSeleniumGrid(options, targetUrl);
     } else {
       const launcher = ENGINES[options.browserEngine];
       this.browser = await launcher.launch({
@@ -93,6 +98,15 @@ export class BrowserManager {
       ...(options.browserEngine === 'chromium' ? { userAgent: CHROMIUM_USER_AGENT } : {}),
       ...(options.captureVideo && videoDir ? { recordVideo: { dir: videoDir, size: options.viewport } } : {}),
       ...(storageState ? { storageState } : {}),
+      // v3.22 — VakıfBank iç ağındaki (.intra) HTTPS adresleri kurumsal/iç CA imzalı sertifikalar
+      // kullanabilir. Playwright, tarayıcı bağlantısı yerel mi yoksa Selenium Grid üzerinden
+      // connectOverCDP() ile mi kurulmuş olursa olsun, bu ayarı KENDİSİ (Chrome'un sertifika
+      // uyarı sayfasından BAĞIMSIZ olarak) uygular — güvenilmeyen/geçersiz sertifikalı sayfalara
+      // navigasyonun sessizce reddedilip adres çubuğunun "data:," durumunda takılı kalmasını
+      // önler. Grid node'u tarafında AYNI sorun için bkz. SeleniumGridClient.createSession
+      // (acceptInsecureCerts + Chrome flag'leri) — ikisi birbirini TAMAMLAR, biri diğerinin
+      // yerine geçmez.
+      ignoreHTTPSErrors: true,
     });
     this.context.setDefaultTimeout(options.defaultActionTimeoutMs);
     this.context.setDefaultNavigationTimeout(options.navigationTimeoutMs);
@@ -106,6 +120,19 @@ export class BrowserManager {
     this.video = this.page.video();
     this.attachDialogHandler(this.page);
 
+    // v3.28 — GERİ ALINDI: v3.25/v3.26'da Grid'in kendi açtığı boş ilk context'i/sekmesini
+    // ("data:,") KAPATMAYA çalışıyorduk (noVNC'de "iki sekme" görünmesin diye). Canlıda İKİ KEZ
+    // doğrulandı ki bu, bu Grid kurulumunda GÜVENLİ DEĞİL: sırayla "browser.newContext: Target
+    // page, context or browser has been closed" (v3.25, kapatma newContext()'ten ÖNCE yapılıyordu)
+    // ve — sıralama newContext()'ten SONRAYA alınmasına rağmen (v3.26) — "page.goto: Target page,
+    // context or browser has been closed" (v3.28 vakası: run'ın İLK page.goto() çağrısı bile artık
+    // ÖLÜ bir browser'a rastlıyordu) hatalarına yol açtı. Bu Grid node'unun/CDP relay'inin, pre-
+    // existing default context'i (hatta bizim KENDİ context'imiz zaten açıkken bile) kapatmaya izin
+    // vermediği, bunun yerine (best-effort try/catch HİÇBİR ŞEY FIRLATMADIĞI için sessizce) TÜM CDP
+    // bağlantısını/oturumu bozduğu anlaşılıyor. Kalıcı, tekrarlayan bir "run'ın kendisi çöküyor"
+    // regresyonu, kozmetik bir "ekstra boş sekme görünüyor" sorunundan KESİNLİKLE DAHA KÖTÜDÜR — bu
+    // yüzden bu temizlik TAMAMEN KALDIRILDI. noVNC'de yine iki sekme görünecek (biri boş "data:,",
+    // diğeri gerçek koşum) ama run'lar artık GÜVENİLİR şekilde tamamlanacak.
     if (shouldMaximize) {
       await this.maximizeWindow(this.page);
     }
@@ -161,7 +188,7 @@ export class BrowserManager {
    * hatayla durdurulur (aksi halde kullanıcı "Grid kullanıyorum" sanıp aslında yerelde koştuğunu
    * fark etmeyebilir).
    */
-  private async launchViaSeleniumGrid(options: RunOptions): Promise<Browser> {
+  private async launchViaSeleniumGrid(options: RunOptions, targetUrl?: string): Promise<Browser> {
     if (options.browserEngine !== 'chromium') {
       throw new SeleniumGridError(
         `Selenium Grid SADECE Chromium için desteklenir (Firefox/WebKit Grid node'ları saf WebDriver ` +
@@ -172,7 +199,7 @@ export class BrowserManager {
     const gridUrl = await this.resolveGridUrl();
 
     this.gridClient = new SeleniumGridClient(gridUrl);
-    const session = await this.gridClient.createSession();
+    const session = await this.gridClient.createSession(targetUrl);
     this.gridSessionId = session.sessionId;
     this.gridLiveViewUrl = session.liveViewUrl ?? null;
 
@@ -341,11 +368,37 @@ export class BrowserManager {
     return !this.isBlankUrl(page.url());
   }
 
+  /**
+   * v3.27 — bkz. sohbet notu: "page.screenshot: Target page, context or browser has been closed".
+   * KÖK NEDEN (en olası): `adoptNewestPageIfOpened()` bir popup'ı (ör. VakıfBank girişindeki bir
+   * OTP/2FA doğrulama penceresi) aktif sayfa yaptıktan SONRA, SİTENİN KENDİSİ o popup'ı kapatabilir
+   * (OTP pencereleri için yaygın bir davranış) — bu durumda `this.page` artık KAPALI bir sayfaya
+   * işaret eder ve onu kullanan HER ŞEY (DOM taraması, ekran görüntüsü, vb.) bu hatayla patlar.
+   * `this.page` kapalıysa context'teki BAŞKA açık bir sayfaya (ör. `adoptNewestPageIfOpened`'ın
+   * kapatmadığı orijinal ebeveyn sekme) geçer — hiçbiri açık değilse `null` döner. AgentLoop'un ana
+   * döngüsü de (bkz. AgentLoop.run — her adım başındaki kontrol) AYNI mekanizmayı kullanır; burada
+   * (run bittikten SONRA, `finally` bloğunda) AYRICA çağrılması, döngü sırasında hiç tetiklenmemiş
+   * olsa bile en azından SON ekran görüntüsü için başka bir şans tanır.
+   */
+  getLivePage(): Page | null {
+    if (this.page && !this.page.isClosed()) return this.page;
+
+    const candidate = this.context?.pages().find((p) => !p.isClosed()) ?? null;
+    if (candidate) {
+      log.warn('Aktif sayfa kapanmış bulundu, context içindeki başka bir açık sekmeye geçildi');
+      this.page = candidate;
+      this.video = candidate.video();
+      this.attachDialogHandler(candidate);
+    }
+    return candidate;
+  }
+
   /** Sayfanın tam ekran görüntüsünü verilen yola kaydeder. Page/context hâlâ açıkken çağrılmalıdır. */
   async captureScreenshot(destinationPath: string): Promise<boolean> {
     try {
-      if (!this.page) return false;
-      await this.page.screenshot({ path: destinationPath, fullPage: true, timeout: 10000 });
+      const page = this.getLivePage();
+      if (!page) return false;
+      await page.screenshot({ path: destinationPath, fullPage: true, timeout: 10000 });
       return true;
     } catch (err) {
       log.debug({ err }, 'Ekran görüntüsü alınamadı (yok sayıldı)');

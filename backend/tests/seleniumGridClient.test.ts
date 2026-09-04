@@ -62,11 +62,67 @@ describe('SeleniumGridClient', () => {
 
     expect(session).toEqual({ sessionId: 'sess-123', cdpUrl: 'ws://node-1:9222/devtools/browser/abc' });
 
-    // Doğru endpoint'e, doğru W3C "New Session" gövdesiyle (SADECE chrome) istek atılmış olmalı.
+    // Doğru endpoint'e, doğru W3C "New Session" gövdesiyle istek atılmış olmalı (v3.22/v3.24 —
+    // sertifika/güvenlik capability'leri + Java tarafındaki kanıtlanmış Chrome flag'leri dahil;
+    // targetUrl verilmediği için --unsafely-treat-insecure-origin-as-secure YOK).
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(url).toBe(`${HUB_URL}/session`);
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ capabilities: { alwaysMatch: { browserName: 'chrome' } } });
+    expect(JSON.parse(init.body as string)).toEqual({
+      capabilities: {
+        alwaysMatch: {
+          browserName: 'chrome',
+          acceptInsecureCerts: true,
+          'goog:chromeOptions': {
+            args: [
+              '--ignore-certificate-errors',
+              '--ignore-ssl-errors',
+              '--allow-insecure-localhost',
+              '--allow-running-insecure-content',
+              '--disable-notifications',
+              '--disable-popup-blocking',
+            ],
+            excludeSwitches: ['enable-automation'],
+          },
+        },
+      },
+    });
+  });
+
+  it('v3.24 — createSession(targetUrl): geçerli bir hedef URL verilirse --unsafely-treat-insecure-origin-as-secure=<origin> flag\'i eklenir', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse({
+        value: { sessionId: 's1', capabilities: { 'se:cdp': 'ws://node-1:9222/devtools/browser/abc' } },
+      }),
+    );
+
+    const client = new SeleniumGridClient(HUB_URL);
+    await client.createSession('https://vitwebpreprodauto.vakifbank.intra/login?returnUrl=%2F');
+
+    const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(body.capabilities.alwaysMatch['goog:chromeOptions'].args).toContain(
+      '--unsafely-treat-insecure-origin-as-secure=https://vitwebpreprodauto.vakifbank.intra',
+    );
+  });
+
+  it('v3.24 — createSession(targetUrl): geçersiz bir URL sessizce yok sayılır (flag eklenmez, fırlatmaz)', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      jsonResponse({
+        value: { sessionId: 's1', capabilities: { 'se:cdp': 'ws://node-1:9222/devtools/browser/abc' } },
+      }),
+    );
+
+    const client = new SeleniumGridClient(HUB_URL);
+    await expect(client.createSession('boyle-bir-url-yok')).resolves.toBeTruthy();
+
+    const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    const body = JSON.parse(init.body as string);
+    expect(
+      (body.capabilities.alwaysMatch['goog:chromeOptions'].args as string[]).some((a: string) =>
+        a.startsWith('--unsafely-treat-insecure-origin-as-secure'),
+      ),
+    ).toBe(false);
   });
 
   it('createSession(): hub sonda "/" ile bitse bile endpoint doğru kurulur', async () => {
@@ -138,7 +194,7 @@ describe('SeleniumGridClient', () => {
       expect(session.cdpUrl).toBe('ws://localhost:5561/session/s1/se/cdp');
     });
 
-    it('harita tanımlı ama node eşlesmiyorsa CDP adresini oldugu gibi birakir', async () => {
+    it('v3.23 — harita tanımlı ama node eşlesmiyorsa VE dönen host Docker bridge IP\'sine benziyorsa, hub\'ın kendi hostuyla (portu koruyarak) yeniden yazar', async () => {
       env.SELENIUM_GRID_NODE_HOST_MAP = JSON.stringify({ '172.28.0.11': 'localhost:5561' });
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         jsonResponse({
@@ -149,10 +205,11 @@ describe('SeleniumGridClient', () => {
       const client = new SeleniumGridClient(HUB_URL);
       const session = await client.createSession();
 
-      expect(session.cdpUrl).toBe('ws://172.28.0.99:4444/session/s1/se/cdp');
+      // HUB_URL = 'http://grid-hub.local:4444' — host 'grid-hub.local' ile değişti, port (4444) korundu.
+      expect(session.cdpUrl).toBe('ws://grid-hub.local:4444/session/s1/se/cdp');
     });
 
-    it('harita gecersiz JSON ise CDP adresini oldugu gibi birakir (fırlatmaz)', async () => {
+    it('harita gecersiz JSON ise fırlatmaz (v3.23 fallback\'a düşer, Docker bridge IP\'si hub hostuyla değişir)', async () => {
       env.SELENIUM_GRID_NODE_HOST_MAP = '{ gecersiz json';
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         jsonResponse({
@@ -163,10 +220,10 @@ describe('SeleniumGridClient', () => {
       const client = new SeleniumGridClient(HUB_URL);
       const session = await client.createSession();
 
-      expect(session.cdpUrl).toBe('ws://172.28.0.11:4444/session/s1/se/cdp');
+      expect(session.cdpUrl).toBe('ws://grid-hub.local:4444/session/s1/se/cdp');
     });
 
-    it('harita tanımsızsa (varsayılan) CDP adresine hiç dokunmaz', async () => {
+    it('v3.23 — harita tanımsızsa (varsayılan) VE dönen host Docker bridge IP\'sine benziyorsa, hub\'ın kendi hostuyla (portu koruyarak) yeniden yazar — bkz. gerçek VakıfBank Grid vakası (uzak sunucu, node 172.18.x.x döndürüyor)', async () => {
       (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         jsonResponse({
           value: { sessionId: 's1', capabilities: { 'se:cdp': 'ws://172.28.0.11:4444/session/s1/se/cdp' } },
@@ -176,7 +233,33 @@ describe('SeleniumGridClient', () => {
       const client = new SeleniumGridClient(HUB_URL);
       const session = await client.createSession();
 
-      expect(session.cdpUrl).toBe('ws://172.28.0.11:4444/session/s1/se/cdp');
+      expect(session.cdpUrl).toBe('ws://grid-hub.local:4444/session/s1/se/cdp');
+    });
+
+    it('v3.23 — dönen host Docker bridge IP\'sine BENZEMİYORSA (ör. kurumsal ağda gerçekten erişilebilir bir 10.x/hostname adresi), harita yoksa bile HİÇ dokunulmaz', async () => {
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonResponse({
+          value: { sessionId: 's1', capabilities: { 'se:cdp': 'ws://10.30.165.150:4444/session/s1/se/cdp' } },
+        }),
+      );
+
+      const client = new SeleniumGridClient(HUB_URL);
+      const session = await client.createSession();
+
+      expect(session.cdpUrl).toBe('ws://10.30.165.150:4444/session/s1/se/cdp');
+    });
+
+    it('v3.23 — node host zaten hub ile aynıysa fallback tekrar yazma yapmaz', async () => {
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        jsonResponse({
+          value: { sessionId: 's1', capabilities: { 'se:cdp': 'ws://grid-hub.local:4444/session/s1/se/cdp' } },
+        }),
+      );
+
+      const client = new SeleniumGridClient(HUB_URL);
+      const session = await client.createSession();
+
+      expect(session.cdpUrl).toBe('ws://grid-hub.local:4444/session/s1/se/cdp');
     });
   });
 
@@ -193,8 +276,9 @@ describe('SeleniumGridClient', () => {
       const session = await client.createSession();
 
       expect(session.liveViewUrl).toBe('http://localhost:6081');
-      // CDP adresi bu haritadan ETKİLENMEMELİ (SELENIUM_GRID_NODE_HOST_MAP tanımsız kaldı).
-      expect(session.cdpUrl).toBe('ws://172.28.0.11:5555/session/s1/se/cdp');
+      // CDP adresi bu haritadan (VNC map) ETKİLENMEMELİ — ama SELENIUM_GRID_NODE_HOST_MAP tanımsız
+      // olduğu ve dönen host bir Docker bridge IP'sine benzediği için v3.23 fallback'i devreye girer.
+      expect(session.cdpUrl).toBe('ws://grid-hub.local:5555/session/s1/se/cdp');
     });
 
     it('harita tanımsızsa (varsayılan) liveViewUrl hiç üretilmez', async () => {

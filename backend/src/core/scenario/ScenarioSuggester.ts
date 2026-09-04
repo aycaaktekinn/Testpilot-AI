@@ -340,7 +340,7 @@ export class ScenarioSuggester {
     };
 
     try {
-      const page = await browserManager.launch(options, undefined, storageState);
+      const page = await browserManager.launch(options, undefined, storageState, url);
       try {
         await page.goto(url, { timeout: options.navigationTimeoutMs, waitUntil: 'domcontentloaded' });
         await dismissConsentBanners(page);
