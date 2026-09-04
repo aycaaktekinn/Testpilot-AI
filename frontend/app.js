@@ -9420,6 +9420,18 @@ async function initGeneratedTestsPage() {
 
 /* =========================================================
    OPEN GENERATED TEST CODE
+   ------------------------------------------------------
+   v3.26 — bkz. sohbet notu: "generated tests sayfasında yer alan view code kısmına tıklandığı
+   zaman başka bir sayfaya yönlendirme olmasın. view code içeriği pop up ekranda görünsün. var
+   olan yapıyı kesinlikle bozma". ÖNCEDEN bu fonksiyon kodu appState.pendingGeneratedCode/
+   pendingGeneratedFile üzerinden Create Test sayfasına TAŞIYIP oraya navigateTo('create') ile
+   YÖNLENDİRİYORDU (bkz. initCreateTestPage() "RESTORE GENERATED CODE" bloğu — o blok BİLEREK
+   DOKUNULMADI/SİLİNMEDİ, sadece artık hiç tetiklenmiyor çünkü appState.pendingGeneratedCode bir
+   daha hiç doldurulmuyor — "var olan yapıyı bozma" ilkesi gereği eski restore mantığı olduğu gibi
+   yerinde duruyor). Artık kod, sayfa DEĞİŞTİRİLMEDEN, showCodePopup() ile aynı sayfanın ÜZERİNDE
+   bir pop-up'ta gösteriliyor. Bu fonksiyon HEM Generated Tests sayfasındaki (.viewGeneratedTestButton)
+   HEM DE Dashboard'daki ("View Code" — initDashboardPage) çağrı noktaları tarafından PAYLAŞILIR —
+   ikisi de artık AYNI şekilde pop-up açar, sayfa değiştirmez.
 ========================================================= */
 
 async function openGeneratedTestCode(
@@ -9447,16 +9459,12 @@ async function openGeneratedTestCode(
         }
 
 
-        appState.pendingGeneratedCode =
-            result.code;
-
-
-        appState.pendingGeneratedFile =
-            result.fileName;
-
-
-        await navigateTo(
-            'create',
+        showCodePopup(
+            result.fileName ||
+            fileName ||
+            'generated-test.spec.ts',
+            result.code ||
+            '',
         );
 
     } catch (error) {
@@ -9471,6 +9479,194 @@ async function openGeneratedTestCode(
             'error',
         );
     }
+}
+
+
+/**
+ * v3.26 — bkz. openGeneratedTestCode() dosya başı NOT'u. Sayfa fragment'larının (generated-tests.html
+ * / dashboard.html) HTML'sine YENİ bir modal EKLEMEK yerine (bu, hangi sayfadan çağrıldığına göre
+ * modal'ın DOM'da olup olmadığını garanti etmeyi gerektirirdi — ör. Dashboard'da "View Code"
+ * butonuna basıldığında generated-tests.html hiç yüklü değildir), pop-up KENDİ DOM'unu ilk açılışta
+ * `document.body`'ye BİR KEZ enjekte eder ve sonraki açılışlarda AYNI elementleri yeniden kullanır
+ * — böylece hangi sayfada olursa olsun (Generated Tests, Dashboard, ileride eklenecek başka bir
+ * sayfa) çalışması garanti edilir, mevcut sayfa HTML'lerine hiç dokunulmaz.
+ */
+function ensureCodePopupElements() {
+
+    let overlay =
+        document.getElementById(
+            'viewCodePopupOverlay',
+        );
+
+    if (overlay) {
+        return overlay;
+    }
+
+    document.body.insertAdjacentHTML(
+        'beforeend',
+        `
+        <div
+                id="viewCodePopupOverlay"
+                class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4"
+        >
+            <div class="bg-surface-container rounded-lg shadow-xl w-full max-w-3xl max-h-[85vh] border border-outline-variant flex flex-col">
+
+                <div class="bg-surface-container-high px-md py-sm border-b border-[#334155] flex justify-between items-center gap-2 shrink-0 rounded-t-lg">
+
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="material-symbols-outlined text-secondary text-[16px]">description</span>
+                        <span id="viewCodePopupFileName" class="text-on-surface font-code-md text-code-md truncate">generated-test.spec.ts</span>
+                    </div>
+
+                    <div class="flex gap-1 shrink-0">
+                        <button
+                                id="viewCodePopupCopyButton"
+                                type="button"
+                                class="text-on-surface-variant hover:text-on-surface hover:bg-surface-variant p-1.5 rounded flex items-center gap-1 font-body-sm"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">content_copy</span>
+                            Copy
+                        </button>
+
+                        <button
+                                id="viewCodePopupCloseButton"
+                                type="button"
+                                class="text-on-surface-variant hover:text-on-surface hover:bg-surface-variant p-1.5 rounded flex items-center"
+                        >
+                            <span class="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                    </div>
+
+                </div>
+
+                <div class="flex-1 min-h-0 bg-[#0F172A] p-sm overflow-auto rounded-b-lg">
+                    <pre
+                            id="viewCodePopupOutput"
+                            class="text-[#c7c4d8] whitespace-pre-wrap break-words font-mono text-sm leading-7"
+                    >No test generated yet.</pre>
+                </div>
+
+            </div>
+        </div>
+        `,
+    );
+
+    overlay =
+        document.getElementById(
+            'viewCodePopupOverlay',
+        );
+
+    const closeButton =
+        document.getElementById(
+            'viewCodePopupCloseButton',
+        );
+
+    const copyButton =
+        document.getElementById(
+            'viewCodePopupCopyButton',
+        );
+
+    function closeCodePopup() {
+        overlay.classList.add('hidden');
+    }
+
+    // Arka plana (backdrop) tıklamak da kapatır — SADECE tıklamanın hedefi doğrudan overlay'in
+    // kendisiyse (içerik kutusuna tıklamak kapatmamalı), diğer modallarla (bkz. addToSuiteModal)
+    // AYNI davranış.
+    overlay.addEventListener(
+        'click',
+        (event) => {
+            if (event.target === overlay) {
+                closeCodePopup();
+            }
+        },
+    );
+
+    closeButton.addEventListener(
+        'click',
+        closeCodePopup,
+    );
+
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            if (
+                event.key === 'Escape' &&
+                !overlay.classList.contains('hidden')
+            ) {
+                closeCodePopup();
+            }
+        },
+    );
+
+    copyButton.addEventListener(
+        'click',
+        async () => {
+
+            const code =
+                document
+                    .getElementById('viewCodePopupOutput')
+                    ?.textContent
+                    ?.trim() ||
+                '';
+
+            if (!code) {
+                showToast(
+                    'No code available to copy.',
+                    'info',
+                );
+                return;
+            }
+
+            try {
+
+                await navigator
+                    .clipboard
+                    .writeText(code);
+
+                showToast(
+                    'Test code copied to clipboard.',
+                    'success',
+                );
+
+            } catch (error) {
+
+                console.error(error);
+
+                showToast(
+                    'Failed to copy code.',
+                    'error',
+                );
+            }
+        },
+    );
+
+    return overlay;
+}
+
+function showCodePopup(
+    fileName,
+    code,
+) {
+
+    const overlay =
+        ensureCodePopupElements();
+
+    document.getElementById(
+        'viewCodePopupFileName',
+    ).textContent =
+        fileName ||
+        'generated-test.spec.ts';
+
+    document.getElementById(
+        'viewCodePopupOutput',
+    ).textContent =
+        code ||
+        'No code available.';
+
+    overlay.classList.remove(
+        'hidden',
+    );
 }
 
 
