@@ -25,6 +25,7 @@ import { applySchedule } from './TestScheduler.js';
 import { AllureReportService } from './AllureReportService.js';
 import { createScenario } from '../../db/scenarioStore.js';
 import { createRun, deleteRunsBefore, deleteRunByFinishedAt, deleteAllRuns } from '../../db/runStore.js';
+import { listProjectsForUser } from '../../db/projectStore.js';
 import { NotFoundError, ValidationError } from '../../domain/errors.js';
 import { createLogger } from '../../config/logger.js';
 import { runManager } from '../../api/runManager.js';
@@ -90,9 +91,69 @@ function decryptStoredSecrets(
  * Kural: ADMIN her şeyi görür/yönetir. MEMBER SADECE `ownerId`'si kendi `userId`'siyle eşleşen
  * kayıtlara erişebilir — `ownerId` `null`/`undefined` olan (bu alan eklenmeden ÖNCE üretilmiş
  * "sahipsiz" eski) kayıtlar MEMBER'a HİÇ gösterilmez/erişilemez, sadece ADMIN görür.
+ *
+ * Test Runs sayfası (assertRunAccess/listTestRuns) SADECE bunu kullanır — bkz. dosya başı NOT'u
+ * bir alt bloktaki isGeneratedTestVisibleTo/isSuiteVisibleTo, Test Runs kapsamının DIŞINDA.
  */
 function isVisibleTo(ownerId: number | null | undefined, caller: CallerContext): boolean {
   return caller.role === 'ADMIN' || (ownerId != null && ownerId === caller.userId);
+}
+
+/**
+ * v3.32 — bkz. sohbet notu: "proje ataması olmayan kullanıcılar diğer kişilerin projelerine ait
+ * suitleri göremesinler. sadece kendi projelerine ait tüm suitleri görebilsinler. aynı projeye
+ * ait başkalarının suitlerini de görebilsinler ve edit delete yapabilsinler." — DÜZELTME notu:
+ * bir önceki (v3.31) tasarım "suite'in SAHİBİ caller ile HERHANGİ bir projeyi paylaşıyor mu"
+ * diye bakıyordu; bu YANLIŞTI — bir kullanıcının birden fazla projesi olabilir, "sahiple ortak
+ * proje var mı" ile "bu KAYIT gerçekten caller'ın atandığı bir projeye mi ait" FARKLI sorulardır
+ * (sahip hem X hem Y'deyse ve caller SADECE X'teyse, sahibin Y'ye ait bir kaydı caller'a
+ * YANLIŞLIKLA görünür olurdu). DOĞRU kural burada: kaydın KENDİ projesi/projeleri (generated
+ * test için `projectId`, suite için ÜYE testlerinin `projectId`'lerinin kümesi — bkz.
+ * isSuiteVisibleTo) caller'ın (`listProjectsForUser` ile) ATANDIĞI projelerden biriyle
+ * KESİŞİYORSA görünür/erişilebilir sayılır — sahibin BAŞKA projelerdeki üyelikleri hiç
+ * dikkate alınmaz. Projeye HİÇ atanmamış bir MEMBER için `callerProjectIds` boş küme olur, bu
+ * yüzden bu ek yol hiçbir zaman tetiklenmez — sadece kendi kayıtlarını (isVisibleTo) görür.
+ */
+async function getCallerProjectIds(caller: CallerContext): Promise<Set<number>> {
+  if (caller.role === 'ADMIN') return new Set();
+  try {
+    const projects = await listProjectsForUser(caller.userId);
+    return new Set(projects.map((p) => p.id));
+  } catch (err) {
+    log.warn(
+      { err, userId: caller.userId },
+      'Kullanıcının proje atamaları alınamadı, görünürlük sadece kendi kayıtlarıyla sınırlı kalacak',
+    );
+    return new Set();
+  }
+}
+
+/** bkz. getCallerProjectIds() dosya başı NOT'u — üretilmiş testler için: isVisibleTo() (sahiplik)
+ * VEYA testin KENDİ `projectId`'si caller'ın atandığı projelerden biriyse görünür/erişilebilir. */
+function isGeneratedTestVisibleTo(
+  test: Pick<LegacyGeneratedTestMeta, 'ownerId' | 'projectId'>,
+  caller: CallerContext,
+  callerProjectIds: ReadonlySet<number>,
+): boolean {
+  return isVisibleTo(test.ownerId, caller) || (test.projectId != null && callerProjectIds.has(test.projectId));
+}
+
+/** bkz. getCallerProjectIds() dosya başı NOT'u — suite'ler için: isVisibleTo() (sahiplik) VEYA
+ * suite'in ÜYE testlerinden EN AZ birinin `projectId`'si caller'ın atandığı projelerden biriyse
+ * görünür/erişilebilir. Suite'in kendisinde `projectId` alanı YOK (bkz. LegacySuite dosya başı
+ * açıklaması) — bu yüzden `allTests` (TÜM üretilmiş testler, görünürlükten BAĞIMSIZ — sahibi
+ * caller olmayan testlerin de `projectId`'sine bakılması gerekiyor) parametre olarak geçilir. */
+function isSuiteVisibleTo(
+  suite: LegacySuite,
+  caller: CallerContext,
+  callerProjectIds: ReadonlySet<number>,
+  allTests: LegacyGeneratedTestMeta[],
+): boolean {
+  if (isVisibleTo(suite.ownerId, caller)) return true;
+  if (callerProjectIds.size === 0) return false;
+  return allTests.some(
+    (t) => Array.isArray(t.suiteIds) && t.suiteIds.includes(suite.id) && t.projectId != null && callerProjectIds.has(t.projectId),
+  );
 }
 
 /**
@@ -300,6 +361,7 @@ export class LegacyTestService {
   }
 
   async listGeneratedTests(caller: CallerContext): Promise<{ tests: LegacyGeneratedTestMeta[] }> {
+    const callerProjectIds = await getCallerProjectIds(caller);
     const all = await this.generatedTestStore.list();
     // v3.20 — bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması. Şifreli olsa
     // bile secret ciphertext'ini frontend'e/tarayıcıya HİÇ göndermeye gerek yok (sadece backend'in
@@ -307,7 +369,7 @@ export class LegacyTestService {
     // DEĞİL) ile AYNI muameleyi görmez, BİLEREK.
     return {
       tests: all
-        .filter((t) => isVisibleTo(t.ownerId, caller))
+        .filter((t) => isGeneratedTestVisibleTo(t, caller, callerProjectIds))
         .map(({ secretsEncrypted, ...rest }) => rest),
     };
   }
@@ -359,8 +421,14 @@ export class LegacyTestService {
   ========================================================= */
 
   async listSuites(caller: CallerContext): Promise<{ suites: LegacySuite[] }> {
+    const callerProjectIds = await getCallerProjectIds(caller);
     const all = await this.suiteStore.list();
-    return { suites: all.filter((s) => isVisibleTo(s.ownerId, caller)) };
+    // v3.32 — bkz. isSuiteVisibleTo() dosya başı NOT'u: suite'in kendi projesi YOK, üye
+    // testlerinin `projectId`'sinden çıkarsanıyor — bu yüzden TÜM testler (görünürlükten
+    // BAĞIMSIZ) gerekiyor. callerProjectIds boşsa (projeye hiç atanmamış MEMBER) bu sorguya HİÇ
+    // gerek yok — zaten sadece kendi suite'lerini görecek (bkz. isSuiteVisibleTo erken çıkış).
+    const allTests = callerProjectIds.size > 0 ? await this.generatedTestStore.list() : [];
+    return { suites: all.filter((s) => isSuiteVisibleTo(s, caller, callerProjectIds, allTests)) };
   }
 
   async createSuite(name: string, actingUserId?: number | null): Promise<LegacySuite> {
@@ -526,20 +594,32 @@ export class LegacyTestService {
     }
   }
 
-  /** bkz. assertRunAccess() dosya başı NOT'u — AYNI mantık, üretilmiş testler için. */
+  /**
+   * bkz. assertRunAccess() dosya başı NOT'u — AYNI mantık, üretilmiş testler için.
+   *
+   * v3.32 — bkz. getCallerProjectIds() dosya başı NOT'u: ADMIN kısa devresi hâlâ EN BAŞTA (DB'ye
+   * hiç gidilmez); MEMBER için ise kendi kaydı YETMEZSE ayrıca "bu testin `projectId`'si caller'ın
+   * ATANDIĞI bir proje mi" diye de bakılır — bu sayede Suits sayfasında görünen bir suite'in
+   * İÇİNDEKİ testler de (getCode/rename/delete/run/replay/schedule) aynı projedeki üye için
+   * ERİŞİLEBİLİR olur, "listede görünüyor ama tıklayınca bulunamadı" tutarsızlığı oluşmaz.
+   */
   private async assertGeneratedTestAccess(fileName: string, caller: CallerContext): Promise<void> {
     if (caller.role === 'ADMIN') return;
     const meta = await this.generatedTestStore.getMeta(fileName);
-    if (!isVisibleTo(meta.ownerId, caller)) {
+    const callerProjectIds = await getCallerProjectIds(caller);
+    if (!isGeneratedTestVisibleTo(meta, caller, callerProjectIds)) {
       throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
     }
   }
 
-  /** bkz. assertRunAccess() dosya başı NOT'u — AYNI mantık, suite'ler için. */
+  /** bkz. assertRunAccess() / assertGeneratedTestAccess() dosya başı NOT'ları — AYNI mantık
+   * (getCallerProjectIds dahil), suite'ler için. */
   private async assertSuiteAccess(id: string, caller: CallerContext): Promise<void> {
     if (caller.role === 'ADMIN') return;
     const suite = await this.suiteStore.getById(id);
-    if (!isVisibleTo(suite.ownerId, caller)) {
+    const callerProjectIds = await getCallerProjectIds(caller);
+    const allTests = callerProjectIds.size > 0 ? await this.generatedTestStore.list() : [];
+    if (!isSuiteVisibleTo(suite, caller, callerProjectIds, allTests)) {
       throw new NotFoundError(`Suite bulunamadı: ${id}`);
     }
   }
@@ -577,7 +657,8 @@ export class LegacyTestService {
     caller: CallerContext,
   ): Promise<LegacyTestResultResponse> {
     const meta = await this.generatedTestStore.getMeta(fileName);
-    if (!isVisibleTo(meta.ownerId, caller)) {
+    const callerProjectIds = await getCallerProjectIds(caller);
+    if (!isGeneratedTestVisibleTo(meta, caller, callerProjectIds)) {
       throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
     }
 
@@ -628,7 +709,8 @@ export class LegacyTestService {
     }
 
     const meta = await this.generatedTestStore.getMeta(fileName);
-    if (!isVisibleTo(meta.ownerId, caller)) {
+    const callerProjectIds = await getCallerProjectIds(caller);
+    if (!isGeneratedTestVisibleTo(meta, caller, callerProjectIds)) {
       throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
     }
     if (!meta.replaySteps || meta.replaySteps.length === 0) {
@@ -746,11 +828,16 @@ export class LegacyTestService {
     disableAutoRetry = false,
   ): Promise<BatchRunStartResult[]> {
     const results: BatchRunStartResult[] = [];
+    // v3.32 — bkz. getCallerProjectIds() dosya başı NOT'u. Döngü İÇİNDE değil BİR KEZ burada
+    // çekilir — Suits'ten toplu koşumda (bir suite'in tüm testleri) her fileName için ayrı ayrı
+    // Oracle sorgusu atmamak için (N+1 önleme, TestRunStore/GeneratedTestStore'daki AYNI "tek
+    // sorgu, döngü dışı" deseni).
+    const callerProjectIds = await getCallerProjectIds(caller);
 
     for (const fileName of fileNames) {
       try {
         const meta = await this.generatedTestStore.getMeta(fileName);
-        if (!isVisibleTo(meta.ownerId, caller)) {
+        if (!isGeneratedTestVisibleTo(meta, caller, callerProjectIds)) {
           throw new NotFoundError(`Üretilmiş test bulunamadı: ${fileName}`);
         }
 

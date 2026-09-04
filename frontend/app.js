@@ -5794,6 +5794,13 @@ async function initSuitesPage() {
     let selectedSuiteId = null;
     let selectedSuiteTestFiles = new Set();
 
+    // v3.31 — bkz. sohbet notu: "suitler hangi projeye ait bilinmiyor, gruplayarak göster".
+    // Suite'lerin backend şemasında projectId alanı YOK — bir suite'in projesi, üye testlerin
+    // (getSuiteTests) taşıdığı LegacyGeneratedTestMeta.projectId değerlerinden ÇIKARSANIR (bkz.
+    // computeSuiteProjectGroups). allProjects sadece id -> isim çözümlemesi için kullanılır.
+    let allProjects = [];
+    let projectNameById = new Map();
+
     // v3.11 — dosya başı NOT: lean/nihai-durum-only takip (bkz. trackSuiteBatchRuns).
     let suiteRunStatusByFile = new Map();
 
@@ -5816,34 +5823,113 @@ async function initSuitesPage() {
     }
 
 
+    // v3.31 — her suite'i, üye testlerinin projectId'lerine göre bir gruba ayırır:
+    //   - üye testlerin TAMAMI aynı tek bir projectId taşıyorsa -> o projenin grubu
+    //   - hiçbir üye testte projectId yoksa (veya suite boşsa) -> "No Project" grubu
+    //   - üye testler BİRDEN FAZLA farklı projectId taşıyorsa -> "Multiple Projects" grubu
+    // Sıralama: isimli projeler alfabetik -> Multiple Projects -> No Project (en sonda).
+    const NO_PROJECT_GROUP_KEY = '__no_project__';
+    const MULTIPLE_PROJECTS_GROUP_KEY = '__multiple_projects__';
+
+    function computeSuiteProjectGroups() {
+
+        const groupsByKey = new Map();
+
+        function ensureGroup(key, label) {
+            if (!groupsByKey.has(key)) {
+                groupsByKey.set(key, { key, label, suites: [] });
+            }
+            return groupsByKey.get(key);
+        }
+
+        allSuites.forEach((suite) => {
+
+            const memberProjectIds = new Set(
+                getSuiteTests(suite.id)
+                    .map((test) => test.projectId)
+                    .filter((projectId) => projectId !== undefined && projectId !== null),
+            );
+
+            let group;
+            if (memberProjectIds.size === 0) {
+                group = ensureGroup(NO_PROJECT_GROUP_KEY, 'No Project');
+            } else if (memberProjectIds.size > 1) {
+                group = ensureGroup(MULTIPLE_PROJECTS_GROUP_KEY, 'Multiple Projects');
+            } else {
+                const [projectId] = memberProjectIds;
+                const label =
+                    projectNameById.get(projectId) || `Project #${projectId}`;
+                group = ensureGroup(`project:${projectId}`, label);
+            }
+
+            group.suites.push(suite);
+        });
+
+        const namedProjectGroups = Array.from(groupsByKey.values())
+            .filter(
+                (group) =>
+                    group.key !== NO_PROJECT_GROUP_KEY &&
+                    group.key !== MULTIPLE_PROJECTS_GROUP_KEY,
+            )
+            .sort((a, b) => a.label.localeCompare(b.label));
+
+        const orderedGroups = [...namedProjectGroups];
+
+        if (groupsByKey.has(MULTIPLE_PROJECTS_GROUP_KEY)) {
+            orderedGroups.push(groupsByKey.get(MULTIPLE_PROJECTS_GROUP_KEY));
+        }
+        if (groupsByKey.has(NO_PROJECT_GROUP_KEY)) {
+            orderedGroups.push(groupsByKey.get(NO_PROJECT_GROUP_KEY));
+        }
+
+        return orderedGroups;
+    }
+
+
+    function renderSuiteListItemButton(suite) {
+
+        const memberCount =
+            getSuiteTests(suite.id).length;
+
+        const isActive =
+            suite.id === selectedSuiteId;
+
+        return `
+            <button
+                class="suiteListItemButton w-full text-left px-md py-sm flex items-center justify-between gap-2 transition-colors ${
+                    isActive
+                        ? 'bg-primary-container/20 text-on-surface'
+                        : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
+                }"
+                data-suite-id="${escapeHtml(suite.id)}"
+                type="button"
+            >
+                <span class="font-body-md text-body-md truncate">
+                    ${escapeHtml(suite.name)}
+                </span>
+                <span class="font-body-sm text-body-sm text-on-surface-variant/70 shrink-0">
+                    ${memberCount}
+                </span>
+            </button>
+        `;
+    }
+
+
     function renderSuitesList() {
 
-        suitesListContainer.innerHTML = allSuites
-            .map((suite) => {
+        const groups = computeSuiteProjectGroups();
 
-                const memberCount =
-                    getSuiteTests(suite.id).length;
-
-                const isActive =
-                    suite.id === selectedSuiteId;
-
+        suitesListContainer.innerHTML = groups
+            .map((group) => {
                 return `
-                    <button
-                        class="suiteListItemButton w-full text-left px-md py-sm flex items-center justify-between gap-2 transition-colors ${
-                            isActive
-                                ? 'bg-primary-container/20 text-on-surface'
-                                : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
-                        }"
-                        data-suite-id="${escapeHtml(suite.id)}"
-                        type="button"
-                    >
-                        <span class="font-body-md text-body-md truncate">
-                            ${escapeHtml(suite.name)}
-                        </span>
-                        <span class="font-body-sm text-body-sm text-on-surface-variant/70 shrink-0">
-                            ${memberCount}
-                        </span>
-                    </button>
+                    <div class="suiteProjectGroup">
+                        <div class="px-md pt-sm pb-1 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant/60">
+                            ${escapeHtml(group.label)}
+                        </div>
+                        <div class="divide-y divide-outline-variant">
+                            ${group.suites.map(renderSuiteListItemButton).join('')}
+                        </div>
+                    </div>
                 `;
             })
             .join('');
@@ -6249,9 +6335,13 @@ async function initSuitesPage() {
 
         try {
 
-            const [suitesResponse, testsResponse] = await Promise.all([
+            const [suitesResponse, testsResponse, projectsResponse] = await Promise.all([
                 fetch('/api/suites'),
                 fetch('/api/generated-tests'),
+                // v3.31 — suite'leri projeye göre gruplamak için id -> isim çözümlemesi
+                // (bkz. computeSuiteProjectGroups). OPSİYONEL: yüklenemezse sadece "Project #<id>"
+                // fallback'ine düşülür, sayfanın geri kalanı normal çalışmaya devam eder.
+                fetch('/api/projects'),
             ]);
 
             const suitesResult = await suitesResponse.json();
@@ -6268,6 +6358,19 @@ async function initSuitesPage() {
                 testsResponse.ok && Array.isArray(testsResult.tests)
                     ? testsResult.tests
                     : [];
+
+            try {
+                const projectsResult = await projectsResponse.json();
+                allProjects =
+                    projectsResponse.ok && Array.isArray(projectsResult.projects)
+                        ? projectsResult.projects
+                        : [];
+            } catch (error) {
+                allProjects = [];
+            }
+            projectNameById = new Map(
+                allProjects.map((project) => [project.id, project.name]),
+            );
 
             // Seçili suite bu arada silinmiş olabilir (ör. başka bir sekmeden) — bu durumda
             // seçimi temizle ki "hayalet" bir suite detayı gösterilmesin.
