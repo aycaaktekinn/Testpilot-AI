@@ -158,6 +158,9 @@ export class LegacyTestService {
         // (bkz. o alanın dosya başı açıklaması) — burada LLM'e/loglara gitmeyeceği hâlâ geçerli.
         secrets: input.secrets,
         options,
+        // v3.24 — bkz. AgentLoopInput.disableVectorCacheRead / LegacyGenerateAndRunInput.
+        // disableVectorCacheRead dosya başı açıklamaları.
+        disableVectorCacheRead: input.disableVectorCacheRead,
       });
     } catch (err) {
       // v3.22 — bkz. sohbet notu: "koşum hata alsa dahi o bilgileri getirsin". loop.run()
@@ -581,7 +584,12 @@ export class LegacyTestService {
     return this.generateAndRun(
       {
         url: meta.url,
-        scenario: meta.scenario,
+        // v3.24 — bkz. LegacyRunExistingOverrides.scenario dosya başı açıklaması
+        // (domain/legacyTypes.ts). `overrides.scenario` doluysa (Generated Tests'teki "Run"
+        // butonuyla açılan ekranda GÖSTERİLEN metinle BİREBİR aynıdır) o kullanılır — boşsa/hiç
+        // verilmemişse (ör. Replay, ya da bu alanı henüz göndermeyen eski bir çağrı yolu)
+        // davranış ESKİSİ GİBİ meta.scenario'ya (testin İLK üretildiği andaki sabit metne) düşer.
+        scenario: overrides.scenario || meta.scenario,
         variables: meta.variables,
         secrets: decryptStoredSecrets(meta.secretsEncrypted, fileName),
         headed: overrides.headed ?? meta.headed,

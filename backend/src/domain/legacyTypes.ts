@@ -322,6 +322,14 @@ export interface LegacyGenerateAndRunInput {
   secrets?: Record<string, string>;
   /** v3.0 Faz 6 — bkz. LegacyGeneratedTestMeta.projectId dosya başı açıklaması. OPSİYONEL. */
   projectId?: number;
+  /**
+   * v3.24 — bkz. AgentLoopInput.disableVectorCacheRead dosya başı açıklaması (core/agent/
+   * AgentLoop.ts). OPSİYONEL, İSTEMCİDEN GELMEZ (zod şemasında YOK) — SADECE
+   * `/tests/generate-and-run` route handler'ı tarafından backend içeriden `true` olarak
+   * ayarlanır (bkz. o route'un dosya başı NOT'u); `runGeneratedTest()` (Run butonu) bunu HİÇ
+   * ayarlamaz, `undefined` kalır.
+   */
+  disableVectorCacheRead?: boolean;
 }
 
 /**
@@ -355,4 +363,20 @@ export interface LegacyRunExistingOverrides {
   trace?: boolean;
   /** v2.0 — bkz. RunOptions.useSeleniumGrid dosya başı açıklaması. */
   useSeleniumGrid?: boolean;
+  /**
+   * v3.24 — bkz. sohbet notu: "Run butonuna tıklandığında açılan ekrandaki Test Scenario
+   * Instructions kısmında ne yazıyorsa ona göre test koşulmalı. önceki eski veriler baz alınarak
+   * koşum yapılmamalıdır". ÖNCEDEN bu uç HER ZAMAN `meta.scenario`yu (testin İLK üretildiği andaki
+   * sabit/"eski" senaryo metnini) kullanıyordu — Generated Tests'teki "Run" butonuyla açılan
+   * ekranda Test Scenario Instructions alanı ise `meta.bddDescription`yi (bkz.
+   * buildScenarioSnapshotFromTest, frontend) gösteriyordu; bu ikisi FARKLI metinler olabildiğinden
+   * (bddDescription her BAŞARILI run sonrası YENİDEN üretilir, meta.scenario ise SABİT kalır),
+   * ekranda görünen ile GERÇEKTE koşulan birbirinden sapabiliyordu. Artık bu OPSİYONEL alan
+   * doluysa (frontend'in Run akışı, ekranda gösterdiği AYNI metni buraya koyar — bkz.
+   * runExistingTest) `meta.scenario` YERİNE bu kullanılır (bkz. LegacyTestService.runGeneratedTest)
+   * — "ekranda ne yazıyorsa" ile "gerçekte ne koşuluyor" HER ZAMAN birebir aynı olsun diye. Boş/
+   * verilmemişse (ör. Replay'de hiç kullanılmaz, ya da henüz hiç bddDescription üretilmemiş eski
+   * bir kayıt) davranış ESKİSİ GİBİ `meta.scenario`ya düşer.
+   */
+  scenario?: string;
 }

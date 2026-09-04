@@ -2452,7 +2452,55 @@ async function initCreateTestPage() {
 
     if (appState.pendingLiveRun) {
 
+        const pendingRun = appState.pendingLiveRun;
         appState.pendingLiveRun = null;
+
+        // v3.22 — bkz. sohbet notu: "Run butonuna tıklandığı zaman aynı BDD deki gibi açılan
+        // ekranda bilgiler gelsin ve bdd deki bilgiler ile koşum yapılsın". `pendingRun` bir
+        // nesneyse (bkz. runExistingTest içindeki buildScenarioSnapshotFromTest ataması), koşum
+        // başlamadan ÖNCE soldaki Scenario Definition alanlarını (url/isim/değişkenler/tarayıcı
+        // ayarları + Test Scenario Instructions'ta BDD metni) "BDD" butonuyla (bkz. "PENDING BDD
+        // EDIT" bloğu) AYNI şekilde dolduruyoruz — kullanıcı hangi veriyle koşum yapıldığını
+        // görsün (backend zaten HER ZAMAN bu veriyle çalışıyordu, bkz. LegacyTestService.
+        // runGeneratedTest — burada eksik olan sadece ekranda GÖRÜNMESİYDİ). Eski çağrı
+        // yollarında (ör. replayExistingTest) hâlâ `true` (boolean) gelir — bu durumda alanlara
+        // DOKUNULMAZ, davranış tamamen ESKİSİ GİBİ kalır.
+        if (pendingRun && typeof pendingRun === 'object') {
+
+            targetUrlInput.value = pendingRun.url || '';
+            testNameInput.value = pendingRun.testName || '';
+            testScenarioInput.value = pendingRun.bddDescription || '';
+
+            if (projectSelectInput) {
+                // bkz. yukarıdaki projectsLoadPromise dosya başı NOT'u — <option>'lar hazır
+                // olmadan .value ataması sessizce hiçbir şey seçmez.
+                await projectsLoadPromise;
+                projectSelectInput.value = pendingRun.projectId != null ? String(pendingRun.projectId) : '';
+            }
+
+            const runBrowserRadio = document.querySelector(
+                `input[name="browser"][value="${pendingRun.browser || 'chromium'}"]`,
+            );
+            if (runBrowserRadio) runBrowserRadio.checked = true;
+
+            if (headedModeInput) headedModeInput.checked = Boolean(pendingRun.headed);
+            if (screenshotOption) screenshotOption.checked = Boolean(pendingRun.screenshot);
+            if (videoOption) videoOption.checked = Boolean(pendingRun.video);
+            if (traceOption) traceOption.checked = Boolean(pendingRun.trace);
+            if (useSeleniumGridOption) useSeleniumGridOption.checked = Boolean(pendingRun.useSeleniumGrid);
+
+            if (variablesContainer) {
+                variablesContainer.querySelectorAll('.variableRow').forEach((row) => row.remove());
+                const variableEntries = Object.entries(pendingRun.variables || {});
+                if (variableEntries.length > 0) {
+                    variableEntries.forEach(([key, value]) => createVariableRow(key, value, 'text'));
+                } else {
+                    createVariableRow();
+                }
+            }
+
+            bddDescriptionOutput.value = pendingRun.bddDescription || '';
+        }
 
         generateRunButton.disabled = true;
 
@@ -6549,22 +6597,23 @@ async function initSuitesPage() {
  * (bddDescriptionOutput vb.) buradan doğrudan erişilemez — bunun yerine appState.pendingBddEdit
  * üzerinden "bir sonraki initCreateTestPage() çalıştığında bunu uygula" şeklinde bir köprü kurulur.
  */
-async function openBddEditorForGeneratedTest(test) {
+/**
+ * v3.22 — bkz. sohbet notu: "Run butonuna tıklandığı zaman aynı BDD deki gibi açılan ekranda
+ * bilgiler gelsin ve bdd deki bilgiler ile koşum yapılsın". Generated Tests satırındaki hem
+ * "BDD" hem de "Run" butonu, Create Test sayfasına AYNI şekilde doldurulmuş (url/isim/değişkenler/
+ * tarayıcı ayarları + "Test Scenario Instructions" alanında BDD verisi) bir ekran taşımak
+ * istiyor — SADECE sağ panelde ne gösterildiği (BDD metni mi, canlı çalıştırma takibi mi)
+ * farklı. Bu yüzden ortak "hangi test, hangi giriş verileriyle temsil ediliyor" anlık görüntüsü
+ * (snapshot) burada TEK bir yerde kuruluyor; hem openBddEditorForGeneratedTest hem de
+ * runExistingTest bunu kullanır — iki yerde birbirinden sapabilecek kopya mantık OLMASIN diye.
+ * Secrets BİLEREK dahil edilmez — değerleri şifreli saklanıyor ve tarayıcıya hiç gönderilmiyor
+ * (bkz. LegacyGeneratedTestMeta.secretsEncrypted dosya başı açıklaması); kullanıcı tekrar
+ * çalıştırmak isterse Secret satırını elle girer (backend zaten kayıtlı secret'ı kendisi otomatik
+ * kullanır — bkz. LegacyTestService.runGeneratedTest).
+ */
+function buildScenarioSnapshotFromTest(test) {
 
-    if (!test) {
-        return;
-    }
-
-    // v3.21 — bkz. sohbet notu: "yönlendirilen sayfada önceki koşumdaki tüm giriş dataları yer
-    // alsın... fakat Test Scenario Instructions kısmında bdd verileri yazılmış şekilde ekran
-    // açılsın". Önceden SADECE bddDescription+runId taşınıyordu (Test Scenario Instructions ve
-    // diğer alanlar bomboş/eski kalıyordu) — artık bu testin ÜRETİLDİĞİ/son çalıştığı run'daki TÜM
-    // giriş verileri (url, isim, değişkenler, tarayıcı/koşum ayarları) da taşınıyor; sadece
-    // "Test Scenario Instructions" BİLEREK orijinal senaryo metni DEĞİL, BDD verisiyle doldurulacak
-    // (bkz. initCreateTestPage "PENDING BDD EDIT" bloğu). Secrets BİLEREK dahil edilmez — değerleri
-    // şifreli saklanıyor ve tarayıcıya hiç gönderilmiyor (bkz. LegacyGeneratedTestMeta.secretsEncrypted
-    // dosya başı açıklaması); kullanıcı burada tekrar çalıştırmak isterse Secret satırını elle girer.
-    appState.pendingBddEdit = {
+    return {
         bddDescription: test.bddDescription || '',
         runId: test.runId || null,
         url: typeof test.url === 'string' ? test.url : '',
@@ -6581,6 +6630,33 @@ async function openBddEditorForGeneratedTest(test) {
         useSeleniumGrid: Boolean(test.useSeleniumGrid),
         projectId: typeof test.projectId === 'number' ? test.projectId : null,
     };
+}
+
+
+/**
+ * v3.12 — bkz. sohbet notu: "bdd kısmı generated testte böyle gözükmesin... tıklıyım burdan bdd ye
+ * yine create test panelinde bdd kısmına götürsün ordan edit yapabileyim". Generated Tests
+ * sayfasındaki bir satırın "BDD" butonuna tıklanınca çağrılır (bkz. initGeneratedTestsPage
+ * içindeki .openBddFromGeneratedButton delegasyonu) — Create Test sayfasına geçip oradaki BDD
+ * sekmesini bu testin metniyle DOLU açar (bkz. initCreateTestPage "PENDING BDD EDIT" bloğu).
+ * GLOBAL bir fonksiyon: initCreateTestPage()'in kendi kapsamındaki (closure) DOM referanslarına
+ * (bddDescriptionOutput vb.) buradan doğrudan erişilemez — bunun yerine appState.pendingBddEdit
+ * üzerinden "bir sonraki initCreateTestPage() çalıştığında bunu uygula" şeklinde bir köprü kurulur.
+ */
+async function openBddEditorForGeneratedTest(test) {
+
+    if (!test) {
+        return;
+    }
+
+    // v3.21 — bkz. sohbet notu: "yönlendirilen sayfada önceki koşumdaki tüm giriş dataları yer
+    // alsın... fakat Test Scenario Instructions kısmında bdd verileri yazılmış şekilde ekran
+    // açılsın". Önceden SADECE bddDescription+runId taşınıyordu (Test Scenario Instructions ve
+    // diğer alanlar bomboş/eski kalıyordu) — artık bu testin ÜRETİLDİĞİ/son çalıştığı run'daki TÜM
+    // giriş verileri (url, isim, değişkenler, tarayıcı/koşum ayarları) da taşınıyor; sadece
+    // "Test Scenario Instructions" BİLEREK orijinal senaryo metni DEĞİL, BDD verisiyle doldurulacak
+    // (bkz. initCreateTestPage "PENDING BDD EDIT" bloğu).
+    appState.pendingBddEdit = buildScenarioSnapshotFromTest(test);
 
     await navigateTo('create');
 }
@@ -8307,10 +8383,22 @@ async function initGeneratedTestsPage() {
                             return;
                         }
 
+                        // v3.22 — bkz. sohbet notu: "Run butonuna tıklandığı zaman aynı BDD deki
+                        // gibi açılan ekranda bilgiler gelsin". Create Test sayfasında Scenario
+                        // Definition alanlarını (url/isim/değişkenler/BDD metni) doldurabilmek
+                        // için testin tam kaydına ihtiyaç var (bkz. runExistingTest içindeki
+                        // appState.pendingLiveRun ataması) — sadece fileName yeterli değil.
+                        const test =
+                            allTests.find(
+                                (t) =>
+                                    typeof t !== 'string' &&
+                                    t.fileName === fileName,
+                            );
 
                         await runExistingTest(
                             fileName,
                             button,
+                            test,
                         );
                     },
                 );
@@ -9393,6 +9481,7 @@ async function openGeneratedTestCode(
 async function runExistingTest(
     fileName,
     button = null,
+    test = null,
 ) {
 
     if (button) {
@@ -9413,6 +9502,58 @@ async function runExistingTest(
     // initCreateTestPage "PENDING LIVE RUN" bloğu) başlatıyor. Fetch tamamlanınca (aşağıda) asıl
     // sonuç YİNE aynı appState.pendingTestResult köprüsüyle (mevcut/eski davranışla AYNI) ikinci
     // bir navigateTo('create') ile gösterilir.
+    //
+    // v3.22 — bkz. sohbet notu: "Run butonuna tıklandığı zaman aynı BDD deki gibi açılan ekranda
+    // bilgiler gelsin ve bdd deki bilgiler ile koşum yapılsın". Backend zaten HER ZAMAN bu testin
+    // kayıtlı BDD verisiyle (meta.scenario) ve değişkenleriyle çalışıyordu (bkz.
+    // LegacyTestService.runGeneratedTest) — ama ekranda bu bilgiler hiç GÖRÜNMÜYORDU (Scenario
+    // Definition alanları boş/eski kalıyordu, sadece sağdaki Execution Log paneli açılıyordu).
+    // `test` verildiyse (bkz. yukarıdaki .runGeneratedTestButton delegasyonu), BDD butonuyla AYNI
+    // anlık görüntüyü (bkz. buildScenarioSnapshotFromTest) appState.pendingLiveRun'a koyuyoruz —
+    // initCreateTestPage bunu görünce koşum başlamadan ÖNCE Scenario Definition alanlarını bu
+    // testin verileriyle doldurup ONDAN SONRA log paneline geçiyor. `test` yoksa (ör. eski bir
+    // çağrı yolu) davranış ESKİSİ GİBİ `true` kalır — initCreateTestPage bu durumda alan doldurma
+    // adımını atlar (bkz. o bloktaki tip kontrolü).
+    // v3.23 — bkz. sohbet notu: "Run butonuna tıklandığında sadece BDD butonundaki veriler ile
+    // otomatik koşum başlasın". ÖNCEDEN bu istek gövdesi HER ZAMAN appState.executionSettings
+    // (sayfanın üstündeki GENEL "Execution Settings" araç çubuğu) değerlerini gönderiyordu — bu
+    // alanlar zod şemasında opsiyonel OLSA da frontend'in kendisi hep somut bir değer (true/false/
+    // 'chromium' vb.) yolladığı için backend'deki `overrides.X ?? meta.X` düşüşü FİİLEN hiç devreye
+    // girmiyordu: testin KENDİ kayıtlı (BDD ekranındaki) tarayıcı/headed/screenshot/video/trace
+    // ayarları yerine, o an sayfanın üstünde açık duran GENEL ayar sessizce kullanılıyordu — bu da
+    // ekranda gösterilen (bkz. buildScenarioSnapshotFromTest → Scenario Definition alanları) ile
+    // GERÇEKTE koşulan ayarların BİRBİRİNDEN FARKLI olabilmesine yol açıyordu. `test` verildiyse
+    // artık BİLEREK bu genel araç çubuğu YERİNE testin kendi kayıtlı ayarlarını (aynı
+    // buildScenarioSnapshotFromTest'in okuduğu alanlar) gönderiyoruz — ekranda görünen ile
+    // gerçekte koşulan artık HER ZAMAN birebir aynı. `test` yoksa (ör. eski bir çağrı yolu)
+    // davranış ESKİSİ GİBİ genel araç çubuğu ayarlarını kullanır.
+    // v3.24 — bkz. sohbet notu: "açılan ekrandaki Test Scenario Instructions kısmındaki kısımda
+    // ne yazıyorsa ona göre test koşulmalı. önceki eski veriler baz alınarak koşum yapılmamalıdır".
+    // Ekranda o alana YAZILAN metin, buildScenarioSnapshotFromTest ile AYNI kaynaktan
+    // (test.bddDescription) geliyor — burada da BİREBİR AYNI değeri `scenario` override'ı olarak
+    // gönderiyoruz (bkz. LegacyRunExistingOverrides.scenario / LegacyTestService.runGeneratedTest
+    // dosya başı açıklamaları) ki backend ARTIK testin İLK üretildiği andaki sabit/"eski"
+    // meta.scenario'yu DEĞİL, ekranda gösterilenle AYNI metni koştursun. Henüz hiç bddDescription
+    // üretilmemiş bir kayıtta (ör. daha önce hiç başarıyla tamamlanmamış bir test) bu boş olur —
+    // bu durumda override GÖNDERİLMEZ, backend kendi eski davranışıyla meta.scenario'ya düşer.
+    const runOverrides = test
+        ? {
+              headed: Boolean(test.headed),
+              browser: test.browser || 'chromium',
+              screenshot: Boolean(test.screenshot),
+              video: Boolean(test.video),
+              trace: Boolean(test.trace),
+              useSeleniumGrid: Boolean(test.useSeleniumGrid),
+              ...(test.bddDescription ? { scenario: test.bddDescription } : {}),
+          }
+        : {
+              headed: appState.executionSettings.headed,
+              browser: appState.executionSettings.browser,
+              screenshot: appState.executionSettings.screenshot,
+              video: appState.executionSettings.video,
+              trace: appState.executionSettings.trace,
+          };
+
     const resultPromise =
         fetch(
             '/api/generated-tests/run',
@@ -9427,38 +9568,16 @@ async function runExistingTest(
                 body:
                     JSON.stringify({
                         fileName,
-
-                        headed:
-                        appState
-                            .executionSettings
-                            .headed,
-
-                        browser:
-                        appState
-                            .executionSettings
-                            .browser,
-
-                        screenshot:
-                        appState
-                            .executionSettings
-                            .screenshot,
-
-                        video:
-                        appState
-                            .executionSettings
-                            .video,
-
-                        trace:
-                        appState
-                            .executionSettings
-                            .trace,
+                        ...runOverrides,
                     }),
             },
         );
 
 
     appState.pendingLiveRun =
-        true;
+        test
+            ? buildScenarioSnapshotFromTest(test)
+            : true;
 
     await navigateTo(
         'create',

@@ -64,6 +64,11 @@ const runExistingSchema = z.object({
   video: z.boolean().optional(),
   trace: z.boolean().optional(),
   useSeleniumGrid: z.boolean().optional(),
+  // v3.24 — bkz. LegacyRunExistingOverrides.scenario dosya başı açıklaması (domain/legacyTypes.ts).
+  // Replay uç noktası da AYNI şemayı paylaşır (bkz. yukarıdaki NOT) ama bunu HİÇ okumaz/kullanmaz
+  // (replay zaten kayıtlı replaySteps'i oynatır, meta.scenario'ya hiç bakmaz) — bu yüzden burada
+  // ZARARSIZDIR.
+  scenario: z.string().optional(),
 });
 
 const runBatchSchema = z.object({
@@ -140,6 +145,12 @@ legacyTestsRouter.post('/tests/generate-and-run', async (req, res) => {
 
   try {
     const actingUserId = (req as RequestWithAuthUser).authUser?.userId;
+    // v3.25 — bkz. sohbet notu: "vector db de step yer alıyorsa önce oradan baksın. hatalı ise
+    // llm e gitsin". v3.24'te bu uç için vector cache OKUMA tarafı TAMAMEN kapatılmıştı (bkz. git
+    // geçmişi) — ama kullanıcı bunun yerine "önce cache'e bak, YANLIŞSA LLM'e düş" davranışını
+    // istedi. Artık kök sebep AgentLoop.tryVectorCacheHit İÇİNDE, okuma anında doğrulanıyor (bkz.
+    // o metodun dosya başı NOT'u) — bu yüzden burada ARTIK özel bir bayrak GEREKMİYOR, cache
+    // normal şekilde (Generated Tests'teki "Run" butonuyla AYNI davranış) devrede.
     const result = await legacyTestService.generateAndRun(parsed.data, actingUserId);
     res.status(200).json(result);
   } catch (err) {

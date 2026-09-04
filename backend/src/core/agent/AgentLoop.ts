@@ -49,6 +49,42 @@ const MAX_LLM_RETRIES_PER_STEP = 2;
  */
 const CACHE_HIT_SAFE_ACTIONS = new Set<ActionType>(['click', 'dblclick', 'check', 'uncheck', 'hover', 'scroll_into_view']);
 
+/**
+ * v3.25 — bkz. tryVectorCacheHit içindeki VALİDASYON bloğu dosya başı NOT'u. Bir <input>/
+ * <textarea>'nın "doldurulabilir metin alanı" sayılıp SAYILMADIĞINI (checkbox/radio/submit/
+ * button/hidden/file/image/reset GİBİ "değer yazılmaz" türleri HARİÇ tutarak) belirler —
+ * `attributes.type` yoksa (ör. <textarea>, ya da type attribute'u hiç yazılmamış <input>)
+ * tarayıcı varsayılanı olan "text" kabul edilir.
+ */
+const NON_FILLABLE_INPUT_TYPES = new Set([
+  'submit',
+  'button',
+  'checkbox',
+  'radio',
+  'hidden',
+  'file',
+  'image',
+  'reset',
+  'range',
+  'color',
+]);
+
+/**
+ * v3.25 — mevcut anlık görüntüde (snapshot) hâlâ BOŞ, doldurulabilir bir metin/parola alanı var
+ * mı? (bkz. tryVectorCacheHit VALİDASYON bloğu). SADECE görünür VE etkin (visible+enabled)
+ * elementlere bakar — gizli/devre dışı bir alanın boş olması kullanıcı için hiçbir şey ifade
+ * etmez, "doldurulması unutulmuş" sayılamaz.
+ */
+function hasUnfilledTextLikeInput(snapshot: PageSnapshot): boolean {
+  return snapshot.elements.some((el) => {
+    if (el.tag !== 'input' && el.tag !== 'textarea') return false;
+    if (!el.visible || !el.enabled) return false;
+    const type = (el.attributes?.type || 'text').toLowerCase();
+    if (NON_FILLABLE_INPUT_TYPES.has(type)) return false;
+    return !el.currentValue || el.currentValue.trim().length === 0;
+  });
+}
+
 // v3.18 — bkz. sohbet notu: canlı logda agent'ın kendi adım kararı çağrısı (bu dosyadaki tek
 // `this.llm.complete(messages)` çağrısı — hiçbir `options` VERMEDİĞİ için OpenRouterProvider'ın
 // DEFAULT_MAX_TOKENS'ına, yani 1024'e düşüyordu) sık sık ilk denemede yetersiz kalıp (finish_reason=
@@ -85,6 +121,28 @@ export interface AgentLoopInput {
    * Run Selected, zamanlanmış koşumlar vb.) davranış HİÇ DEĞİŞMEZ, hiçbir ek işlem yapılmaz.
    */
   captureStorageState?: boolean;
+  /**
+   * v3.24 — bkz. sohbet notu: "BDD kısmına tıklayıp Run Test dediğimde Test Scenario Instructions
+   * kısmındaki veriler ile koşum yapsın. şuan sanki geçmiş koşum adımlarını kullanıyor". Canlı
+   * run kaydında DOĞRULANDI (bkz. runs/iKB03jW3yreR.json): vector cache OKUMA tarafı "sicil no
+   * alanına yaz" (fill, cache-safe DEĞİL, hep LLM'e danışılır) adımını ATLAYIP "giriş butonuna
+   * tıkla" (click, cache-safe) kararını stepIndex+benzerlik eşleşmesiyle (benzerlik: 1.00) DAHA
+   * ÖNCEKİ farklı bir run/senaryo varyasyonundan getirdi — çünkü buildSituationText (bkz. o
+   * dosyanın dosya başı NOT'u) BİLEREK element DEĞERLERİNİ (bir alanın o an dolu/boş olması dahil)
+   * embedding'e DAHİL ETMİYOR, sadece yapısal (tag/role/name) bilgi taşıyor — yani cache "sicil no
+   * alanı doldu mu" farkını hiç GÖREMEZ. Sonuç: sicil no hiç doldurulmadan giriş denendi, sayfa
+   * "Sicil 7 karakterden az olamaz" hatası verdi, run başarısız oldu — Test Scenario Instructions'ta
+   * YAZANLA (önce doldur, sonra tıkla) GERÇEKTE koşulan sıra BİRBİRİNDEN SAPTI.
+   * `true` ise BU RUN için vector cache OKUMA tarafı (tryVectorCacheHit) TAMAMEN atlanır — HER
+   * adım kararı LLM'e danışılır, "geçmiş bir run'dan sızan" bir karar asla devreye giremez.
+   * SADECE `/api/tests/generate-and-run` (Create Test sayfasındaki "Generate & Run Test" butonu —
+   * hem BDD ekranından gelen düzenlenmiş senaryolar HEM DE sıfırdan yazılan senaryolar için) bunu
+   * `true` gönderir (bkz. LegacyTestService.generateAndRun / route dosya başı NOT'u). Generated
+   * Tests'teki "Run" butonu (`/api/generated-tests/run` → runGeneratedTest → generateAndRun) bu
+   * alanı HİÇ göndermez — `undefined`/`false` kalır, davranış ESKİSİ GİBİ (cache aktif, hızlı)
+   * kalmaya devam eder; kullanıcı bu butonun "güzel çalıştığını" doğruladı, BİLEREK DOKUNULMADI.
+   */
+  disableVectorCacheRead?: boolean;
 }
 
 export class AgentLoop {
@@ -248,7 +306,14 @@ export class AgentLoop {
           // var mı diye bakılır (bkz. tryVectorCacheHit dosya başı açıklaması). BEST-EFFORT'tur —
           // `env.VECTOR_CACHE_READ_ENABLED=false` iken (varsayılan) veya herhangi bir Milvus/Ollama
           // sorununda `null` döner ve aşağıdaki normal LLM akışına sorunsuzca düşülür.
-          const cachedDecision = await this.tryVectorCacheHit(scenario, snapshot, stepIndex, usedCacheSignatures);
+          //
+          // v3.24 — bkz. AgentLoopInput.disableVectorCacheRead dosya başı açıklaması: canlı run
+          // kaydında doğrulanan bir hata sınıfı ("fill" adımı atlanıp cache'ten "click" kararı
+          // gelmesi, sicil no hiç doldurulmadan giriş denenmesi) yüzünden BU RUN için `true`
+          // verildiyse cache'e HİÇ bakılmaz, doğrudan aşağıdaki LLM akışına düşülür.
+          const cachedDecision = input.disableVectorCacheRead
+            ? null
+            : await this.tryVectorCacheHit(scenario, snapshot, stepIndex, usedCacheSignatures, history);
 
           if (cachedDecision) {
             decision = cachedDecision;
@@ -673,6 +738,11 @@ export class AgentLoop {
     snapshot: PageSnapshot,
     stepIndex: number,
     usedCacheSignatures: Set<string>,
+    // v3.25 — bkz. sohbet notu: "vector db de step yer alıyorsa önce oradan baksın. hatalı ise
+    // llm e gitsin". Bu run'ın ŞU ANA KADARKİ karar geçmişi — cache'ten gelen bir click/dblclick
+    // adayını KABUL ETMEDEN önce "gerçekten bu run'ın akışına uyuyor mu" diye doğrulamak için
+    // gerekli (bkz. aşağıdaki VALİDASYON bloğu).
+    history: HistoryEntry[],
   ): Promise<AgentDecision | null> {
     if (!vectorCacheStore || !env.VECTOR_CACHE_READ_ENABLED) {
       return null;
@@ -702,6 +772,37 @@ export class AgentLoop {
       );
       if (!matchedEl) {
         continue;
+      }
+
+      // v3.25 — VALİDASYON (bkz. sohbet notu ve canlı run kaydı runs/iKB03jW3yreR.json): SADECE
+      // click/dblclick için — bu ikisi "sayfayı ilerleten" (form gönderme/giriş/sonraki adıma
+      // geçme) aksiyonlar olabilir, hover/check/scroll_into_view'un aksine geri dönüşü ZOR/
+      // maliyetli olabilir. buildSituationText (bkz. o dosyanın dosya başı NOT'u) BİLEREK element
+      // DEĞERLERİNİ (bir alanın o an dolu/boş olması) embedding'e dahil ETMEZ — yani cache "bu run
+      // henüz hiçbir alanı doldurmadı" farkını KENDİ BAŞINA hiç göremez. Canlı olarak gözlemlendi:
+      // cache, "sicil no alanına yaz" (fill, cache-safe DEĞİL) adımını hiç görmeden "giriş
+      // butonuna tıkla" kararını (benzerlik: 1.00, EN YÜKSEK skor) ÖNCEKİ farklı bir run'dan
+      // getirdi — form BOŞ gönderildi, sayfa "Sicil 7 karakterden az olamaz" hatası verdi.
+      // Bu yüzden burada EK bir yapısal kontrol var: bu run'da HENÜZ hiç fill/select_option
+      // YAPILMAMIŞSA (yani hiçbir veri girilmemişken doğrudan bir "ilerlet" click'i öneriliyorsa)
+      // VE sayfada hâlâ BOŞ, doldurulabilir (text/password/email/tel/number/textarea gibi) bir
+      // alan varsa, bu aday GÜVENSİZ sayılır ve ATLANIR — bir sonraki adaya (varsa) bakılır,
+      // hiçbiri kalmazsa `null` döner ve normal LLM akışına düşülür. Bu, "her zaman cache'e önce
+      // bak, ama şüpheliyse LLM'e sor" ilkesini (kullanıcının kendi tabiriyle "hatalı ise llm'e
+      // gitsin") code'a döker — ama SADECE bu dar/riskli pencerede (run'ın veri girişi henüz hiç
+      // başlamadığı an) devreye girer; en az bir fill'den SONRAKİ adımlarda cache ESKİSİ GİBİ tam
+      // hızında çalışmaya devam eder.
+      if (candidate.action === 'click' || candidate.action === 'dblclick') {
+        const hasPriorFill = history.some(
+          (h) => h.decision.action === 'fill' || h.decision.action === 'select_option',
+        );
+        if (!hasPriorFill && hasUnfilledTextLikeInput(snapshot)) {
+          log.info(
+            { stepIndex, similarity: candidate.similarity, action: candidate.action, sourceRunId: candidate.sourceRunId },
+            "Vector cache adayı GÜVENSİZ bulundu (henüz hiç veri girilmemişken 'ilerlet' click'i, sayfada hâlâ boş alan var) — atlanıyor, LLM'e danışılacak",
+          );
+          continue;
+        }
       }
 
       const signature = `${candidate.action}:${candidate.targetTag}:${candidate.targetRole}:${candidate.targetAccessibleName}:${candidate.value ?? ''}`;
