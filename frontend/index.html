@@ -679,6 +679,43 @@
         </li>
 
 
+        <!-- RUNNING TESTS — v3.34. O an aktif olarak koşan testleri listeleyen ayrı bir sayfaya
+             götürür (bkz. pages/running-tests.html / app.js initRunningTestsPage). Kullanıcı
+             isteğiyle Reports'un ÜZERİNE alındı ve diğer üst düzey menü öğeleriyle aynı standart
+             stile (px-md, font-body-md/text-body-md, normal ikon boyutu) getirildi — artık
+             Reports'un bir alt öğesi gibi görünmüyor, kendi başına bağımsız bir menü öğesi. -->
+        <li>
+
+            <a
+                    id="runningTestsMenu"
+                    class="flex items-center
+                           gap-3
+                           px-md py-sm
+                           rounded-lg
+                           text-on-surface-variant
+                           hover:text-on-surface
+                           hover:bg-surface-variant/50
+                           transition-all
+                           duration-200
+                           font-body-md
+                           text-body-md
+                           w-full"
+                    href="#"
+            >
+
+                <span
+                        class="material-symbols-outlined"
+                >
+                    directions_run
+                </span>
+
+                Running Tests
+
+            </a>
+
+        </li>
+
+
         <!-- REPORTS -->
         <li>
 

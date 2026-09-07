@@ -15,6 +15,7 @@ const suggestionsMenu = document.getElementById('suggestionsMenu');
 const generatedTestsMenu = document.getElementById('generatedTestsMenu');
 const testRunsMenu = document.getElementById('testRunsMenu');
 const reportsMenu = document.getElementById('reportsMenu');
+const runningTestsMenu = document.getElementById('runningTestsMenu');
 const adminPanelMenu = document.getElementById('adminPanelMenu');
 const adminPanelMenuItem = document.getElementById('adminPanelMenuItem');
 
@@ -580,6 +581,215 @@ const appState = {
 
 
 /* =========================================================
+   GLOBAL FILE RUN STATUS REGISTRY
+   ------------------------------------------------------
+   v3.32 — bkz. sohbet notu: "Generated Test ve Suits kısmında başlatılan testlerin satırı
+   üzerinde Running yazacak şekilde güncelleme yapar mısın? Koşumu biten senaryoda bu yazı
+   kalksın". Generated Tests VE Suites sayfaları AYNI dosya adı uzayını (LegacyGeneratedTestMeta.
+   fileName) paylaşır ve HER İKİSİ de kendi "toplu çalıştırma" (trackBatchRuns/trackSuiteBatchRuns)
+   akışında ZATEN bir "Running…" rozeti gösteriyordu — ama bu SADECE o rozeti başlatan sayfa açık
+   kaldığı sürece çalışıyordu (yerel/kapsam-içi Map'ler, initGeneratedTestsPage/initSuitesPage her
+   çağrıldığında sıfırlanır) ve tek satırlık "Run"/"Replay" butonu (runExistingTest/
+   replayExistingTest) hiç rozet basmıyordu (koşum başlar başlamaz Create Test sayfasına
+   yönlendiriyor, kullanıcı zaten o satırı görmüyor olsa da geri döndüğünde rozet YOKTU).
+   Bu registry, "şu an hangi dosya çalışıyor" bilgisini sayfa navigasyonundan/hangi butonun
+   başlattığından BAĞIMSIZ, TEK bir yerde (bu modülün gerçek global scope'unda, sayfa HTML'i
+   pageContent.innerHTML ile değişse bile hayatta kalır) tutar — renderGeneratedTests() VE
+   renderSuiteTests() rozeti kendi yerel Map'leriyle BİRLİKTE buradan da okur (bkz. o
+   fonksiyonlardaki `|| globalFileRunStatus.get(fileName)` düşüşü), böylece HANGİ sayfadan/HANGİ
+   butonla başlatılmış olursa olsun, dosya hâlâ çalışıyorsa görünürken satırda "Running" yazar ve
+   koşum bitince (settle) otomatik kalkar.
+   `runId` alanı OPSİYONEL: run-batch akışı (trackBatchRuns/trackSuiteBatchRuns) runId'yi baştan
+   bilir (bkz. LegacyTestService.runGeneratedTestsBatch), tekli Run/Replay (legacy tek-uçuş
+   activeRunId) BİLMEZ — ikisi de aynı şekilde buraya yazar, sadece runId'si olan girişler
+   "Running" rozetine tıklanınca doğrudan o run'ın canlı logunu açabilir (bkz. goToRunningTestLog
+   ve initCreateTestPage "PENDING LIVE RUN" bloğundaki knownRunId dalı) — runId'si olmayanlar
+   (tekli Run/Replay) tıklanınca ESKİDEN OLDUĞU GİBİ /api/tests/current-run-id yoklamasına
+   (connectLiveExecutionLog) düşer, çünkü o akışta zaten TEK aktif run vardır ve bu HER ZAMAN o
+   run'dır.
+========================================================= */
+const globalFileRunStatus = new Map();
+const globalFileRunStatusListeners = new Set();
+
+function setGlobalFileRunStatus(fileName, status, extra = {}) {
+    globalFileRunStatus.set(fileName, { status, ...extra });
+    globalFileRunStatusListeners.forEach((listener) => listener());
+}
+
+function clearGlobalFileRunStatus(fileName) {
+    globalFileRunStatus.delete(fileName);
+    globalFileRunStatusListeners.forEach((listener) => listener());
+}
+
+/** Geri döndürülen fonksiyon aboneliği iptal eder — sayfa değişince (bkz. navigateTo) çağrılmalı,
+ * aksi halde artık DOM'da olmayan bir sayfanın render fonksiyonu gereksiz yere çağrılmaya devam eder. */
+function onGlobalFileRunStatusChange(listener) {
+    globalFileRunStatusListeners.add(listener);
+    return () => globalFileRunStatusListeners.delete(listener);
+}
+
+// navigateTo() her sayfa geçişinde bunu çağırıp bir önceki sayfanın aboneliğini kapatır, sonra
+// initGeneratedTestsPage/initSuitesPage kendi aboneliğini buraya yazar.
+let activeFileRunStatusUnsubscribe = null;
+
+function teardownFileRunStatusSubscription() {
+    if (activeFileRunStatusUnsubscribe) {
+        activeFileRunStatusUnsubscribe();
+        activeFileRunStatusUnsubscribe = null;
+    }
+}
+
+/**
+ * "Running" rozetine tıklanınca çağrılır (bkz. initGeneratedTestsPage/initSuitesPage —
+ * .runningStatusBadge delegasyonu). Bu testin koşum loglarının/Scenario Definition alanlarının
+ * göründüğü Create Test sayfasına götürür — knownRunId varsa (toplu çalıştırma) doğrudan o run'a
+ * bağlanır, yoksa (tekli Run/Replay) mevcut current-run-id yoklamasına düşer (dosya başı NOT).
+ */
+async function goToRunningTestLog(fileName, test) {
+
+    const info = globalFileRunStatus.get(fileName);
+    const knownRunId = info && info.runId ? info.runId : null;
+    // Çağıran (bkz. Generated Tests/Suites .runningStatusBadge delegasyonu) genelde KENDİ
+    // `allTests`'inden bir kayıt geçirir; bulamazsa (ör. koşum BAŞKA sayfadan başlatıldığı için bu
+    // sayfanın listesinde henüz yoksa) registry'e trackBatchRuns/trackSuiteBatchRuns tarafından
+    // yazılmış olan kayda düşüyoruz (bkz. setGlobalFileRunStatus çağrıları).
+    const testRecord = test || (info && info.test) || null;
+
+    if (testRecord) {
+        // Testin tam kaydı elimizde — BDD/Run butonlarıyla AYNI şekilde Scenario Definition
+        // alanlarını da dolduruyoruz (bkz. buildScenarioSnapshotFromTest).
+        appState.pendingLiveRun = knownRunId
+            ? { ...buildScenarioSnapshotFromTest(testRecord), knownRunId }
+            : buildScenarioSnapshotFromTest(testRecord);
+    } else if (knownRunId) {
+        // Test kaydı yok ama runId biliniyor (run-batch akışı) — alanları doldurmadan doğrudan
+        // bu run'ın canlı loguna bağlanıyoruz.
+        appState.pendingLiveRun = { knownRunId };
+    } else {
+        // Ne test kaydı ne de bilinen bir runId var (tekli Run/Replay, legacy tek-uçuş
+        // activeRunId) — ESKİDEN OLDUĞU GİBİ current-run-id yoklamasına düşer.
+        appState.pendingLiveRun = true;
+    }
+
+    await navigateTo('create');
+}
+
+
+/* =========================================================
+   RUNNING TESTS
+   ------------------------------------------------------
+   v3.33 — bkz. sohbet notu: "Sol Menüde yer alan Reports un altına Running Tests satırı ekle...
+   aktif olarak koşan testler burada listelensin... satırlarda sadece Running yazısı yazsın...
+   tıklandığında... Scenario Definition sayfasına kullanıcı yönlendirilsin". Reports'un altındaki
+   ayrı bir sayfa (bkz. index.html #runningTestsMenu / pageConfig.runningTests). Kendi state'i
+   YOK — Generated Tests/Suites'in ZATEN yazdığı globalFileRunStatus registry'sini (bkz. o dosya
+   başı NOT'u) doğrudan okur; bu registry'deki HER kayıt tanım gereği 'running' durumundadır (bkz.
+   trackBatchRuns/trackSuiteBatchRuns/runExistingTest/replayExistingTest — hiçbiri buraya asla
+   terminal bir durum YAZMAZ, sadece settle/finally'de siler), bu yüzden burada ayrıca bir durum
+   filtrelemesi/rozet çeşitliliği gerekmiyor — "Running" tek olası metin.
+========================================================= */
+
+function initRunningTestsPage() {
+
+    const runningTestsTableBody =
+        document.getElementById('runningTestsTableBody');
+    const runningTestsEmptyState =
+        document.getElementById('runningTestsEmptyState');
+
+    if (!runningTestsTableBody || !runningTestsEmptyState) {
+        return;
+    }
+
+    function renderRunningTests() {
+
+        const entries =
+            Array.from(globalFileRunStatus.entries());
+
+        if (entries.length === 0) {
+
+            runningTestsTableBody.innerHTML = '';
+            runningTestsEmptyState.classList.remove('hidden');
+            runningTestsEmptyState.classList.add('flex');
+            return;
+        }
+
+        runningTestsEmptyState.classList.add('hidden');
+        runningTestsEmptyState.classList.remove('flex');
+
+        runningTestsTableBody.innerHTML =
+            entries
+                .map(([fileName, info]) => {
+
+                    // Test kaydı varsa (bkz. setGlobalFileRunStatus çağrıları) kullanıcının bu
+                    // teste verdiği özel ismi de küçük/soluk bir satırda gösteriyoruz — Generated
+                    // Tests/Suites tablolarındaki AYNI ikili gösterim (bkz. renderGeneratedTests).
+                    const displayName =
+                        info.test && info.test.displayName
+                            ? info.test.displayName
+                            : null;
+
+                    return `
+                        <tr class="hover:bg-surface-container/50 transition-colors">
+                            <td class="py-sm px-md">
+                                <div class="flex flex-col">
+                                    ${
+                                        displayName
+                                            ? `<span class="font-body-md text-body-md text-on-surface truncate">${escapeHtml(displayName)}</span>
+                                               <span class="font-mono text-[11px] text-on-surface-variant truncate">${escapeHtml(fileName)}</span>`
+                                            : `<span class="font-body-md text-body-md text-on-surface truncate">${escapeHtml(fileName)}</span>`
+                                    }
+                                </div>
+                            </td>
+                            <td class="py-sm px-md">
+                                <button
+                                    type="button"
+                                    class="runningStatusBadge
+                                           inline-flex items-center gap-1
+                                           px-2 py-[2px]
+                                           rounded-full
+                                           text-[10px] font-bold uppercase tracking-wider
+                                           cursor-pointer
+                                           hover:opacity-80
+                                           transition-opacity
+                                           bg-primary-container/60 text-on-primary-container animate-pulse"
+                                    data-file="${escapeHtml(fileName)}"
+                                    title="View live run log"
+                                >
+                                    Running
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                })
+                .join('');
+
+        runningTestsTableBody
+            .querySelectorAll('.runningStatusBadge')
+            .forEach((button) => {
+                button.addEventListener('click', async () => {
+
+                    const fileName = button.getAttribute('data-file');
+                    if (!fileName) return;
+
+                    const info = globalFileRunStatus.get(fileName);
+
+                    await goToRunningTestLog(fileName, info && info.test);
+                });
+            });
+    }
+
+    // v3.33 — bkz. globalFileRunStatus dosya başı NOT'u: bu sayfa canlı bir görünüm — bir test
+    // başlayınca/bitince (Generated Tests/Suites'ten, ya da tekli Run/Replay'den, HANGİ sayfadan
+    // olursa olsun) burası da anında güncellensin diye abone oluyoruz. navigateTo() sayfadan
+    // ayrılırken bu aboneliği zaten kapatır (bkz. teardownFileRunStatusSubscription).
+    activeFileRunStatusUnsubscribe =
+        onGlobalFileRunStatusChange(renderRunningTests);
+
+    renderRunningTests();
+}
+
+
+/* =========================================================
    PAGE CONFIGURATION
 ========================================================= */
 
@@ -629,6 +839,17 @@ const pageConfig = {
         subtitle: 'Test Reports & Analytics',
     },
 
+    // v3.33 — bkz. sohbet notu: "Sol Menüde yer alan Reports un altına Running Tests satırı
+    // ekle... açılan sayfada aktif olarak koşan testler burada listelensin". Reports'un altındaki
+    // bir "alt sayfa" (bkz. index.html #runningTestsMenu) — o an globalFileRunStatus registry'sinde
+    // (bkz. o dosya başı NOT'u) kaydı olan (Generated Tests/Suites'ten tekli ya da toplu
+    // başlatılmış) TÜM dosyaları listeler.
+    runningTests: {
+        file: 'running-tests.html',
+        menu: runningTestsMenu,
+        subtitle: 'Currently Running Tests',
+    },
+
     admin: {
         file: 'admin-panel.html',
         menu: adminPanelMenu,
@@ -667,6 +888,7 @@ function setActiveSidebarMenu(activeMenu) {
         generatedTestsMenu,
         testRunsMenu,
         reportsMenu,
+        runningTestsMenu,
         adminPanelMenu,
         settingsMenu,
     ];
@@ -798,6 +1020,12 @@ async function navigateTo(pageName) {
     // kalır. Masaüstünde bu no-op'tur (closeMobileSidebar zaten md:'de anlamsız sınıfları toggler).
     closeMobileSidebar();
 
+    // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bir önceki sayfanın (varsa) "Running"
+    // rozeti aboneliğini kapatıyoruz — aksi halde artık DOM'da olmayan bir tablonun render
+    // fonksiyonu, arka planda devam eden bir koşumun durumu her değiştiğinde (gereksiz yere)
+    // çağrılmaya devam ederdi.
+    teardownFileRunStatusSubscription();
+
     try {
 
         pageContent.innerHTML = `
@@ -895,6 +1123,11 @@ async function initializePage(pageName) {
 
     if (pageName === 'reports') {
         await initReportsPage();
+        return;
+    }
+
+    if (pageName === 'runningTests') {
+        initRunningTestsPage();
         return;
     }
 
@@ -1987,6 +2220,28 @@ async function initCreateTestPage() {
         }
 
 
+        // v3.32 — bkz. openLiveLogSocket/handleLiveLogTerminal dosya başı NOT'u: run-batch
+        // akışından ('run_error' olayı) gelen bir bitiş, önceden buradaki hiçbir dala
+        // uymadığından yanlışlıkla "Running" gösteriyordu (aşağıdaki varsayılan dal) — artık
+        // "Failed" ile AYNI (kırmızı) ama ayrı bir etiketle ("Error") gösteriliyor.
+        if (status === 'error') {
+
+            testStatusBadge.className =
+                'text-error bg-error/10 px-2 py-1 rounded';
+
+            testStatusBadge.textContent =
+                'Error';
+
+            testStatus.textContent =
+                'Error';
+
+            testStatus.className =
+                'text-error font-semibold';
+
+            return;
+        }
+
+
         testStatusBadge.className =
             'text-primary bg-primary/10 px-2 py-1 rounded';
 
@@ -2321,6 +2576,44 @@ async function initCreateTestPage() {
     }
 
 
+    const LIVE_LOG_TERMINAL_STATUSES =
+        new Set(['passed', 'failed', 'error', 'cancelled']);
+
+    /**
+     * v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: "Running" rozetine tıklanıp doğrudan
+     * bilinen bir runId'ye (bkz. goToRunningTestLog'daki knownRunId) bağlanıldığında, bu run'ın
+     * bitişini (run-batch akışı — bkz. trackBatchRuns/trackSuiteBatchRuns — ile AYNI olay
+     * sözleşmesi) ARTIK burada da işliyoruz; ESKİDEN bu soket SADECE 'step'/'grid_live_view'
+     * dinliyordu çünkü tekli Run/Replay akışında nihai sonuç zaten AYRI bir yoldan (asıl fetch
+     * tamamlanınca appState.pendingTestResult ile İKİNCİ bir navigateTo('create')) geliyordu —
+     * knownRunId ile açılan bir görüntülemede o ikinci navigasyon HİÇ olmaz (bu sekme sadece
+     * İZLİYOR, run'ı O BAŞLATMADI), bu yüzden run bitince ekranın "Running..." durumunda asılı
+     * kalmaması için burada da nihai durumu yakalayıp rozeti/butonları güncelliyoruz.
+     */
+    function handleLiveLogTerminal(socket, status) {
+
+        // Bu arada BAŞKA bir navigasyon (ör. ikinci navigateTo('create') ya da kullanıcının
+        // kendisi) mevcut soketi zaten kapatıp yenisiyle değiştirmiş olabilir — o durumda BURADAN
+        // artık dokunmuyoruz, güncel soketin/sayfanın state'ini ezmeyelim.
+        if (liveLogSocket !== socket) {
+            return;
+        }
+
+        disconnectLiveLog();
+
+        generateRunButton.disabled = false;
+        stopTestButton.disabled = true;
+
+        generateRunButton.innerHTML = `
+            <span class="material-symbols-outlined">smart_toy</span>
+            Generate & Run Test
+        `;
+
+        updateStatusBadge(status === 'cancelled' ? 'stopped' : status);
+
+        appendLiveLogLine(`\n[Run finished: ${status}]`);
+    }
+
     function openLiveLogSocket(runId) {
 
         liveLogConnected = true;
@@ -2355,16 +2648,32 @@ async function initCreateTestPage() {
 
                         showGridLiveViewLink(data.url);
 
-                    } else if (
-                        data.type === 'run_snapshot' &&
-                        data.summary?.seleniumGridLiveViewUrl
-                    ) {
+                    } else if (data.type === 'run_finished') {
 
-                        // Geç bağlanan bir istemci — session zaten açılmışsa (grid_live_view olayı
-                        // kaçırılmış olabilir) summary üzerinden yine de yakalıyoruz.
-                        showGridLiveViewLink(
-                            data.summary.seleniumGridLiveViewUrl,
-                        );
+                        handleLiveLogTerminal(socket, data.status);
+
+                    } else if (data.type === 'run_error') {
+
+                        handleLiveLogTerminal(socket, 'error');
+
+                    } else if (data.type === 'run_snapshot') {
+
+                        if (data.summary?.seleniumGridLiveViewUrl) {
+
+                            // Geç bağlanan bir istemci — session zaten açılmışsa (grid_live_view
+                            // olayı kaçırılmış olabilir) summary üzerinden yine de yakalıyoruz.
+                            showGridLiveViewLink(
+                                data.summary.seleniumGridLiveViewUrl,
+                            );
+                        }
+
+                        if (LIVE_LOG_TERMINAL_STATUSES.has(data.summary?.status)) {
+
+                            // WS bağlanana kadar (ör. "Running" rozetine geç tıklanmış) run zaten
+                            // bitmiş olabilir — ilk snapshot bunu taşır (bkz. trackBatchRuns'taki
+                            // AYNI desen).
+                            handleLiveLogTerminal(socket, data.summary.status);
+                        }
                     }
 
                 } catch (error) {
@@ -2465,43 +2774,15 @@ async function initCreateTestPage() {
         // runGeneratedTest — burada eksik olan sadece ekranda GÖRÜNMESİYDİ). Eski çağrı
         // yollarında (ör. replayExistingTest) hâlâ `true` (boolean) gelir — bu durumda alanlara
         // DOKUNULMAZ, davranış tamamen ESKİSİ GİBİ kalır.
-        if (pendingRun && typeof pendingRun === 'object') {
-
-            targetUrlInput.value = pendingRun.url || '';
-            testNameInput.value = pendingRun.testName || '';
-            testScenarioInput.value = pendingRun.bddDescription || '';
-
-            if (projectSelectInput) {
-                // bkz. yukarıdaki projectsLoadPromise dosya başı NOT'u — <option>'lar hazır
-                // olmadan .value ataması sessizce hiçbir şey seçmez.
-                await projectsLoadPromise;
-                projectSelectInput.value = pendingRun.projectId != null ? String(pendingRun.projectId) : '';
-            }
-
-            const runBrowserRadio = document.querySelector(
-                `input[name="browser"][value="${pendingRun.browser || 'chromium'}"]`,
-            );
-            if (runBrowserRadio) runBrowserRadio.checked = true;
-
-            if (headedModeInput) headedModeInput.checked = Boolean(pendingRun.headed);
-            if (screenshotOption) screenshotOption.checked = Boolean(pendingRun.screenshot);
-            if (videoOption) videoOption.checked = Boolean(pendingRun.video);
-            if (traceOption) traceOption.checked = Boolean(pendingRun.trace);
-            if (useSeleniumGridOption) useSeleniumGridOption.checked = Boolean(pendingRun.useSeleniumGrid);
-
-            if (variablesContainer) {
-                variablesContainer.querySelectorAll('.variableRow').forEach((row) => row.remove());
-                const variableEntries = Object.entries(pendingRun.variables || {});
-                if (variableEntries.length > 0) {
-                    variableEntries.forEach(([key, value]) => createVariableRow(key, value, 'text'));
-                } else {
-                    createVariableRow();
-                }
-            }
-
-            bddDescriptionOutput.value = pendingRun.bddDescription || '';
-        }
-
+        // v3.34 — bkz. sohbet notu: "Running yazısına tıklandığında yönlendirilen sayfada
+        // Execution Log alanı aktif gelsin. Şuan Generated Code kısmı aktif geliyor". Panel
+        // geçişi VE canlı log bağlantısı artık BİLEREK Scenario Definition alanlarını doldurmadan
+        // ÖNCE yapılıyor — ÖNCEDEN bu alanların doldurulması (ör. projectsLoadPromise'ı bekleyen
+        // kısım) bir şekilde uzarsa/hata atarsa aşağıdaki showPanel('log') hiç ÇALIŞMIYOR, sayfa
+        // statik HTML'in varsayılanında (Generated Code paneli, bkz. create-test.html — TEK panel
+        // `hidden` OLMADAN "flex" ile başlıyor) kalıyordu. Artık sıra tersine çevrildi VE alan
+        // doldurma ayrıca bir try/catch içinde: alanlar boş/eksik kalsa bile (nadir durum) panel
+        // geçişi/canlı log bağlantısı HER ZAMAN, HEMEN çalışır.
         generateRunButton.disabled = true;
 
         generateRunButton.innerHTML = `
@@ -2509,9 +2790,6 @@ async function initCreateTestPage() {
             Running...
         `;
 
-        stopTestButton.disabled = false;
-
-        appState.currentRunId = null;
         bddSaveStatus.textContent = '';
 
         hideGridLiveViewLink();
@@ -2519,7 +2797,80 @@ async function initCreateTestPage() {
         updateStatusBadge('running');
         showPanel('log');
 
-        void connectLiveExecutionLog();
+        // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: Generated Tests/Suites'teki
+        // "Running" rozetine tıklanınca (bkz. goToRunningTestLog) buraya `knownRunId` ile
+        // gelinmiş olabilir — bu run-batch akışından (LegacyTestService.runGeneratedTestsBatch)
+        // başlatılmış bir koşumdur ve runId'si ZATEN bilinir, bu yüzden /api/tests/current-run-id
+        // yoklamasına (connectLiveExecutionLog — SADECE eski "tek uçuş" activeRunId'yi bilir,
+        // toplu koşumlardan HABERSİZDİR) hiç gerek yok; doğrudan o run'ın soketine bağlanıyoruz.
+        // `knownRunId` YOKSA (tekli Run/Replay — bkz. runExistingTest/replayExistingTest) davranış
+        // ESKİSİ GİBİ kalır: tek aktif run'ı current-run-id ile buluruz.
+        if (pendingRun && typeof pendingRun === 'object' && pendingRun.knownRunId) {
+
+            appState.currentRunId = pendingRun.knownRunId;
+            openLiveLogSocket(pendingRun.knownRunId);
+
+            // Stop butonu SADECE eski "tek uçuş" activeRunId'yi durdurur (bkz.
+            // LegacyTestService.stop — this.activeLoop.cancel()); bir run-batch koşumunun runId'si
+            // bununla İLİŞKİLİ DEĞİLDİR (bkz. runManager — ayrı bir Map). Bu buton burada AKTİF
+            // bırakılırsa, kullanıcı bu SADECE İZLEDİĞİ run'ı durdurduğunu sanır ama gerçekte (varsa)
+            // TAMAMEN ALAKASIZ bir legacy run'ı durdurmuş olur — bu yüzden bu görünüm SADECE
+            // izleme amaçlıdır, Stop devre dışı bırakılır.
+            stopTestButton.disabled = true;
+
+        } else {
+
+            appState.currentRunId = null;
+            stopTestButton.disabled = false;
+            void connectLiveExecutionLog();
+        }
+
+        if (pendingRun && typeof pendingRun === 'object') {
+
+            try {
+
+                targetUrlInput.value = pendingRun.url || '';
+                testNameInput.value = pendingRun.testName || '';
+                testScenarioInput.value = pendingRun.bddDescription || '';
+
+                if (projectSelectInput) {
+                    // bkz. yukarıdaki projectsLoadPromise dosya başı NOT'u — <option>'lar hazır
+                    // olmadan .value ataması sessizce hiçbir şey seçmez.
+                    await projectsLoadPromise;
+                    projectSelectInput.value = pendingRun.projectId != null ? String(pendingRun.projectId) : '';
+                }
+
+                const runBrowserRadio = document.querySelector(
+                    `input[name="browser"][value="${pendingRun.browser || 'chromium'}"]`,
+                );
+                if (runBrowserRadio) runBrowserRadio.checked = true;
+
+                if (headedModeInput) headedModeInput.checked = Boolean(pendingRun.headed);
+                if (screenshotOption) screenshotOption.checked = Boolean(pendingRun.screenshot);
+                if (videoOption) videoOption.checked = Boolean(pendingRun.video);
+                if (traceOption) traceOption.checked = Boolean(pendingRun.trace);
+                if (useSeleniumGridOption) useSeleniumGridOption.checked = Boolean(pendingRun.useSeleniumGrid);
+
+                if (variablesContainer) {
+                    variablesContainer.querySelectorAll('.variableRow').forEach((row) => row.remove());
+                    const variableEntries = Object.entries(pendingRun.variables || {});
+                    if (variableEntries.length > 0) {
+                        variableEntries.forEach(([key, value]) => createVariableRow(key, value, 'text'));
+                    } else {
+                        createVariableRow();
+                    }
+                }
+
+                bddDescriptionOutput.value = pendingRun.bddDescription || '';
+
+            } catch (error) {
+
+                console.error(
+                    'Scenario Definition alanları dolduruluyorken hata oluştu (panel/canlı log zaten aktifti, etkilenmedi):',
+                    error,
+                );
+            }
+        }
     }
 
 
@@ -2858,6 +3209,64 @@ async function initCreateTestPage() {
             showPanel('log');
 
 
+            // v3.35 — bkz. sohbet notu: "Scenario Definition içinden tetiklenen aktif olarak
+            // koşan testler Running Tests kısmında gösterilsin" + "Running yazısına tıklandığında
+            // koşuma ait TÜM bilgiler Scenario Definition kısmına gelsin". Bu akışta
+            // (generate-and-run) henüz bir dosya/fileName YOK (test AI tarafından şu an
+            // üretiliyor) — bu yüzden gerçek bir fileName yerine, kullanıcının görebileceği bir
+            // isimle (Test Name girilmişse o, girilmemişse senaryo metninin kısaltılmışı) senkron
+            // bir anahtar üretip registry'ye (bkz. globalFileRunStatus dosya başı NOT'u) yazıyoruz.
+            // Sadece anahtar/isim değil, o an formda ne varsa (url, senaryo metni, tarayıcı/koşum
+            // ayarları, değişkenler, proje) `buildScenarioSnapshotFromTest`'in beklediği "test
+            // kaydı" ŞEKLİNDE bir `test` nesnesi olarak da saklıyoruz — böylece "Running" rozetine
+            // BAŞKA bir sayfadan (ör. Running Tests) tıklanırsa goToRunningTestLog() bunu bir
+            // testRecord gibi işleyip Scenario Definition alanlarını AYNEN bu koşumdaki gibi
+            // doldurur (bkz. initCreateTestPage "PENDING LIVE RUN" bloğu). runId BİLİNMİYOR (legacy
+            // tek-uçuş activeRunId) — bu yüzden "Running" rozetine tıklanınca yine de mevcut
+            // current-run-id yoklamasına düşer (ki zaten o an tek aktif run budur), ama alanlar bu
+            // sefer BOŞ kalmaz. `finally` bloğunda (aşağıda) temizlenir.
+            const {
+                variables:
+                    collectedVariables,
+                secrets:
+                    collectedSecrets,
+            } =
+                collectVariablesAndSecrets();
+
+            const runningTestsKey =
+                testName ||
+                (
+                    scenario.length > 60
+                        ? `${scenario.slice(0, 60)}…`
+                        : scenario
+                ) ||
+                `Untitled Test (${new Date().toLocaleTimeString()})`;
+
+            setGlobalFileRunStatus(
+                runningTestsKey,
+                'running',
+                {
+                    test: {
+                        displayName: testName || '',
+                        bddDescription: scenario,
+                        url,
+                        variables: collectedVariables,
+                        browser: selectedBrowser,
+                        headed: headedModeInput.checked,
+                        screenshot: screenshotOption.checked,
+                        video: videoOption.checked,
+                        trace: traceOption.checked,
+                        useSeleniumGrid: useSeleniumGridOption.checked,
+                        projectId:
+                            typeof selectedProjectId === 'number'
+                                ? selectedProjectId
+                                : null,
+                        runId: null,
+                    },
+                },
+            );
+
+
             // Fire-and-forget: fetch() ile YARIŞ HALİNDE (paralel) başlatılıyor, onu bloklamaz.
             void connectLiveExecutionLog();
 
@@ -2867,14 +3276,6 @@ async function initCreateTestPage() {
 
 
             try {
-
-                const {
-                    variables:
-                        collectedVariables,
-                    secrets:
-                        collectedSecrets,
-                } =
-                    collectVariablesAndSecrets();
 
                 const response =
                     await fetch(
@@ -3052,6 +3453,8 @@ async function initCreateTestPage() {
                 showPanel('log');
 
             } finally {
+
+                clearGlobalFileRunStatus(runningTestsKey);
 
                 disconnectLiveLog();
 
@@ -3759,6 +4162,21 @@ async function initCreateTestPage() {
 
         showPanel('code');
     }
+
+
+    // v3.36 — bkz. sohbet notu: "Scenario Definition sayfasında senaryo koşsun ya da koşmasın
+    // her zaman Execution Log paneli açık olsun". Yukarıdaki bloklar (RESTORE TEST RESULT,
+    // PENDING LIVE RUN, PENDING BDD EDIT — hemen üstteki if/else) kendi durumlarına göre FARKLI
+    // panelleri (result / code / bdd) açabiliyordu; PENDING BDD EDIT bloğu fonksiyonun EN SONUNDA
+    // olduğu ve KOŞULSUZ olarak ya 'bdd' ya da 'code' paneline geçtiği için, yukarıdakilerin
+    // hangi paneli seçtiğinin bir önemi kalmıyor, en son o kazanıyordu — "Running" tıklanınca
+    // Execution Log yerine Generated Code'un görünmesinin gerçek sebebi de BUYDU (önceki v3.34
+    // düzeltmesi PENDING LIVE RUN bloğunun İÇİNİ düzeltmişti ama bu son bloğun HER ZAMAN onun
+    // ÜZERİNE yazdığı fark edilmemişti). Artık bu fonksiyonun EN SON satırı olarak, yukarıdaki
+    // TÜM koşullu panel seçimlerinden SONRA, koşulsuz şekilde YENİDEN 'log' paneline geçiliyor —
+    // sayfa nasıl açılırsa açılsın (yeni koşum, biten koşum, BDD düzenleme ya da sıradan
+    // navigasyon) initCreateTestPage() HER ÇALIŞTIĞINDA kesin olarak Execution Log ile biter.
+    showPanel('log');
 }
 
 
@@ -5969,7 +6387,10 @@ async function initSuitesPage() {
             case 'failed': return 'Failed';
             case 'error': return 'Error';
             case 'cancelled': return 'Cancelled';
-            default: return 'Running…';
+            // v3.32 — bkz. sohbet notu: "Generated Test ve Suits kısmında... Running yazacak
+            // şekilde güncelleme yapar mısın" — sade "Running" (üç noktasız), istenen metinle
+            // birebir eşleşsin diye.
+            default: return 'Running';
         }
     }
 
@@ -6006,7 +6427,13 @@ async function initSuitesPage() {
 
                 const fileName = test.fileName;
                 const isSelected = selectedSuiteTestFiles.has(fileName);
-                const runStatus = suiteRunStatusByFile.get(fileName);
+                // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu sayfanın KENDİ toplu
+                // çalıştırması yoksa bile (ör. Generated Tests'ten tekli "Run"/"Replay" ile ya da
+                // ORADAKİ toplu çalıştırma ile başlatılmış bir koşum) global registry'de bir kayıt
+                // varsa yine "Running" rozeti gösterilir.
+                const runStatus =
+                    suiteRunStatusByFile.get(fileName) ||
+                    globalFileRunStatus.get(fileName);
 
                 const createdLabel =
                     test.createdAt
@@ -6060,7 +6487,7 @@ async function initSuitesPage() {
                                     </span>
                                     ${
                                         runStatus
-                                            ? `<span class="font-body-sm text-[11px] px-2 py-[2px] rounded-full ${suiteBatchStatusBadgeClasses(runStatus.status)}">${suiteBatchStatusBadgeLabel(runStatus.status)}</span>`
+                                            ? `<button type="button" class="runningStatusBadge font-body-sm text-[11px] px-2 py-[2px] rounded-full cursor-pointer hover:opacity-80 transition-opacity ${suiteBatchStatusBadgeClasses(runStatus.status)}" data-file="${escapeHtml(fileName)}" title="View live run log">${suiteBatchStatusBadgeLabel(runStatus.status)}</button>`
                                             : ''
                                     }
                                 </div>
@@ -6291,6 +6718,25 @@ async function initSuitesPage() {
                     // NOT'u) — Create Test sayfasına geçip BDD sekmesini bu testin metniyle dolu
                     // açar, aynen Generated Tests sayfasındaki "BDD — view / edit" ile birebir.
                     await openBddEditorForGeneratedTest(test);
+                });
+            });
+
+        // v3.32 — bkz. sohbet notu: "Running yazısına tıklandığında koşum logları ve senaryo
+        // detaylarının gözüktüğü Scenario Definition sayfasına kullanıcıyı yönlendirsin" —
+        // Generated Tests sayfasındaki AYNI davranış (bkz. goToRunningTestLog dosya başı NOT'u).
+        suiteTestsTableBody
+            .querySelectorAll('.runningStatusBadge')
+            .forEach((button) => {
+                button.addEventListener('click', async (event) => {
+
+                    event.stopPropagation();
+
+                    const fileName = button.getAttribute('data-file');
+                    if (!fileName) return;
+
+                    const test = allTests.find((t) => typeof t !== 'string' && t.fileName === fileName);
+
+                    await goToRunningTestLog(fileName, test);
                 });
             });
     }
@@ -6569,6 +7015,11 @@ async function initSuitesPage() {
                 suiteRunStatusByFile.delete(fileName);
             }
 
+            // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu run bitti — Generated Tests
+            // sayfasında (veya bu sayfaya geri dönüldüğünde) görünebilecek global "Running" rozeti
+            // de kalksın.
+            clearGlobalFileRunStatus(fileName);
+
             renderSuiteTests();
 
             remaining -= 1;
@@ -6583,6 +7034,21 @@ async function initSuitesPage() {
         started.forEach(({ fileName, runId }) => {
 
             suiteRunStatusByFile.set(fileName, { status: 'running' });
+
+            // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: runId'yi (ve testin tam kaydını)
+            // global registry'e de yazıyoruz — Generated Tests sayfasına geçilse bile bu dosyanın
+            // hâlâ çalıştığı görünür, ve "Running" rozetine tıklanınca doğrudan bu run'ın canlı
+            // logu açılabilir (bkz. goToRunningTestLog).
+            setGlobalFileRunStatus(
+                fileName,
+                'running',
+                {
+                    runId,
+                    test: allTests.find(
+                        (t) => typeof t !== 'string' && t.fileName === fileName,
+                    ),
+                },
+            );
 
             const socket =
                 new WebSocket(`${protocol}//${window.location.host}/ws/runs/${runId}`);
@@ -6690,6 +7156,13 @@ async function initSuitesPage() {
             refreshSuitesButton.disabled = false;
         });
     }
+
+    // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu sayfa açıkken, BAŞKA bir yerden
+    // (Generated Tests sayfası, ya da tekli Run/Replay) başlatılmış/bitmiş bir koşumun rozeti de
+    // canlı güncellensin diye abone oluyoruz. navigateTo() sayfadan ayrılırken bu aboneliği zaten
+    // kapatır (bkz. teardownFileRunStatusSubscription).
+    activeFileRunStatusUnsubscribe =
+        onGlobalFileRunStatusChange(() => renderSuiteTests());
 
     await loadAll();
 }
@@ -7326,7 +7799,10 @@ async function initGeneratedTestsPage() {
             case 'retrying':
                 return 'AI ile yeniden deneniyor…';
             default:
-                return 'Running…';
+                // v3.32 — bkz. sohbet notu: "Generated Test ve Suits kısmında... satırı üzerinde
+                // Running yazacak şekilde güncelleme yapar mısın". Önceden "Running…" (üç noktalı)
+                // idi — istenen metinle birebir eşleşsin diye sade "Running" yapıldı.
+                return 'Running';
         }
     }
 
@@ -7662,10 +8138,13 @@ async function initGeneratedTestsPage() {
 
                     // v2.0 — bu dosya şu an bir toplu çalıştırmanın parçasıysa (bkz. trackBatchRuns),
                     // dosya adının yanında küçük bir durum rozeti gösterilir.
+                    // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu sayfanın KENDİ toplu
+                    // çalıştırması yoksa bile (ör. tekli "Run"/"Replay" ile başlatılmış, ya da
+                    // Suites sayfasından başlatılmış bir koşum) global registry'de bir kayıt varsa
+                    // yine "Running" rozeti gösterilir.
                     const batchStatus =
-                        batchRunStatusByFile.get(
-                            fileName,
-                        );
+                        batchRunStatusByFile.get(fileName) ||
+                        globalFileRunStatus.get(fileName);
 
                     // v2.3 — bu dosyanın run'ı şu an Grid üzerinden çalışıyorsa ve bir noVNC linki
                     // geldiyse (bkz. liveViewUrlByFile dosya başı açıklaması), rozetin yanında bir
@@ -7869,18 +8348,25 @@ async function initGeneratedTestsPage() {
                                             ${
                         batchStatus
                             ? `
-                                            <span
+                                            <button
+                                                type="button"
                                                 class="
+                                                    runningStatusBadge
                                                     inline-flex items-center gap-1
                                                     px-2 py-[2px]
                                                     rounded-full
                                                     text-[10px] font-bold uppercase tracking-wider
                                                     shrink-0
+                                                    cursor-pointer
+                                                    hover:opacity-80
+                                                    transition-opacity
                                                     ${batchStatusBadgeClasses(batchStatus.status)}
                                                 "
+                                                data-file="${fileName}"
+                                                title="View live run log"
                                             >
                                                 ${batchStatusBadgeLabel(batchStatus.status)}
-                                            </span>
+                                            </button>
                                             `
                             : ''
                     }
@@ -8513,6 +8999,46 @@ async function initGeneratedTestsPage() {
             });
 
 
+        // v3.32 — bkz. sohbet notu: "Running yazısına tıklandığında koşum logları ve senaryo
+        // detaylarının gözüktüğü Scenario Definition sayfasına kullanıcıyı yönlendirsin". Satırda
+        // gösterilen "Running"/"AI ile yeniden deneniyor…" rozeti (bkz. yukarıdaki batchStatus
+        // render bloğu) artık bir buton — tıklanınca Create Test sayfasına, o run'ın canlı
+        // logunu/Scenario Definition alanlarını açık şekilde götürür (bkz. goToRunningTestLog).
+        document
+            .querySelectorAll(
+                '.runningStatusBadge',
+            )
+            .forEach((button) => {
+
+                button.addEventListener(
+                    'click',
+                    async () => {
+
+                        const fileName =
+                            button.getAttribute(
+                                'data-file',
+                            );
+
+                        if (!fileName) {
+                            return;
+                        }
+
+                        const test =
+                            allTests.find(
+                                (t) =>
+                                    typeof t !== 'string' &&
+                                    t.fileName === fileName,
+                            );
+
+                        await goToRunningTestLog(
+                            fileName,
+                            test,
+                        );
+                    },
+                );
+            });
+
+
         document
             .querySelectorAll(
                 '.addToSuiteButton',
@@ -8932,6 +9458,11 @@ async function initGeneratedTestsPage() {
                 );
             }
 
+            // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu run bitti (ya da durumu
+            // bilinmiyor) — SADECE bu sayfanın yerel rozeti değil, Suites sayfasında (veya bu
+            // sayfaya geri dönüldüğünde) görünebilecek global "Running" rozeti de kalksın.
+            clearGlobalFileRunStatus(fileName);
+
             // v2.3 — run bitti (ya da durumu bilinmiyor): Grid session'ı da kapanmış/kapanıyor
             // olacağı için canlı izleme linkini kaldırıyoruz, aksi halde ölü bir link asılı kalır.
             liveViewUrlByFile.delete(
@@ -8967,6 +9498,23 @@ async function initGeneratedTestsPage() {
             batchRunStatusByFile.set(
                 fileName,
                 { status: 'running' },
+            );
+
+            // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: runId'yi (ve varsa testin tam
+            // kaydını, "Running" rozetine tıklanınca Scenario Definition alanlarını doldurmak
+            // için) global registry'e de yazıyoruz — bu sayede Suites sayfasına (veya bu sayfaya
+            // yeniden) geçilse bile bu dosyanın hâlâ çalıştığı görünür.
+            setGlobalFileRunStatus(
+                fileName,
+                'running',
+                {
+                    runId,
+                    test: allTests.find(
+                        (t) =>
+                            typeof t !== 'string' &&
+                            t.fileName === fileName,
+                    ),
+                },
             );
 
             // Boş dizi olarak başlatmak (undefined DEĞİL) render şablonundaki `isLive` bayrağını
@@ -9522,6 +10070,15 @@ async function initGeneratedTestsPage() {
     }
 
 
+    // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu sayfa açıkken, BAŞKA bir yerden
+    // (Suites sayfası, ya da tekli Run/Replay) başlatılmış/bitmiş bir koşumun rozeti de canlı
+    // güncellensin diye abone oluyoruz. navigateTo() sayfadan ayrılırken bu aboneliği zaten kapatır
+    // (bkz. teardownFileRunStatusSubscription).
+    activeFileRunStatusUnsubscribe =
+        onGlobalFileRunStatusChange(
+            () => renderGeneratedTests(),
+        );
+
     await loadGeneratedTests();
 }
 
@@ -9797,6 +10354,17 @@ async function runExistingTest(
             'Running...';
     }
 
+    // v3.32 — bkz. globalFileRunStatus dosya başı NOT'u: bu koşum Create Test sayfasına
+    // yönlendirdiği için (birazdan aşağıda) bu satır artık görünmüyor olsa da, kullanıcı Generated
+    // Tests/Suites sayfasına GERİ dönerse (koşum hâlâ sürüyorsa) satırda "Running" görsün diye
+    // buraya da yazıyoruz — `finally` bloğunda (aşağıda) temizlenir. runId BİLİNMİYOR (bu, backend
+    // tarafında tek-uçuş `activeRunId`'ye sahip legacy akıştır) — "Running" rozetine tıklanınca
+    // (bkz. goToRunningTestLog) bu yüzden mevcut current-run-id yoklamasına düşer.
+    setGlobalFileRunStatus(
+        fileName,
+        'running',
+        { test },
+    );
 
     // v3.12 — bkz. sohbet notu: "generated testten test koştuğumda create test sayfasında olan
     // panelden yine göreyim istiyorum". ÖNCEDEN bu fetch tamamlanana kadar (test bitene kadar)
@@ -9935,6 +10503,8 @@ async function runExistingTest(
 
     } finally {
 
+        clearGlobalFileRunStatus(fileName);
+
         if (button) {
 
             button.disabled =
@@ -9969,6 +10539,12 @@ async function replayExistingTest(
             'Replaying...';
     }
 
+    // v3.32 — bkz. globalFileRunStatus/runExistingTest dosya başı NOT'u — AYNI amaç: Generated
+    // Tests/Suites'e geri dönüldüğünde bu satırda "Running" görünsün, `finally` bloğunda temizlenir.
+    setGlobalFileRunStatus(
+        fileName,
+        'running',
+    );
 
     // v3.12 — bkz. runExistingTest() dosya başı NOT'u — AYNI "önce navigate, sonuç ikinci
     // navigasyonla gelir" deseni, burada da geçerli.
@@ -10070,6 +10646,8 @@ async function replayExistingTest(
         );
 
     } finally {
+
+        clearGlobalFileRunStatus(fileName);
 
         if (button) {
 
@@ -13794,6 +14372,19 @@ reportsMenu.addEventListener(
 
         navigateTo(
             'reports',
+        );
+    },
+);
+
+
+runningTestsMenu.addEventListener(
+    'click',
+    (event) => {
+
+        event.preventDefault();
+
+        navigateTo(
+            'runningTests',
         );
     },
 );

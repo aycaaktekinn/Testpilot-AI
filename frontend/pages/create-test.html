@@ -886,13 +886,22 @@
                            px-2 pt-2 overflow-x-auto shrink-0"
             >
 
+                <!-- v3.36 — bkz. sohbet notu: "Scenario Definition sayfasında senaryo koşsun ya da
+                     koşmasın her zaman Execution Log paneli açık olsun". JS (initCreateTestPage,
+                     fonksiyonun EN SONUNDAki koşulsuz showPanel('log') çağrısı) sayfa her açıldığında
+                     bu paneli zaten aktif hale getiriyor — ama JS ÇALIŞMADAN ÖNCEKİ o kısa an için
+                     bile (ya da JS bir şekilde hiç çalışmazsa) varsayılan/statik HTML durumu da ARTIK
+                     Generated Code DEĞİL, Execution Log sekmesi/paneli aktif görünecek şekilde
+                     ayarlandı (aşağıdaki executionLogPanel/generatedCodePanel div'lerinde de AYNI
+                     değişiklik yapıldı). -->
                 <button
                         id="generatedCodeTab"
-                        class="px-4 py-2 font-body-sm font-semibold
-                               text-primary border-b-2 border-primary
-                               bg-surface-variant/30 rounded-t-lg
-                               flex items-center gap-2
-                               transition-colors whitespace-nowrap"
+                        class="px-4 py-2 font-body-sm
+                               text-on-surface-variant
+                               hover:text-on-surface
+                               hover:bg-surface-variant/20
+                               border-b-2 border-transparent
+                               rounded-t-lg flex items-center gap-2"
                         type="button"
                 >
                     <span
@@ -906,12 +915,11 @@
 
                 <button
                         id="executionLogTab"
-                        class="px-4 py-2 font-body-sm
-                               text-on-surface-variant
-                               hover:text-on-surface
-                               hover:bg-surface-variant/20
-                               border-b-2 border-transparent
-                               rounded-t-lg flex items-center gap-2"
+                        class="px-4 py-2 font-body-sm font-semibold
+                               text-primary border-b-2 border-primary
+                               bg-surface-variant/30 rounded-t-lg
+                               flex items-center gap-2
+                               transition-colors whitespace-nowrap"
                         type="button"
                 >
                     <span
@@ -968,7 +976,7 @@
                     id="generatedCodePanel"
                     class="card-surface
                            rounded-b-lg rounded-tr-lg
-                           flex flex-col flex-1 min-h-0
+                           hidden flex-col flex-1 min-h-0
                            shadow-sm overflow-hidden
                            border border-[#334155] border-t-0"
             >
@@ -1104,7 +1112,7 @@
             <div
                     id="executionLogPanel"
                     class="card-surface rounded-lg
-                           hidden flex-col flex-1 min-h-0
+                           flex flex-col flex-1 min-h-0
                            shadow-sm overflow-hidden
                            border border-[#334155]"
             >
