@@ -1,0 +1,120 @@
+<div class="p-lg md:p-margin-desktop flex-1 flex flex-col max-w-[1440px] mx-auto w-full">
+
+    <!-- PAGE HEADER -->
+    <div class="flex justify-between items-end mb-lg gap-4 flex-wrap">
+
+        <div>
+            <h1 class="font-display-lg text-display-lg text-on-surface mb-base">
+                Running Tests
+            </h1>
+
+            <p class="font-body-lg text-body-lg text-on-surface-variant">
+                Tests that are currently executing, started from Generated Tests or Suites.
+            </p>
+        </div>
+
+    </div>
+
+
+    <!-- TABLE -->
+    <div
+            class="bg-surface-container-low/60
+                   border border-outline-variant
+                   rounded-xl
+                   overflow-hidden"
+    >
+
+        <div class="overflow-x-auto">
+
+            <table class="w-full text-left border-collapse">
+
+                <thead>
+
+                <tr
+                        class="border-b border-outline-variant
+                               bg-surface-container-lowest/50"
+                >
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider"
+                    >
+                        Test File
+                    </th>
+
+                    <th
+                            class="py-sm px-md
+                                   font-label-caps text-label-caps
+                                   text-on-surface-variant
+                                   uppercase tracking-wider"
+                    >
+                        Status
+                    </th>
+
+                </tr>
+
+                </thead>
+
+                <tbody
+                        id="runningTestsTableBody"
+                        class="font-body-md text-body-md
+                               divide-y divide-outline-variant"
+                >
+                <!-- LIVE DATA — bkz. app.js initRunningTestsPage/renderRunningTests -->
+                </tbody>
+
+            </table>
+
+        </div>
+
+        <!-- EMPTY STATE -->
+        <div
+                id="runningTestsEmptyState"
+                class="p-12
+                       flex-col
+                       items-center
+                       justify-center
+                       text-center"
+        >
+
+            <div
+                    class="w-16 h-16
+                           rounded-full
+                           bg-surface-container-highest
+                           flex items-center justify-center
+                           mb-md
+                           mx-auto
+                           border border-outline-variant"
+            >
+                <span
+                        class="material-symbols-outlined
+                               text-[32px]
+                               text-on-surface-variant"
+                >
+                    directions_run
+                </span>
+            </div>
+
+            <h3
+                    class="font-headline-sm text-headline-sm
+                           text-on-surface
+                           mb-xs"
+            >
+                No tests are currently running
+            </h3>
+
+            <p
+                    class="font-body-md text-body-md
+                           text-on-surface-variant
+                           max-w-[420px]"
+            >
+                Start a test from Generated Tests or Suites and it will show up here while it runs.
+            </p>
+
+        </div>
+
+    </div>
+
+</div>
