@@ -1141,7 +1141,9 @@ export class LegacyTestService {
 
     // writeResultForRun() KENDİSİ zaten best-effort'tur (asla fırlatmaz) — bkz. AllureReportService
     // dosya başı açıklaması; burada ayrıca bir try/catch'e gerek yok.
-    await this.allureReportService.writeResultForRun(report, options.browserEngine);
+    // v3.49 — bkz. sohbet notu: "allure raporunda girilen data verileri yok". `variables` burada
+    // ZATEN mevcut (finalizeResult'ın kendi parametresi) — sadece writeResultForRun()'a iletiliyor.
+    await this.allureReportService.writeResultForRun(report, options.browserEngine, variables);
 
     return {
       generatedCode: code,

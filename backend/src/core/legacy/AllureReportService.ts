@@ -45,14 +45,26 @@ export class AllureReportService {
    * ASLA generateAndRun()'ın kullanıcıya döndürdüğü PASS/FAIL sonucunu bozmamalı — sadece loglanır.
    * (Aynı desen GeneratedTestStore.save()/TestRunStore.append() için de LegacyTestService'te
    * zaten uygulanıyor.)
+   *
+   * v3.49 — bkz. sohbet notu: "allure raporunda girilen data verileri yok, onlar da raporda yer
+   * almalı". `variables` parametresi, kullanıcının bu run için girdiği GİZLİ OLMAYAN değişkenleri
+   * (bkz. TestRunRequest.variables dosya başı açıklaması — "Prompt'a ve loglara açık gidebilir")
+   * taşır; buildResult() bunları rapor parametrelerine ekler. Secret DEĞERLERİ BİLİNÇLİ OLARAK
+   * buraya hiç alınmaz/rapora hiç yazılmaz — Allure raporu paylaşılabilir bir HTML çıktısı olduğu
+   * için, bu projenin her yerinde uygulanan "secret değeri asla loglara/UI'ya gitmez" kuralı
+   * burada da geçerli (bkz. SecretsVault dosya başı açıklaması).
    */
-  async writeResultForRun(report: RunReport, browserEngine: BrowserEngine): Promise<void> {
+  async writeResultForRun(
+    report: RunReport,
+    browserEngine: BrowserEngine,
+    variables?: Record<string, string>,
+  ): Promise<void> {
     try {
       await mkdir(this.resultsDir, { recursive: true });
 
       const uuid = randomUUID();
       const attachments = await this.buildAttachments(report.artifacts);
-      const payload = this.buildResult(report, browserEngine, uuid, attachments);
+      const payload = this.buildResult(report, browserEngine, uuid, attachments, variables);
       const filePath = path.join(this.resultsDir, `${uuid}-result.json`);
 
       await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf-8');
@@ -146,7 +158,13 @@ export class AllureReportService {
     }
   }
 
-  private async hasAnyResults(): Promise<boolean> {
+  /**
+   * v3.49 — bkz. sohbet notu: "Reports kısmına eski rapor sonuçlarının tümünü silmek için bir
+   * buton ekle". Önceden private'tı; frontend'in "Clear All Results" butonunu (henüz hiç sonuç
+   * yokken) disabled gösterebilmesi için /api/allure/status route'unun da erişmesi gerekiyor —
+   * bkz. allure.ts.
+   */
+  async hasAnyResults(): Promise<boolean> {
     try {
       const entries = await readdir(this.resultsDir);
       return entries.some((fileName) => fileName.endsWith('-result.json'));
@@ -155,11 +173,36 @@ export class AllureReportService {
     }
   }
 
+  /**
+   * v3.49 — bkz. sohbet notu: "Reports kısmına eski rapor sonuçlarının tümünü silmek için bir
+   * buton ekle". Hem birikmiş `*-result.json`/attachment dosyalarını (resultsDir) HEM DE en son
+   * üretilmiş statik HTML raporunu (reportDir) siler — ikisi birlikte silinir, çünkü sonuçlar
+   * silindikten sonra ESKİ rapor sayfada kalmaya devam ederse (henüz "Generate Report"a
+   * basılmadan) yanıltıcı/bayat bir rapor açık kalmış olur. generateReport() ile AYNI şekilde
+   * HİÇBİR ZAMAN fırlatmaz — her zaman { ok, message } döner.
+   */
+  async clearResults(): Promise<{ ok: boolean; message: string }> {
+    try {
+      await rm(this.resultsDir, { recursive: true, force: true });
+      await rm(this.reportDir, { recursive: true, force: true });
+      await mkdir(this.resultsDir, { recursive: true });
+      log.info({ resultsDir: this.resultsDir, reportDir: this.reportDir }, 'Allure sonuçları/raporu temizlendi');
+      return { ok: true, message: 'Tüm eski Allure sonuçları ve raporu silindi.' };
+    } catch (err) {
+      log.error({ err }, 'Allure sonuçları temizlenemedi');
+      return {
+        ok: false,
+        message: err instanceof Error ? `Sonuçlar temizlenemedi: ${err.message}` : 'Sonuçlar temizlenemedi.',
+      };
+    }
+  }
+
   private buildResult(
     report: RunReport,
     browserEngine: BrowserEngine,
     uuid: string,
     attachments: AllureAttachmentEntry[],
+    variables?: Record<string, string>,
   ) {
     const startMs = parseTimestamp(report.startedAt);
     const stopMs = report.finishedAt ? parseTimestamp(report.finishedAt) : startMs;
@@ -176,9 +219,15 @@ export class AllureReportService {
       stage: 'finished',
       steps: report.steps.map(buildAllureStep),
       attachments,
+      // v3.49 — bkz. sohbet notu: "allure raporunda girilen data verileri yok". `variables`,
+      // kullanıcının bu run için girdiği (gizli OLMAYAN) değişkenlerdir — her biri ayrı bir
+      // parametre satırı olarak eklenir, böylece "hangi arama terimi/sicil no vb. ile
+      // çalıştırıldı" rapordan doğrudan okunabilir. Secret'lar BİLİNÇLİ OLARAK buraya HİÇ
+      // eklenmez (bkz. writeResultForRun dosya başı NOT).
       parameters: [
         { name: 'URL', value: report.url },
         { name: 'Browser', value: browserEngine },
+        ...Object.entries(variables ?? {}).map(([name, value]) => ({ name, value })),
       ],
       labels: [
         { name: 'suite', value: 'TestPilot AI' },
@@ -235,6 +284,15 @@ function buildAllureStep(step: StepLogEntry) {
   const stopMs = startMs + Math.max(0, step.durationMs);
   const target = step.decision.targetRef ? ` -> ${step.decision.targetRef}` : '';
 
+  // v3.49 — bkz. sohbet notu: "allure raporunda girilen data verileri yok". Adım isminde SADECE
+  // aksiyon+hedef+sonuç mesajı vardı — o adımda GERÇEKTEN girilen/uygulanan değer (ör. bir arama
+  // kutusuna yazılan metin) hiçbir yerde görünmüyordu. `maskedValue` (secret'lar zaten "***" ile
+  // maskelenmiş olarak, bkz. StepLogEntry dosya başı açıklaması) varsa onu, yoksa (ör. maskeleme
+  // uygulanmayan eski bir kayıt) LLM'in ham kararındaki `decision.value`'yu (bu da yapısal olarak
+  // asla gerçek bir secret değeri içeremez, bkz. AgentDecision.value dosya başı açıklaması) bir
+  // adım parametresi olarak ekliyoruz.
+  const enteredValue = step.maskedValue ?? step.decision.value;
+
   return {
     name: `Adım ${step.stepIndex + 1}: ${step.decision.action}${target} — ${step.actionResult.message}`,
     status: step.actionResult.ok ? ('passed' as const) : ('failed' as const),
@@ -242,7 +300,7 @@ function buildAllureStep(step: StepLogEntry) {
     stage: 'finished',
     steps: [],
     attachments: [],
-    parameters: [],
+    parameters: enteredValue ? [{ name: 'Girilen değer', value: enteredValue }] : [],
     start: startMs,
     stop: stopMs,
   };

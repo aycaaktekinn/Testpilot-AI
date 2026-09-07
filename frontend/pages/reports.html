@@ -365,6 +365,30 @@
                             Open Last Report
                         </button>
 
+                        <!-- v3.49 — bkz. sohbet notu: "Reports kısmına eski rapor sonuçlarının tümünü
+                             silmek için bir buton ekle". Yıkıcı bir işlem olduğu için diğer ikisinden
+                             farklı (error renkli) stillendirildi; henüz hiç sonuç/rapor yokken (yani
+                             silinecek bir şey yokken) disabled kalır — bkz. app.js
+                             refreshAllureButtonsState(). -->
+                        <button
+                                id="clearAllureResultsButton"
+                                class="px-6 py-2
+                                       bg-transparent
+                                       border border-error/50
+                                       text-error
+                                       rounded-lg
+                                       hover:bg-error/10
+                                       transition-colors
+                                       font-body-md text-body-md
+                                       disabled:opacity-40
+                                       disabled:cursor-not-allowed
+                                       disabled:hover:bg-transparent"
+                                type="button"
+                                disabled
+                        >
+                            Clear All Results
+                        </button>
+
                     </div>
 
 

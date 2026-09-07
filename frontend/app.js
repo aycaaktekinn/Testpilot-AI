@@ -10889,6 +10889,11 @@ async function initReportsPage() {
             'openAllureButton',
         );
 
+    const clearAllureResultsButton =
+        document.getElementById(
+            'clearAllureResultsButton',
+        );
+
     const allureReportStatus =
         document.getElementById(
             'allureReportStatus',
@@ -11620,6 +11625,11 @@ async function initReportsPage() {
        allure-results klasöründen statik bir HTML raporu ürettirir; "Open Last Report" o raporu
        yeni bir sekmede açar. openAllureButton, henüz hiç rapor üretilmemişken 404'lük boş bir
        sekme açmasın diye /api/allure/status ile gerçek durumu öğrenene kadar disabled kalır.
+
+       v3.49 — bkz. sohbet notu: "Reports kısmına eski rapor sonuçlarının tümünü silmek için bir
+       buton ekle". clearAllureResultsButton, DELETE /api/allure/results ile hem birikmiş
+       *-result.json dosyalarını HEM DE en son üretilmiş raporu siler (bkz. AllureReportService.
+       clearResults()). Silinecek hiçbir şey yokken (ne rapor ne sonuç) disabled kalır.
     ========================================================= */
 
     async function refreshAllureButtonsState() {
@@ -11634,6 +11644,11 @@ async function initReportsPage() {
 
             openAllureButton.disabled =
                 !data.hasReport;
+
+            if (clearAllureResultsButton) {
+                clearAllureResultsButton.disabled =
+                    !data.hasReport && !data.hasResults;
+            }
 
         } catch (error) {
 
@@ -11712,9 +11727,84 @@ async function initReportsPage() {
     openAllureButton.addEventListener(
         'click',
         () => {
-            window.open('/allure-report/index.html', '_blank');
+            // v3.48 — bkz. sohbet notu: "Generate Report + Open Last Report'ta standart allure
+            // raporu gelmiyor / eski rapor açılıyor". "Generate Report" her seferinde AYNI dosya
+            // adıyla (index.html) ama FARKLI içerikle raporu yeniden üretiyor; bazı tarayıcı/ara-
+            // proxy önbellekleri backend'in Cache-Control başlığına rağmen AYNI URL için eski
+            // içeriği göstermeye devam edebiliyor (app.js?v=Date.now() ile ZATEN kullandığımız
+            // AYNI cache-busting deseni burada da uygulanıyor — bkz. index.html'deki app.js script
+            // etiketi). ?t=... query param'ı <base> etiketi tarafından yok sayıldığı için (base
+            // window.location.pathname'den kurulur, arama/sorgu kısmını İÇERMEZ) raporun kendi içi
+            // göreli kaynak yüklemelerini (data/*, widgets/*, app-*.js vb.) ETKİLEMEZ.
+            window.open(`/allure-report/index.html?t=${Date.now()}`, '_blank');
         },
     );
+
+
+    if (clearAllureResultsButton) {
+
+        // v3.49 — bkz. sohbet notu: "Reports kısmına eski rapor sonuçlarının tümünü silmek için
+        // bir buton ekle". Yıkıcı/geri alınamaz bir işlem olduğu için sayfadaki diğer aksiyonlarla
+        // (ör. Delete project/user, "eski koşumları sil") AYNI native confirm() + disable deseni
+        // kullanılıyor.
+        clearAllureResultsButton.addEventListener(
+            'click',
+            async () => {
+
+                const confirmed = confirm(
+                    'Delete ALL accumulated Allure results and the last generated report? This cannot be undone.',
+                );
+                if (!confirmed) {
+                    return;
+                }
+
+                clearAllureResultsButton.disabled =
+                    true;
+
+                try {
+
+                    const response =
+                        await fetch(
+                            '/api/allure/results',
+                            { method: 'DELETE' },
+                        );
+
+                    const data =
+                        await response.json();
+
+                    allureReportStatus.textContent =
+                        data.message;
+
+                    allureReportStatus.className =
+                        `font-body-sm text-body-sm mt-4 ${data.ok ? 'text-secondary' : 'text-error'}`;
+
+                    showToast(
+                        data.message,
+                        data.ok ? 'success' : 'error',
+                    );
+
+                    await refreshAllureButtonsState();
+
+                } catch (error) {
+
+                    const message =
+                        error instanceof Error
+                            ? error.message
+                            : 'Allure results could not be cleared.';
+
+                    allureReportStatus.textContent =
+                        message;
+
+                    allureReportStatus.className =
+                        'font-body-sm text-body-sm text-error mt-4';
+
+                    showToast(message, 'error');
+
+                    await refreshAllureButtonsState();
+                }
+            },
+        );
+    }
 
 
     await refreshAllureButtonsState();

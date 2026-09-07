@@ -85,7 +85,27 @@ export function createApp() {
   // Üretilmiş Allure raporu (statik HTML) — "Generate Report" çalıştırılana kadar bu klasör boş
   // olabilir, o durumda Express doğal olarak 404 döner (frontend bunu /api/allure/status ile
   // önceden kontrol ediyor, bkz. app.js refreshAllureButtonsState()).
-  app.use('/allure-report', express.static(path.resolve(env.ALLURE_REPORT_DIR)));
+  //
+  // v3.48 — bkz. sohbet notu: "Generate Report + Open Last Report'ta standart allure raporu
+  // gelmiyor / eski rapor açılıyor". "Generate Report" her seferinde AYNI dosya adlarıyla
+  // (index.html, summary.json, test-results.json, data/*, widgets/*) ama FARKLI içerikle
+  // raporu YENİDEN üretiyor (bkz. AllureReportService.generateReport() — reportDir tamamen
+  // silinip yeniden oluşturuluyor). Express varsayılan olarak bu dosyalar için
+  // "Cache-Control: public, max-age=0" gönderiyor; bu normal bir tarayıcıda revalidation'ı
+  // ZORLAR ama kurumsal ağlardaki ara katmanlar (forward proxy/CDN/bazı tarayıcı disk
+  // önbellekleri) max-age=0'ı yine de "önbelleklenebilir" sayıp AYNI URL için ESKİ içeriği
+  // sunmaya devam edebiliyor — kullanıcının bildirdiği "eski/bayat rapor açılıyor"
+  // semptomunun kaynağı muhtemelen bu. no-store ile bu dosyaların HİÇBİR ara katman
+  // tarafından saklanmamasını garanti ediyoruz (ayrıca bkz. openAllureButton'daki
+  // cache-busting query param — app.js, aynı sorunu iki katmanda da kapatıyoruz).
+  app.use(
+    '/allure-report',
+    express.static(path.resolve(env.ALLURE_REPORT_DIR), {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-store');
+      },
+    }),
+  );
 
   // Frontend'i AYNI origin'den sunuyoruz: bu sayede app.js'teki fetch('/api/...') gibi göreli
   // istekler otomatik olarak bu backend'e gider — ayrı bir statik sunucuya veya CORS ayarına
