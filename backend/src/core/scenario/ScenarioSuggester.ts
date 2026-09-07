@@ -49,6 +49,76 @@ interface PastScenarioEntry {
 // alt-limit uyguluyoruz çünkü bu tek seferlik bir "genel bakış" isteği, adım adım karar değil.
 const MAX_ELEMENTS_IN_PROMPT = 60;
 
+// v3.37 — bkz. sohbet notu: "Scenario Suggestions ... reasoning: String must contain at most 600
+// character(s)" hatası + "dom tree deki verileri sadeleştir, gereksiz elementleri kaldır".
+// performLogin() (aşağıda) AgentLoop.run()'ı `defaultRunOptions.maxElementsPerStep` (admin panelden
+// GENEL test koşumları için ayarlanmış, canlıda 80'in ÜZERİNE çıkarılmış olabilen bir değer) ile
+// çalıştırıyordu — bu giriş ön-adımı için GEREKSİZ derecede yüksek: sonuçta sadece bir giriş
+// formunu (ve olsa olsa birkaç yönlendirme adımını) tamamlaması gerekiyor, kalabalık bir menüdeki
+// (ör. "Tüm İşlemler" altında onlarca link) TÜM elementleri görmesine hiç gerek yok. Admin'in genel
+// koşumlar için seçtiği değerden DAHA YÜKSEK bir sayı asla kullanılmasın diye `Math.min` ile
+// sınırlanıyor — admin bilerek DAHA DÜŞÜK bir değer seçtiyse o'na saygı gösterilir.
+const MAX_ELEMENTS_IN_LOGIN_STEP = 50;
+
+// v3.41 — bkz. sohbet notu: loop_detected düzeltmesinden SONRA login artık başarıyla tamamlanıyor,
+// ama bu SEFER "Sayfada hiç etkileşilebilir element bulunamadı" hatası alınmaya başlandı (terminal
+// logu: totalCandidates: 10, returnedElements: 0). Kök sebep: scanPage() (aşağıda), performLogin()
+// sırasında ULAŞILAN ekranı DEĞİL, `suggest()`'e verilen ORİJİNAL `url`'i (bu vakada login
+// sayfasının kendisi) storageState (çerezler) ile YENİDEN ziyaret ediyor — beklenti, geçerli bir
+// oturumla o URL'e gidince sitenin otomatik olarak giriş-sonrası ekrana yönlendirmesi. Bu tür bir
+// istemci-taraflı (SPA) yönlendirme/render `waitUntil: 'domcontentloaded'` tetiklendiği ANDA henüz
+// TAMAMLANMAMIŞ olabilir (React/Angular gibi bir framework henüz mount olmamış / yönlendirme henüz
+// gerçekleşmemiş) — performLogin() bu tür bir gecikmeyle AgentLoop'un LLM'i kendi kendine
+// action="wait" seçerek BAŞA ÇIKABİLİYORDU (bkz. ilk login run kayıtlarındaki "step 0: wait"), ama
+// scanPage() TEK SEFERLİK, LLM'siz bir tarama olduğu için böyle bir bekleme/tekrar mekanizması hiç
+// YOKTU — sayfa henüz oturmadıysa direkt "0 element" ile başarısız oluyordu. Aşağıdaki değerler,
+// sayfaya render/yönlendirme için birkaç kısa ek şans (artan gecikmelerle) tanır; İLK taramada
+// zaten element bulunan (mevcut/çoğu) durumda HİÇBİR ek gecikme eklenmez, davranış ESKİSİ GİBİDİR.
+const RESCAN_ON_EMPTY_DELAYS_MS = [1500, 2500];
+
+// v3.40 — bkz. sohbet notu: performLogin() loop_detected analizi. Run kaydı incelendiğinde
+// (suggest-login-nKH4R6cBbl.json) sorunun vector cache'le HİÇ ilgisi olmadığı kanıtlandı
+// (disableVectorCache=true ile bile decisionSource HER adımda "llm" — yine de aynı hata). Gerçek
+// sebep: kullanıcının login senaryosu metni ("...daha sonra açılan ekranda tüm işlemler kısmına
+// gir ve açılan ekrandan senaryo üret") SADECE navigasyonu değil, bu AgentLoop'un YAPAMAYACAĞI bir
+// görevi de ("senaryo üret" — bu, performLogin() bittikten SONRA scanPage() ile AYRI bir aşamada
+// yapılıyor) tarif ediyor. Model bunu "iş bitmedi" diye yorumlayıp, zaten başarıyla tıklanmış
+// (actionResult.ok=true) AYNI sekmeye ("Hepsi"/"Tüm İşlemler") tekrar tekrar tıklamayı deniyor —
+// hiçbir zaman finish_success çağırmıyor. Bu talimat SADECE performLogin() çağrısına (bkz.
+// PromptBuilder.buildSystemMessage / AgentLoopInput.extraSystemInstructions) ekleniyor; genel test
+// koşumlarını (Generated Tests, generate-and-run) HİÇBİR ŞEKİLDE etkilemiyor.
+// v3.43 — bkz. sohbet notu: v3.40'taki talimat "tarif edilen ekrana/duruma ulaştığında HEMEN
+// finish_success seç" + "emin olamadığın durumlarda bile finish_success seçmek HER ZAMAN daha
+// güvenlidir" ifadeleriyle ÇOK GEVŞEKTİ — kullanıcı "bu sefer senaryo üretti ama benim istediğim
+// alandan değil, giriş yaptıktan sonra açılan ekrandan üretti" diye bildirdi: senaryo login DIŞINDA
+// "tüm işlemler'e gir, ara, enter'a bas, radio butonuna tıkla" gibi BİRDEN FAZLA sıralı adım
+// tarif ediyor, ama model muhtemelen login'den HEMEN SONRAKİ ilk ekranı "hedefe ulaşıldı" sayıp
+// kalan adımları hiç DENEMEDEN erken bitiriyordu — v3.40'ın loop_detected'i önlemek için eklediği
+// "emin olamadığında bile bitir" yönlendirmesi burada TERS etki yapmış (döngüyü önlerken bu SEFER
+// erken bitirmeye YOL AÇMIŞ). Aşağıdaki metin bu ikisini AYRIŞTIRIYOR: "adımları sırayla EKSİKSİZ
+// tamamla" kuralı ÖNCELİKLİ, "aynı aksiyonu sonsuz tekrarlama" kuralı SADECE gerçekten aynı
+// aksiyon+hedef tekrar edilmek ÜZEREYKEN devreye giriyor (genel bir "emin değilsen bitir" izni
+// ARTIK YOK).
+const LOGIN_STEP_SYSTEM_INSTRUCTIONS = `EK KURAL — SADECE BU GÖREV İÇİN GEÇERLİ (giriş ön-adımı):
+Yukarıdaki senaryo, SIRAYLA yapılması gereken BİRDEN FAZLA adım tarif ediyor (ör. giriş yap, SONRA bir
+menüye/tab'a gir, SONRA ara, SONRA enter'a bas, SONRA bir seçenek işaretle). GÖREVİN, bu adımların
+HEPSİNİ, tarif edildikleri SIRAYLA, TEK TEK gerçekleştirmek — sadece giriş yapıp durmak YETERLİ DEĞİLDİR.
+Senaryo metninin sonunda "senaryo üret", "test oluştur", "öneri getir" gibi ifadeler geçebilir — SADECE
+BUNLAR (browser'da yapılamayacak, senden SONRA başka bir süreçte gerçekleşecek adımlar) YOK SAYILIR;
+senaryodaki GERİ KALAN TÜM adımlar (tıklama, yazma, arama, enter, seçim) GERÇEK, YAPILMASI GEREKEN
+aksiyonlardır, atlanmaz.
+SADECE şu durumda bir sonraki adıma geç (aynı aksiyonu TEKRARLAMA): geçmişte tam olarak AYNI aksiyon+
+hedefi zaten "OK" sonuçla denediysen VE güncel element listesi bir önceki adımdan HİÇ FARKLI DEĞİLSE
+(ör. "aria-selected":"true" ile zaten seçili görünen bir sekmeye TEKRAR tıklamak isteniyor) — bu durumda
+o adımı TEKRARLAMADAN, senaryodaki BİR SONRAKİ adımın hedefini güncel element listesinde ara ve onu
+gerçekleştir.
+action="finish_success" SADECE şu ikisinden biri doğruysa seçilir: (1) senaryodaki YAPILABİLİR (browser
+aksiyonu olan) TÜM adımlar başarıyla tamamlandıysa, VEYA (2) birkaç makul deneme/bekleme sonrasında bile
+bir sonraki adımın hedef elementi sayfada HİÇBİR ŞEKİLDE bulunamıyorsa (bu durumda action="finish_failure"
+kullanıp NEDENİNİ summary'ye yaz — sessizce erken bitirme). Sırf "muhtemelen buraya kadar yeterlidir" ya
+da "emin değilim" gibi bir gerekçeyle, senaryoda tarif edilen SONRAKİ adımları hiç denemeden erken
+action="finish_success" SEÇME — bu YANLIŞTIR.`;
+
 // Aynı sitede (hostname) geçmişte kaç senaryoya kadar prompt'a dahil edilsin — hem prompt
 // boyutunu makul tutmak hem de en GÜNCEL/İLGİLİ geçmişe odaklanmak için (liste zaten en yeniden
 // en eskiye sıralı geliyor).
@@ -134,12 +204,14 @@ export class ScenarioSuggester {
     // login adımının sıralı (ve yavaş) olmasından bağımsız olarak paralel başlatılır.
     const historyPromise = this.getRelevantHistory(url);
 
-    // Login SIRALI olmak ZORUNDADIR: scanPage'in kullanacağı storageState, ancak login BİTTİKTEN
-    // sonra bilinebilir (bkz. performLogin dosya başı açıklaması).
-    const storageState = login
-      ? await this.performLogin({ ...login, url: login.url || url }, headed)
-      : undefined;
-    const { title, elements } = await this.scanPage(url, headed, storageState);
+    // Login SIRALI olmak ZORUNDADIR: scanPage'in kullanacağı storageState/canlı sayfa, ancak login
+    // BİTTİKTEN sonra bilinebilir (bkz. performLogin dosya başı açıklaması).
+    const loginResult = login ? await this.performLogin({ ...login, url: login.url || url }, headed) : undefined;
+    // v3.42 — bkz. performLogin()/scanPage() dosya başı NOT'ları: `browserManager` verildiyse
+    // (normal/beklenen durum), scanPage() login'in ULAŞTIĞI CANLI sayfayı (arama/seçim durumu
+    // dahil) kullanır — `url` bu durumda SADECE loglama/hata mesajları için taşınır, gerçek
+    // taramada page.goto() ile ziyaret EDİLMEZ (bkz. scanPage() liveBrowser dalı).
+    const { title, elements } = await this.scanPage(url, headed, loginResult?.storageState, loginResult?.browserManager);
     const history = await historyPromise;
 
     if (elements.length === 0) {
@@ -258,17 +330,29 @@ export class ScenarioSuggester {
    * Giriş adımı `passed` DIŞINDA bir durumla biterse (failed/error/cancelled), taramaya anonim
    * olarak SESSİZCE devam ETMEK yerine BİLEREK net bir hata fırlatılır — aksi halde kullanıcı,
    * aslında giriş yapılmamış bir sayfaya göre üretilmiş önerileri "giriş yapılmış" sanabilirdi.
+   *
+   * v3.42 — bkz. AgentLoopInput.handOffBrowserOnSuccess ve types.ts 'browser_handed_off' dosya
+   * başı NOT'ları: dönüş değeri artık SADECE `storageState` değil, run PASSED ile bittiyse HALA
+   * AÇIK olan `browserManager` referansını da içerebilir — `login.scenario` login DIŞINDA
+   * navigasyon/arama/seçim adımları da tarif ediyorsa (ör. "...tüm işlemler kısmına gir, ara,
+   * ... radio butonuna tıkla"), scanPage()'in bu CANLI sayfa üzerinden (page.goto() OLMADAN)
+   * devam etmesi gerekir — aksi halde bu adımların ULAŞTIĞI DOM durumu (arama sonucu, seçili
+   * radio vb.) kaybolur ve tarama YANLIŞLIKLA login sayfasının kendisine geri döner (bkz. sohbet
+   * notu: "sadece login sayfası için senaryo üretiyor, istenilen sayfa için üretmiyor").
    */
   private async performLogin(
     login: ScenarioSuggestionLoginConfig & { url: string },
     headed: boolean,
-  ): Promise<StorageState | undefined> {
+  ): Promise<{ storageState?: StorageState; browserManager?: BrowserManager }> {
     const runId = `suggest-login-${nanoid(10)}`;
     let capturedState: StorageState | undefined;
+    let handedOffBrowserManager: BrowserManager | undefined;
 
     const loop = new AgentLoop(this.llm, (event) => {
       if (event.type === 'storage_state_captured') {
         capturedState = event.storageState;
+      } else if (event.type === 'browser_handed_off') {
+        handedOffBrowserManager = event.browserManager;
       }
     });
 
@@ -278,6 +362,8 @@ export class ScenarioSuggester {
       captureScreenshot: false,
       captureVideo: false,
       captureTrace: false,
+      // v3.37 — bkz. MAX_ELEMENTS_IN_LOGIN_STEP dosya başı NOT'u.
+      maxElementsPerStep: Math.min(defaultRunOptions.maxElementsPerStep, MAX_ELEMENTS_IN_LOGIN_STEP),
     };
 
     const report = await loop.run({
@@ -288,38 +374,81 @@ export class ScenarioSuggester {
       secrets: login.secrets ?? {},
       options,
       captureStorageState: true,
+      // v3.38 — bkz. sohbet notu: "Login steps ve verileri değiştirmeme rağmen sanki işlemleri
+      // cache'den okuyor" + loop_detected hatası. Bu, AgentLoopInput.disableVectorCacheRead dosya
+      // başı NOT'unda (v3.24) zaten TANIMLANMIŞ ve /api/tests/generate-and-run için ÇÖZÜLMÜŞ olan
+      // AYNI hata sınıfı: vector cache OKUMA tarafı (bkz. buildSituationText) senaryo METNİNİ
+      // embedding'e dahil etse de, element YAPISI (tag/role/name) aynı kaldığı sürece (aynı giriş
+      // sayfası) benzerlik çoğu zaman eşiği geçecek kadar yüksek kalıyor — bu da BAŞKA bir (eski/
+      // farklı) login denemesinden kalma bir "click" kararının (fill/type değil — CACHE_HIT_SAFE_
+      // ACTIONS'a bkz., ama "hangi butona tıkla" kararı fill DEĞİLDİR) LLM'e hiç danışılmadan
+      // tekrar kullanılmasına yol açabiliyor. Kullanıcı Login Steps'i DEĞİŞTİRDİKÇE (tam olarak bu
+      // sayfanın amacı) bu ESKİ kararlar YENİ senaryoyla uyuşmaz hale gelir — cache'ten gelen
+      // "tıkla" kararı sayfanın durumunu ilerletmeyince LoopGuard birkaç adım sonra run'ı
+      // loop_detected ile durdurur. performLogin() (generate-and-run'ın aksine) bu bayrağı ŞİMDİYE
+      // KADAR hiç göndermiyordu — bu, tam olarak bu akış için gözden kaçmış bir eksiklikti. Login
+      // ön-adımı zaten TEK seferlik/deneme-yanılma amaçlı, kısa bir akış olduğu için LLM'e her adım
+      // danışmanın performans maliyeti ihmal edilebilir; doğruluk burada hıza HER ZAMAN tercih edilir.
+      //
+      // v3.39 — kullanıcı aynı loop_detected hatasını TEKRAR bildirdi ve açıkça "bu sayfada hiçbir
+      // zaman vector db'ye gidilmesin" dedi. Yukarıdaki disableVectorCacheRead SADECE OKUMA
+      // tarafını kapatıyordu — AgentLoop.run() içindeki YAZMA çağrısı (recordDecisionInCache) bu
+      // bayrağı hiç kontrol etmiyordu, yani her başarılı adımdan sonra Milvus/Ollama'ya (embedding
+      // için) hâlâ istek atılıyordu. Bu satır fiili loop_detected sebebi olmasa bile (yazma ateşle-
+      // unut şeklinde ve aynı run içindeki kararları etkilemiyor), kullanıcının "asla vector db'ye
+      // gitmesin" talimatını tam karşılamak için disableVectorCache (hem oku hem yaz, bkz.
+      // AgentLoopInput tanımı) ile performLogin'i baştan sona vector cache'ten TAMAMEN izole
+      // ediyoruz. disableVectorCacheRead de bilinçli olarak bırakıldı (geriye dönük/okunabilirlik).
+      disableVectorCacheRead: true,
+      disableVectorCache: true,
+      // v3.40 — bkz. LOGIN_STEP_SYSTEM_INSTRUCTIONS dosya başı NOT'u.
+      extraSystemInstructions: LOGIN_STEP_SYSTEM_INSTRUCTIONS,
+      // v3.42 — bkz. performLogin() dosya başı NOT'u ve AgentLoopInput.handOffBrowserOnSuccess.
+      handOffBrowserOnSuccess: true,
     });
 
-    // RunLogger.persist() (AgentLoop.run() içinde, tüm çağıranlar için KOŞULSUZ) her zaman
-    // RUNS_DIR/<runId>.json'a bir run detay dosyası yazar — bu login ön-adımı BİLEREK
-    // TestRunStore'un index'ine hiç EKLENMEDİĞİ için (Test Runs geçmişinde görünmesin diye), bu
-    // dosya index'te hiçbir zaman referans edilmeyen bir "yetim" olarak kalır ve "Delete Old Runs"
-    // gibi index-tabanlı temizlik araçları tarafından ASLA silinemez. Diskte sessizce birikmesin
-    // diye burada best-effort olarak (asla fırlatmadan) hemen siliyoruz — storageState zaten
-    // yukarıda process belleğine yakalandı, bu dosyaya bir daha ihtiyaç yok.
-    await rm(path.join(path.resolve(env.RUNS_DIR), `${runId}.json`), { force: true }).catch((err) => {
-      log.debug({ err, runId }, 'Login ön-adımının geçici run kaydı silinemedi (yok sayıldı)');
-    });
+    // v3.39 — RunLogger.persist() (AgentLoop.run() içinde, tüm çağıranlar için KOŞULSUZ) her zaman
+    // RUNS_DIR/<runId>.json'a bir run detay dosyası yazar. Bu dosya login ön-adımı BİLEREK
+    // TestRunStore'un index'ine hiç EKLENMEDİĞİ için "yetim" kalır ve index-tabanlı temizlik
+    // araçlarınca silinemez — bu yüzden PASSED durumda hâlâ best-effort siliniyor. Ama FAILED
+    // durumda (ör. loop_detected gibi teşhisi zor hatalarda) bu dosya, tam olarak hangi kararların/
+    // adımların koşumu nereye kadar ilerlettiğini gösteren TEK kayıt — önceki bir olayda bu dosya
+    // (suggest-login--whySAnKXp.json) hata raporlanana kadar zaten silinmiş olduğu için teşhis
+    // imkânı kaybolmuştu. Bu yüzden artık sadece BAŞARILI koşumlarda siliniyor; başarısız koşumda
+    // dosya diskte kalır (RUNS_DIR zaten periyodik/manuel "Delete Old Runs" ile temizlenebilir).
+    if (report.status === 'passed') {
+      await rm(path.join(path.resolve(env.RUNS_DIR), `${runId}.json`), { force: true }).catch((err) => {
+        log.debug({ err, runId }, 'Login ön-adımının geçici run kaydı silinemedi (yok sayıldı)');
+      });
+    }
 
     if (report.status !== 'passed') {
-      log.warn({ runId, status: report.status, failureReason: report.failureReason }, 'Senaryo önerisi login ön-adımı başarısız');
+      log.warn(
+        { runId, status: report.status, failureReason: report.failureReason },
+        'Senaryo önerisi login ön-adımı başarısız (teşhis için RUNS_DIR/' + runId + '.json korunuyor)',
+      );
       throw new ValidationError(
         `Giriş adımı tamamlanamadı (${report.status}): ${report.failureReason ?? 'bilinmeyen hata'}. ` +
           'Giriş senaryosunu ve Değişkenler/Secrets değerlerini kontrol edip tekrar deneyin.',
       );
     }
-    if (!capturedState) {
+    if (!capturedState && !handedOffBrowserManager) {
       throw new ValidationError('Giriş başarılı görünüyor ama oturum bilgisi yakalanamadı. Lütfen tekrar deneyin.');
     }
-    return capturedState;
+    // v3.42 — `handedOffBrowserManager` BEKLENEN (normal) sonuçtur: `handOffBrowserOnSuccess: true`
+    // + report.status === 'passed' iken AgentLoop bunu HER ZAMAN devreder (bkz. AgentLoop.ts
+    // finally bloğu). `capturedState` (SADECE çerezler) yine de döndürülür — SADECE devretme
+    // beklenmedik şekilde gerçekleşmezse (ör. ileride bir kod değişikliğiyle bu davranış bozulursa)
+    // scanPage()'in eskisi gibi storageState-temelli YEDEK yola düşebilmesi için.
+    return { storageState: capturedState, browserManager: handedOffBrowserManager };
   }
 
   private async scanPage(
     url: string,
     headed: boolean,
     storageState?: StorageState,
+    liveBrowser?: BrowserManager,
   ): Promise<{ title: string; elements: DiscoveredElement[] }> {
-    const browserManager = new BrowserManager();
     const domAnalyzer = new DomAnalyzer();
 
     // headless VARSAYILAN OLARAK KULLANILMAZ (headed=true varsayılan): hepsiburada.com üzerinde
@@ -339,12 +468,57 @@ export class ScenarioSuggester {
       captureTrace: false,
     };
 
+    // v3.42 — bkz. performLogin() ve AgentLoopInput.handOffBrowserOnSuccess dosya başı NOT'ları:
+    // login senaryosu login DIŞINDA navigasyon/arama/seçim adımları da içerdiğinde (ör. "...tüm
+    // işlemler kısmına gir, ara, ... radio butonuna tıkla"), bu adımların ULAŞTIĞI CANLI DOM
+    // durumu SADECE bu hala açık olan sayfada var — storageState (çerezler) bunu TAŞIMAZ. Bu
+    // yüzden `liveBrowser` verildiğinde YENİ bir tarayıcı/sayfa AÇILMAZ ve `page.goto()` HİÇ
+    // ÇAĞRILMAZ — doğrudan performLogin()'in bıraktığı sayfa üzerinden taranır, böylece arama
+    // kutusuna yazılan metin, tıklanan radio buton vb. TÜM durum KORUNUR. `browserManager.close()`
+    // sorumluluğu da BURAYA (asıl sahibi artık burası) geçmiştir.
+    if (liveBrowser) {
+      try {
+        const page = liveBrowser.getPage();
+        await dismissConsentBanners(page);
+        let { snapshot } = await domAnalyzer.analyze(page, options);
+
+        // v3.41 — bkz. RESCAN_ON_EMPTY_DELAYS_MS dosya başı NOT'u.
+        for (const waitMs of RESCAN_ON_EMPTY_DELAYS_MS) {
+          if (snapshot.elements.length > 0) break;
+          log.debug({ url, waitMs }, 'İlk taramada hiç element bulunamadı, sayfanın oturması beklenip tekrar deneniyor');
+          await page.waitForTimeout(waitMs);
+          await dismissConsentBanners(page);
+          ({ snapshot } = await domAnalyzer.analyze(page, options));
+        }
+
+        return { title: snapshot.title, elements: snapshot.elements };
+      } catch (err) {
+        log.warn({ err, url }, 'Devralınan canlı sayfa taranamadı (senaryo önerisi için)');
+        throw new ValidationError('Sayfa taranamadı. Login senaryosunu ve URL\'yi kontrol edip tekrar deneyin.');
+      } finally {
+        await liveBrowser.close();
+      }
+    }
+
+    const browserManager = new BrowserManager();
     try {
       const page = await browserManager.launch(options, undefined, storageState, url);
       try {
         await page.goto(url, { timeout: options.navigationTimeoutMs, waitUntil: 'domcontentloaded' });
         await dismissConsentBanners(page);
-        const { snapshot } = await domAnalyzer.analyze(page, options);
+        let { snapshot } = await domAnalyzer.analyze(page, options);
+
+        // v3.41 — bkz. RESCAN_ON_EMPTY_DELAYS_MS dosya başı NOT'u: ilk taramada hiç element
+        // bulunamazsa (ör. login sonrası SPA yönlendirmesi/render'ı henüz tamamlanmamış olabilir),
+        // vazgeçmeden önce sayfanın oturması için birkaç kısa ek şans tanınır.
+        for (const waitMs of RESCAN_ON_EMPTY_DELAYS_MS) {
+          if (snapshot.elements.length > 0) break;
+          log.debug({ url, waitMs }, 'İlk taramada hiç element bulunamadı, sayfanın oturması beklenip tekrar deneniyor');
+          await page.waitForTimeout(waitMs);
+          await dismissConsentBanners(page);
+          ({ snapshot } = await domAnalyzer.analyze(page, options));
+        }
+
         return { title: snapshot.title, elements: snapshot.elements };
       } finally {
         await browserManager.close();

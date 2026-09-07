@@ -1,5 +1,6 @@
 import type { BrowserContext } from 'playwright';
 import type { RunReport, RunStatus, StepLogEntry } from '../../domain/types.js';
+import type { BrowserManager } from '../browser/BrowserManager.js';
 
 export type AgentEvent =
   | { type: 'run_started'; runId: string; url: string; scenario: string }
@@ -26,6 +27,18 @@ export type AgentEvent =
   // token içerir) — bu yüzden runManager.publishExternalEvent gibi genel bir WS yayın kanalına
   // bağlı bir onEvent ile ASLA dinlenmemelidir; SADECE performLogin'in kendi özel/yerel
   // dinleyicisiyle (dışarı hiçbir yere iletilmeyen) kullanılmalıdır.
-  | { type: 'storage_state_captured'; runId: string; storageState: Awaited<ReturnType<BrowserContext['storageState']>> };
+  | { type: 'storage_state_captured'; runId: string; storageState: Awaited<ReturnType<BrowserContext['storageState']>> }
+  // v3.42 — bkz. sohbet notu: ScenarioSuggester.performLogin() sonrası scanPage()'in `storageState`
+  // (SADECE çerezler) ile SIFIRDAN yeni bir sayfa açıp ORİJİNAL url'e (login sayfası) dönmesi,
+  // login senaryosunun içerdiği navigasyon/arama/seçim adımlarının (URL'e yansımayan TÜM DOM
+  // durumunun) tamamen kaybolmasına yol açıyordu — kullanıcı "istenilen sayfa için senaryolar
+  // çıkarılmıyor, sadece login sayfası için üretiyor" diye bildirdi. `AgentLoopInput.
+  // handOffBrowserOnSuccess=true` VE run PASSED ile bittiyse, AgentLoop context'i KAPATMAK yerine
+  // (bkz. AgentLoopInput dosya başı NOT'u) HALA AÇIK olan `browserManager`'ı bu olayla ÇAĞIRANA
+  // devreder — çağıran artık AYNI, navigasyonun tam olarak bittiği sayfa üzerinde (page.goto()
+  // OLMADAN) doğrudan tarama yapabilir, ve işi bitince browserManager.close()'u KENDİSİ çağırmakla
+  // yükümlüdür (bkz. ScenarioSuggester.scanPage()). storage_state_captured olayındaki UYARI burada
+  // da geçerlidir: genel bir WS yayın kanalına ASLA bağlanmamalıdır.
+  | { type: 'browser_handed_off'; runId: string; browserManager: BrowserManager };
 
 export type AgentEventListener = (event: AgentEvent) => void;

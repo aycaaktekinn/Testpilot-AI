@@ -67,6 +67,16 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
 
   const { startIndex, maxElements } = args;
 
+  // v3.37 — bkz. sohbet notu: "Scenario Suggestions ... dom tree deki verileri sadeleştir,
+  // gereksiz elementleri kaldır". Kalabalık sayfalarda (ör. onlarca linkli bir "Tüm İşlemler"
+  // menüsü) LLM'e giden element listesi hem çok UZUN oluyor hem de her satırdaki isim/attribute
+  // metinleri gereğinden fazla ayrıntı taşıyordu — bu da modelin kararını açıklarken aşırı uzun
+  // (600 karakter sınırını aşan) bir "reasoning" yazmasına katkıda bulunuyordu. Bu sabitler de
+  // (INTERACTIVE_SELECTOR gibi) BİLEREK runDiscovery'nin İÇİNDE tanımlanıyor — yukarıdaki NOT'a
+  // bkz. (modül seviyesinde tanımlanırsa tarayıcıda ReferenceError verir).
+  const MAX_NAME_LENGTH = 100;
+  const MAX_ATTR_VALUE_LENGTH = 120;
+
   // Önceki adımdan kalan işaretleri temizle.
   document.querySelectorAll('[data-ai-ref]').forEach((el) => el.removeAttribute('data-ai-ref'));
 
@@ -198,17 +208,17 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
         .split(/\s+/)
         .map((id) => document.getElementById(id)?.textContent?.trim())
         .filter(Boolean);
-      if (parts.length) return parts.join(' ').slice(0, 200);
+      if (parts.length) return parts.join(' ').slice(0, MAX_NAME_LENGTH);
     }
 
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
       const id = el.getAttribute('id');
       if (id) {
         const label = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-        if (label?.textContent) return label.textContent.trim().slice(0, 200);
+        if (label?.textContent) return label.textContent.trim().slice(0, MAX_NAME_LENGTH);
       }
       const closestLabel = el.closest('label');
-      if (closestLabel?.textContent) return closestLabel.textContent.trim().slice(0, 200);
+      if (closestLabel?.textContent) return closestLabel.textContent.trim().slice(0, MAX_NAME_LENGTH);
     }
 
     const placeholder = el.getAttribute('placeholder');
@@ -237,7 +247,7 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
     if (el.tagName === 'SELECT') return null;
 
     const text = el.textContent?.trim();
-    if (text) return text.slice(0, 200);
+    if (text) return text.slice(0, MAX_NAME_LENGTH);
 
     return null;
   }
@@ -263,11 +273,23 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
 
   function relevantAttributes(el: Element): Record<string, string> {
     const attrs: Record<string, string> = {};
-    const keep = ['type', 'name', 'placeholder', 'href', 'checked', 'aria-checked', 'aria-expanded', 'value', 'maxlength', 'required'];
+    // v3.37 — bkz. sohbet notu: "dom tree deki verileri sadeleştir, gereksiz elementleri
+    // kaldır". `value` HTML ATTRIBUTE'U (bir input'un statik/başlangıç değeri) BİLEREK bu
+    // listeden ÇIKARILDI — LLM'e ayrıca ve daha güvenilir şekilde `currentValue` alanıyla
+    // (elementin CANLI `.value` PROPERTY'si, aşağıda) gösteriliyor; ikisini birlikte tutmak
+    // aynı bilgiyi iki kez (çoğu zaman biri boş/varsayılan, kafa karıştırıcı) göstermekten
+    // başka bir işe yaramıyordu, sadece prompt'u şişiriyordu.
+    // v3.40 — bkz. sohbet notu: performLogin() loop_detected analizi. Bir <li role="tab"> (ör.
+    // "Hepsi"/"Tüm İşlemler" sekmesi) tıklandıktan sonra ZATEN aktif/seçili olsa bile LLM'e bunu
+    // gösteren HİÇBİR CANLI sinyal yoktu — model bunu sadece geçmiş aksiyon listesinden (dolaylı,
+    // güvenilmez) çıkarmaya çalışıyor ve genelde "belki tekrar tıklamalıyım" diyerek AYNI elemente
+    // tekrar tekrar tıklıyordu. `aria-selected` (sekmeler) eklenmesi modele "bu zaten seçili"
+    // bilgisini DOĞRUDAN ve güvenilir şekilde veriyor.
+    const keep = ['type', 'name', 'placeholder', 'href', 'checked', 'aria-checked', 'aria-selected', 'aria-expanded', 'maxlength', 'required'];
     for (const key of keep) {
       const v = el.getAttribute(key);
       if (v !== null) {
-        attrs[key] = key === 'href' && v.length > 200 ? v.slice(0, 200) + '…' : v;
+        attrs[key] = key === 'href' && v.length > MAX_ATTR_VALUE_LENGTH ? v.slice(0, MAX_ATTR_VALUE_LENGTH) + '…' : v;
       }
     }
     return attrs;
@@ -351,7 +373,7 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
     let options: string[] | undefined;
     if (tagName === 'input' || tagName === 'textarea') {
       const v = (c.el as HTMLInputElement | HTMLTextAreaElement).value;
-      if (v) currentValue = v.length > 200 ? v.slice(0, 200) + '…' : v;
+      if (v) currentValue = v.length > MAX_ATTR_VALUE_LENGTH ? v.slice(0, MAX_ATTR_VALUE_LENGTH) + '…' : v;
     } else if (tagName === 'select') {
       currentValue = (c.el as HTMLSelectElement).selectedOptions[0]?.textContent?.trim();
 
@@ -375,7 +397,7 @@ export function runDiscovery(args: DiscoveryArgs): DiscoveryResult {
       tag: tagName,
       role: implicitRole(c.el),
       accessibleName: computeAccessibleName(c.el),
-      text: rawText ? rawText.slice(0, 200) : null,
+      text: rawText ? rawText.slice(0, MAX_NAME_LENGTH) : null,
       attributes: relevantAttributes(c.el),
       visible: c.visible,
       enabled: isEnabled(c.el),

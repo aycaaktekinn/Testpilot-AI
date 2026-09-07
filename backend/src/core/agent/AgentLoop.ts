@@ -122,6 +122,24 @@ export interface AgentLoopInput {
    */
   captureStorageState?: boolean;
   /**
+   * v3.42 — bkz. sohbet notu: "istenilen sayfa için senaryolar çıkarılmıyor, sadece login sayfası
+   * için üretiyor" (ScenarioSuggester.performLogin login senaryosu login DIŞINDA navigasyon/arama/
+   * seçim adımları da içerdiğinde). `captureStorageState` SADECE çerezleri (Playwright storageState)
+   * yakalıyor — bu, çağıranın SIFIRDAN yeni bir sayfa açıp SADECE oturumu geri yükleyebilmesini
+   * sağlıyor, ama sayfanın o ANKİ durumunu (URL'e yansımayan arama metni, tıklanmış radio buton,
+   * açık bir sekme/panel vb.) KORUMUYOR — bu bilgi bir çerezde/localStorage'da DEĞİL, canlı DOM'da
+   * yaşıyor. `true` verilirse (ve run PASSED ile bittiyse) AgentLoop, run bitince context'i
+   * KAPATMAK yerine (bkz. finally bloğu) HALA AÇIK olan `browserManager`'ı bir 'browser_handed_off'
+   * olayıyla (bkz. types.ts dosya başı NOT'u) çağırana devreder — çağıran AYNI sayfa üzerinde
+   * page.goto() OLMADAN doğrudan devam edebilir, TÜM DOM durumu (arama sonuçları, seçili radio vb.)
+   * korunur. Run PASSED DIŞINDA bir durumla biterse (failed/error/cancelled) bu bayrak HİÇBİR ŞEYİ
+   * DEĞİŞTİRMEZ — browser normal şekilde kapatılır, çünkü devredilecek başarılı bir sonuç yok.
+   * SADECE `captureStorageState=true` ile BİRLİKTE anlamlıdır (o olmadan devredilecek bir şey
+   * bulunmaz) ve SADECE bunu açıkça isteyen çağıran (ScenarioSuggester.performLogin) etkilenir —
+   * `undefined`/`false` iken (mevcut TÜM diğer çağıranlar) davranış birebir ESKİSİ GİBİ kalır.
+   */
+  handOffBrowserOnSuccess?: boolean;
+  /**
    * v3.24 — bkz. sohbet notu: "BDD kısmına tıklayıp Run Test dediğimde Test Scenario Instructions
    * kısmındaki veriler ile koşum yapsın. şuan sanki geçmiş koşum adımlarını kullanıyor". Canlı
    * run kaydında DOĞRULANDI (bkz. runs/iKB03jW3yreR.json): vector cache OKUMA tarafı "sicil no
@@ -143,6 +161,33 @@ export interface AgentLoopInput {
    * kalmaya devam eder; kullanıcı bu butonun "güzel çalıştığını" doğruladı, BİLEREK DOKUNULMADI.
    */
   disableVectorCacheRead?: boolean;
+  /**
+   * v3.39 — bkz. sohbet notu: "Bu sayfada hiç bir zaman vector db'ye gitmesin hep llm'e gitsin"
+   * (Senaryo Önerileri'ndeki login ön-adımı, `disableVectorCacheRead` uygulandıktan SONRA bile
+   * loop_detected almaya devam etti). `disableVectorCacheRead` SADECE OKUMA tarafını (yukarıdaki
+   * `tryVectorCacheHit`) atlatıyordu — YAZMA tarafı (`recordDecisionInCache`, aşağıda) bu bayrağa
+   * HİÇ bakmıyordu, yani bu run YİNE DE her başarılı click/dblclick/vb. adımda Ollama'ya bir
+   * embedding isteği + Milvus'a bir arama/insert/delete gönderiyordu — kullanıcının "hiçbir zaman
+   * vector db'ye gitmesin" isteğini tam olarak karşılamıyordu. Bu YENİ, DAHA GÜÇLÜ bayrak hem
+   * OKUMA hem YAZMA tarafını TAMAMEN kapatır — bu run için Milvus/Ollama'ya TEK BİR istek bile
+   * gitmez, HER adım kararı LLM'e danışılır.
+   *
+   * BİLEREK `disableVectorCacheRead`'DEN AYRI, YENİ bir alan olarak eklendi (o alanın ÜZERİNE
+   * YAZILMADI): `disableVectorCacheRead=true` kullanan MEVCUT çağıran (`/api/tests/generate-and-run`,
+   * bkz. yukarıdaki NOT) YAZMA tarafından hâlâ faydalanıyor olabilir — o akış YENİ üretilen bir
+   * testin adımlarını cache'e "ısıtmak" için kaydediyor, bu davranış BİLEREK DOKUNULMADI. SADECE
+   * `ScenarioSuggester.performLogin` bu YENİ, daha kapsamlı bayrağı kullanır (bkz. o dosyadaki NOT).
+   */
+  disableVectorCache?: boolean;
+  /**
+   * v3.40 — bkz. PromptBuilder.buildSystemMessage() dosya başı NOT'u: `disableVectorCache=true`
+   * verildikten SONRA bile aynı loop_detected hatası birebir aynı şekilde tekrarlandı — bu, run
+   * kaydı (suggest-login-nKH4R6cBbl.json) incelenerek KANITLANDI: sorunun vector cache'le HİÇBİR
+   * ilgisi yok (o run'da decisionSource HER adımda "llm" — cache'e hiç uğranmamış), saf bir LLM
+   * karar/prompt sorunu. Bu alan, SYSTEM_PROMPT'a çağırana özel ek bir kural eklemeyi sağlar —
+   * `undefined` iken (mevcut TÜM diğer çağıranlar) davranış birebir ESKİSİ GİBİ kalır.
+   */
+  extraSystemInstructions?: string;
 }
 
 export class AgentLoop {
@@ -168,6 +213,14 @@ export class AgentLoop {
 
     const history: HistoryEntry[] = [];
     let llmCallCount = 0;
+
+    // v3.39 — bkz. AgentLoopInput.disableVectorCache dosya başı NOT'u: bu run için vector cache'in
+    // (hem okuma hem yazma) tamamen kapalı olduğunu, doğrulanabilir/aranabilir bir log satırıyla
+    // AÇIKÇA görünür kılıyoruz — "hiçbir zaman vector db'ye gitmesin" isteğinin gerçekten
+    // uygulandığını (ve gelecekte tekrar bozulmadığını) run loglarından teyit edebilmek için.
+    if (input.disableVectorCache) {
+      log.info({ runId }, 'Bu run için vector cache TAMAMEN devre dışı — her adım kararı LLM\'e danışılacak');
+    }
 
     // hepsiburada.com üzerinde canlı olarak gözlemlendi: sitenin üst navigasyon menüsü (ör.
     // "Elektronik" linki) HER sayfada aynı şekilde bulunuyor. Cache okuma tarafı (bkz.
@@ -196,9 +249,16 @@ export class AgentLoop {
     // GERÇEKTEN çağrıldığında (browserManager.launch() döndükten SONRA) güncel değeri görür.
     let gridLiveViewUrl: string | undefined;
 
+    // v3.42 — bkz. AgentLoopInput.handOffBrowserOnSuccess dosya başı NOT'u: `finishRun` KAPANIŞ
+    // (closure) ile bunu yakalar, böylece en aşağıdaki `finally` bloğu (browserManager.close()'u
+    // atlayıp atlamayacağına karar verirken) run'ın PASSED ile mi yoksa başka bir durumla mı
+    // bittiğini bilir.
+    let lastFinishedStatus: RunReport['status'] | undefined;
+
     // Tüm çıkış yolları (PASS/FAIL/ERROR/CANCELLED) buradan geçer, böylece 'run_finished'
     // olayının her koşulda tam olarak bir kez yayınlanması garanti edilir.
     const finishRun = async (status: RunReport['status'], failureReason?: string): Promise<RunReport> => {
+      lastFinishedStatus = status;
       // replaySteps SADECE run PASSED ile bittiyse eklenir (bkz. RunReport.replaySteps dosya başı
       // açıklaması) — replay modundaysak zaten kullandığımız diziyi olduğu gibi geri taşırız (bu
       // sayede bir replay'in kendisi de PASSED biterse, TEKRAR replay edilebilir kalır).
@@ -337,7 +397,10 @@ export class AgentLoop {
           // kaydında doğrulanan bir hata sınıfı ("fill" adımı atlanıp cache'ten "click" kararı
           // gelmesi, sicil no hiç doldurulmadan giriş denenmesi) yüzünden BU RUN için `true`
           // verildiyse cache'e HİÇ bakılmaz, doğrudan aşağıdaki LLM akışına düşülür.
-          const cachedDecision = input.disableVectorCacheRead
+          // v3.39 — bkz. AgentLoopInput.disableVectorCache dosya başı NOT'u: bu, `disableVectorCacheRead`'in
+          // GÜÇLENDİRİLMİŞ hâlidir (hem okuma HEM yazma), bu yüzden ikisinden HERHANGİ biri true ise
+          // okuma tarafı yine atlanır.
+          const cachedDecision = input.disableVectorCacheRead || input.disableVectorCache
             ? null
             : await this.tryVectorCacheHit(scenario, snapshot, stepIndex, usedCacheSignatures, history);
 
@@ -348,7 +411,8 @@ export class AgentLoop {
 
             for (let attempt = 0; attempt <= MAX_LLM_RETRIES_PER_STEP; attempt++) {
               const messages = [
-                buildSystemMessage(),
+                // v3.40 — bkz. AgentLoopInput.extraSystemInstructions dosya başı NOT'u.
+                buildSystemMessage(input.extraSystemInstructions),
                 buildUserMessage({
                   scenario,
                   startUrl: url,
@@ -565,7 +629,15 @@ export class AgentLoop {
         // çağrılır (await YOK) — bu satır run'ın akışını hiç BEKLETMEZ, ve recordDecisionInCache
         // kendi içinde TÜM hataları yakalayıp sadece loglar; bir Milvus/Ollama sorunu run'ın
         // PASS/FAIL sonucunu ASLA etkilemez.
-        if (!isReplay && vectorCacheStore && decision.targetRef && targetEl && actionResult.ok) {
+        // v3.39 — bkz. AgentLoopInput.disableVectorCache dosya başı NOT'u: ÖNCEDEN bu satır
+        // `disableVectorCacheRead`'e HİÇ bakmıyordu — yani "sadece okuma kapalı" istenen bir run
+        // bile HER başarılı adımda Ollama'ya embedding + Milvus'a yazma isteği göndermeye devam
+        // ediyordu. `disableVectorCache=true` (henüz daha kapsamlı, SADECE ScenarioSuggester.
+        // performLogin'in kullandığı bayrak) bu satırı da atlatır — o akış için Milvus/Ollama'ya
+        // KESİNLİKLE hiçbir istek gitmez. `disableVectorCacheRead` (tek başına, generate-and-run'ın
+        // kullandığı ESKİ bayrak) bu satırı ETKİLEMEZ — o akışın yazma yoluyla cache'i "ısıtma"
+        // davranışı BİLEREK DEĞİŞTİRİLMEDİ (bkz. disableVectorCacheRead dosya başı NOT'u).
+        if (!isReplay && !input.disableVectorCache && vectorCacheStore && decision.targetRef && targetEl && actionResult.ok) {
           void this.recordDecisionInCache(runId, scenario, snapshot, stepIndex, decision, targetEl);
         }
 
@@ -695,8 +767,17 @@ export class AgentLoop {
           }
         }
 
-        const closeResult = await browserManager.close();
-        if (closeResult.videoPath) artifacts.videoPath = closeResult.videoPath;
+        // v3.42 — bkz. AgentLoopInput.handOffBrowserOnSuccess dosya başı NOT'u: sadece run PASSED
+        // ile bittiyse VE çağıran bunu açıkça istediyse tarayıcıyı BURADA KAPATMIYORUZ — devretme
+        // olayı, aşağıdaki attachArtifacts() BAŞARIYLA tamamlandıktan SONRA (bu try bloğunun EN
+        // SONUNDA) yayınlanır; böylece çağıran, ancak bu fonksiyonun geri kalanı sorunsuz bittiyse
+        // tarayıcıyı devralır — attachArtifacts() ARADA bir hata fırlatırsa aşağıdaki catch bloğu
+        // henüz kimseye devredilmemiş olan tarayıcıyı güvenle kapatır.
+        const shouldHandOffBrowser = Boolean(input.handOffBrowserOnSuccess) && lastFinishedStatus === 'passed';
+        if (!shouldHandOffBrowser) {
+          const closeResult = await browserManager.close();
+          if (closeResult.videoPath) artifacts.videoPath = closeResult.videoPath;
+        }
 
         // NOT: 'run_finished' WS olayı bu bloktan ÖNCE, finishRun() içinde yayınlanmıştı — bu yüzden
         // canlı WS aboneleri kanıt yollarını göremeyebilir. attachArtifacts() zaten döndürülmüş olan
@@ -704,8 +785,16 @@ export class AgentLoop {
         // GET /api/runs/:id/report ile sonradan sorgulayan ya da run() Promise'ini await eden çağıranlar
         // (örn. legacy uyum katmanı) kanıt yollarını eksiksiz görür.
         await runLogger.attachArtifacts(artifacts);
+
+        if (shouldHandOffBrowser) {
+          this.emit({ type: 'browser_handed_off', runId, browserManager });
+        }
       } catch (artifactErr) {
         log.warn({ artifactErr, runId }, 'Kanıt (screenshot/video/trace) yakalama sırasında hata (yok sayıldı)');
+        // v3.42 — buraya düşüldüğünde 'browser_handed_off' HENÜZ yayınlanmamıştır (yukarıdaki try
+        // bloğunda emit her zaman EN SON adımdır) — yani çağıranın elinde bu tarayıcıya dair
+        // hiçbir referans yok. Bu yüzden handOffBrowserOnSuccess ne olursa olsun burada HER ZAMAN
+        // güvenle kapatılır (aksi halde tarayıcı süreci hiç kapanmadan sızardı).
         await browserManager.close().catch(() => undefined);
       }
     }

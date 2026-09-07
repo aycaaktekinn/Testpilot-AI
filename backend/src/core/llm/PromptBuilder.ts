@@ -24,6 +24,10 @@ KURALLAR:
    action="select_option" seçtiğinde "value" alanına o listeden GÖRDÜĞÜN TAM METNİ (örn. "En düşük fiyat") birebir
    yaz — listede olmayan bir metin uydurma. Sıralama/filtreleme gibi bir istek için uygun bir "options" listesi
    görüyorsan, click veya scroll ile o dropdown'ı aramak yerine DOĞRUDAN select_option kullan.
+7d. "reasoning" alanı KISA olmalı: en fazla 2-3 cümle, KESİNLİKLE 600 karakteri GEÇME. Element listesindeki
+   adayları tek tek sayıp karşılaştırma ya da neden diğerlerini elemediğini uzun uzun açıklama — sadece SEÇTİĞİN
+   karar için kısa/öz bir gerekçe yaz (ör. "Kullanıcı adı alanı e5 ile eşleşiyor, oraya yazıyorum"). Sayfada
+   çok sayıda element varsa bile bu kuralı DEĞİŞTİRMEZ.
 8. Sadece geçerli, aşağıdaki şemaya uyan TEK BİR JSON nesnesi döndür. Başka hiçbir metin, açıklama veya markdown ekleme.
 9. "targetRef", "value" ve "summary" alanları SADECE ilgili aksiyon için gerekliyse yazılır. Gerekli
    değilse o alanı JSON çıktısında TAMAMEN ÇIKAR (hiç yazma) — asla "undefined" kelimesini bir değer
@@ -34,7 +38,7 @@ KURALLAR:
 JSON şeması (her satırdaki yorum sadece o alanın NE ZAMAN kullanılacağını açıklar; JSON çıktısına
 yorum EKLEME, ve o alan bu aksiyon için geçerli değilse alanı hiç yazma):
 {
-  "reasoning": string,        // kısa gerekçe (secret değeri İÇERMEMELİ)
+  "reasoning": string,        // KISA gerekçe, en fazla 600 karakter (secret değeri İÇERMEMELİ) — bkz. kural 7d
   "confidence": number,       // 0-1 arası
   "action": "click"|"dblclick"|"fill"|"type"|"press_key"|"select_option"|"check"|"uncheck"|"hover"|"scroll_into_view"|"navigate"|"go_back"|"wait"|"assert_visible"|"assert_text"|"assert_url"|"finish_success"|"finish_failure"|"ask_clarification",
   "targetRef": string,        // örn. "e3" — SADECE element gerektiren aksiyonlarda yaz, aksi halde alanı hiç ekleme
@@ -69,8 +73,27 @@ export interface HistoryEntry {
   resultMessage: string;
 }
 
-export function buildSystemMessage() {
-  return { role: 'system' as const, content: SYSTEM_PROMPT };
+/**
+ * v3.40 — bkz. sohbet notu: ScenarioSuggester.performLogin() loop_detected analizi (run kaydı
+ * suggest-login-nKH4R6cBbl.json). Kullanıcının login senaryosu metni SADECE giriş yapmakla
+ * kalmıyor, "...daha sonra açılan ekranda tüm işlemler kısmına gir ve açılan ekrandan senaryo
+ * üret" gibi, bu döngünün (AgentLoop) YAPAMAYACAĞI bir görevi (senaryo üretme — bu ayrı bir
+ * aşamada, scanPage() ile ayrıca yapılıyor) de tarif ediyor. Model bu son cümleyi "henüz
+ * tamamlanmamış bir görev" olarak yorumlayıp asla finish_success çağırmıyor, bunun yerine zaten
+ * başarıyla tıklanmış (actionResult.ok=true) AYNI sekmeye (ör. "Hepsi"/"Tüm İşlemler" tab'ı)
+ * tekrar tekrar tıklamayı deniyor — LoopGuard birkaç adım sonra bunu loop_detected ile durduruyor.
+ * Bu, vector cache ile TAMAMEN ilgisiz, saf bir LLM karar/prompt sorunu (v3.39'da cache zaten
+ * tümüyle devre dışı bırakıldıktan SONRA da aynı hata aynı şekilde tekrarlandı — bu da cache'in
+ * hiç sebep olmadığının kanıtı).
+ *
+ * `extraInstructions` opsiyonel parametresi, SADECE bunu ihtiyaç duyan çağıranlar (bkz.
+ * ScenarioSuggester.performLogin) için SYSTEM_PROMPT'a ek, duruma özel bir kural ekler — genel
+ * test koşumlarını (bu parametre olmadan çağrılan diğer TÜM AgentLoop.run() çağrıları) HİÇBİR
+ * ŞEKİLDE etkilemez.
+ */
+export function buildSystemMessage(extraInstructions?: string) {
+  const content = extraInstructions ? `${SYSTEM_PROMPT}\n\n${extraInstructions}` : SYSTEM_PROMPT;
+  return { role: 'system' as const, content };
 }
 
 export function buildUserMessage(ctx: PromptContext) {
