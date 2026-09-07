@@ -94,8 +94,24 @@ function hasUnfilledTextLikeInput(snapshot: PageSnapshot): boolean {
 // 8000→16384 (OpenRouterProvider'daki v3.17 "doğrudan tavana sıçra" mantığıyla BİRLİKTE çalışır —
 // bkz. o dosyadaki RETRY_MAX_TOKENS_CEILING NOT'u). ScenarioSuggester'ın KENDİ ayrı SUGGEST_MAX_TOKENS
 // sabiti VAR (bkz. o dosya) — BURADAN etkilenmez, bilerek ayrı tutulur.
-const AGENT_STEP_MAX_TOKENS = 8192;
-const AGENT_STEP_MAX_TOKENS_RETRY_CEILING = 16384;
+//
+// v3.45 — bkz. sohbet notu: "Get More Suggestions" + login akışında canlı logda TEKRAR "Yanıt token
+// bütçesi yetersiz kaldı (finish_reason=length)" WARN'ı görüldü (requestedMaxTokens: 8192,
+// contentWasTruncated: true — yani model normal/görünür bir JSON içeriği YARIDA kesilmişti, "gizli
+// reasoning'e bütçe harcama" durumu DEĞİL). Kök sebep muhtemelen v3.40/v3.43'te performLogin()'e
+// eklenen `extraSystemInstructions` (LOGIN_STEP_SYSTEM_INSTRUCTIONS, bkz. ScenarioSuggester.ts) —
+// bu, prompt'u belirgin şekilde büyüttü VE modele "TÜM adımları sırayla tamamla" dediği için artık
+// login akışı DAHA FAZLA adımdan oluşuyor (girişten sonra menü/arama/seçim adımları da ekleniyor),
+// bu da geçmiş (history) bloğunu her adımda biraz daha büyütüyor — ikisi birlikte 8192'yi zaman
+// zaman aşan bir çıktı üretiyor. Eski davranış (retry ile 16384'e sıçrama) BAŞARIYLA kurtarıyordu
+// (kullanıcının pasted logunda WARN'dan sonra bir ERROR gelmedi) ama HER seferinde ekstra bir
+// round-trip (birkaç saniye gecikme) demekti — v3.18'in "çoğu adım İLK denemede bitsin" amacına
+// aykırı bir REGRESYON. Başlangıç bütçesini DOĞRUDAN eski retry tavanına (16384) çıkarıp, retry
+// tavanını da üstüne bir güvenlik payı ekleyerek (24576) yükseltiyoruz — OPENROUTER_MAX_OUTPUT_TOKENS
+// (.env'de override YOK, varsayılan 65536) bu değerlerin çok üzerinde olduğu için sağlayıcı
+// tarafında bir sorun teşkil etmez.
+const AGENT_STEP_MAX_TOKENS = 16384;
+const AGENT_STEP_MAX_TOKENS_RETRY_CEILING = 24576;
 
 export interface AgentLoopInput {
   runId: string;

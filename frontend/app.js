@@ -4591,6 +4591,34 @@ function initScenarioSuggestionsPage() {
         showOnly(resultsWrap);
     }
 
+    /**
+     * v3.44 — bkz. sohbet notu: "Get More Suggestions butonuna tıklayınca ekranda yazan senaryo
+     * bilgilerini okumadan kapanıyor, ama Get Suggestions düzgün çalışıyor". Kök sebep runGetMore()
+     * (aşağıda) idi: `/api/scenarios/suggest` isteğine `login` alanını HİÇ EKLEMİYORDU — kullanıcı
+     * "Requires Login" kutucuğunu işaretleyip bir login senaryosu girmiş olsa bile "Get More
+     * Suggestions" bunu SESSİZCE YOK SAYIYOR, backend'e login BİLGİSİ OLMADAN gidiyordu. Backend bu
+     * durumda performLogin()'i (çok adımlı: giriş yap + navigasyon + arama vb., bkz.
+     * ScenarioSuggester.ts) HİÇ ÇALIŞTIRMADAN, DOĞRUDAN scanPage()'i anonim (giriş yapılmamış)
+     * olarak çağırıyordu — bu da "Get Suggestions"taki UZUN otomasyon yerine TEK adımlık, ÇOK HIZLI
+     * biten bir sayfa ziyareti demekti: kullanıcının headed modda gördüğü otomasyon tarayıcı
+     * penceresi bu yüzden neredeyse anında açılıp kapanıyordu (okuyacak bir şey görmeden) — HEM DE
+     * muhtemelen login gerektiren bir sayfada anonim olarak takılıp kalarak yanlış/eksik önerilerle
+     * sonuçlanıyordu. Bu fonksiyon, login objesini oluşturma mantığını TEK bir yerde toplar ki hem
+     * runSuggest() hem runGetMore() HER ZAMAN AYNI login yapılandırmasını göndersin.
+     */
+    function buildLoginConfig() {
+        if (!suggestRequiresLoginCheckbox || !suggestRequiresLoginCheckbox.checked) return undefined;
+        const loginScenario = loginScenarioInput ? loginScenarioInput.value.trim() : '';
+        if (!loginScenario) return undefined;
+        const { variables: loginVariables, secrets: loginSecrets } = collectLoginVariablesAndSecrets();
+        return {
+            url: loginUrlInput && loginUrlInput.value.trim() ? loginUrlInput.value.trim() : undefined,
+            scenario: loginScenario,
+            variables: loginVariables,
+            secrets: loginSecrets,
+        };
+    }
+
     async function runSuggest() {
         const url = suggestUrlInput.value.trim();
 
@@ -4611,21 +4639,15 @@ function initScenarioSuggestionsPage() {
         // LOGIN-GATED PAGE SUPPORT: sadece kutucuk işaretliyse ve bir login senaryosu girilmişse
         // gönderilir (bkz. backend ScenarioSuggester.performLogin) — işaretli değilse `login`
         // hiç gönderilmez, davranış eskisi gibi (anonim tarama) kalır.
-        let login;
         if (suggestRequiresLoginCheckbox && suggestRequiresLoginCheckbox.checked) {
             const loginScenario = loginScenarioInput ? loginScenarioInput.value.trim() : '';
             if (!loginScenario) {
                 showToast('Please describe the login steps first.', 'info');
                 return;
             }
-            const { variables: loginVariables, secrets: loginSecrets } = collectLoginVariablesAndSecrets();
-            login = {
-                url: loginUrlInput && loginUrlInput.value.trim() ? loginUrlInput.value.trim() : undefined,
-                scenario: loginScenario,
-                variables: loginVariables,
-                secrets: loginSecrets,
-            };
         }
+        // v3.44 — bkz. buildLoginConfig() dosya başı NOT'u.
+        const login = buildLoginConfig();
 
         const loadingText = document.getElementById('suggestionsLoadingText');
         if (loadingText) {
@@ -4684,6 +4706,11 @@ function initScenarioSuggestionsPage() {
      * (bkz. ScenarioSuggester.ts kural 4b) — sayfayı yeniden ziyaret etmek/element taramak yine
      * gerekiyor (backend her istekte scanPage() çağırıyor), bu yüzden bu da normal "Get
      * Suggestions" kadar sürebilir.
+     *
+     * v3.44 — bkz. buildLoginConfig() dosya başı NOT'u: `login` artık BURADA DA (runSuggest()'teki
+     * İLE AYNI şekilde) gönderiliyor — "Requires Login" kutucuğu işaretliyse (ki sayfa yeniden
+     * yüklenmediği için hâlâ işaretli/dolu kalır) "Get More Suggestions" da AYNI login akışını
+     * (giriş yap + navigasyon) çalıştırır, anonim/hızlı-ve-yanlış bir taramaya DÜŞMEZ.
      */
     async function runGetMore() {
         if (!lastUrl) return;
@@ -4704,6 +4731,8 @@ function initScenarioSuggestionsPage() {
                     // Aynı yönlendirmeyle devam et — kullanıcı "login sayfasına odaklan" dediyse
                     // "daha fazla öneri" de AYNI odakla gelmeli, genel önerilere dönmemeli.
                     focus: lastFocus,
+                    // v3.44 — bkz. yukarıdaki fonksiyon başı NOT'u.
+                    login: buildLoginConfig(),
                 }),
             });
 

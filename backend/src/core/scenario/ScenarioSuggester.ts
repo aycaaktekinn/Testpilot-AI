@@ -99,6 +99,20 @@ const RESCAN_ON_EMPTY_DELAYS_MS = [1500, 2500];
 // tamamla" kuralı ÖNCELİKLİ, "aynı aksiyonu sonsuz tekrarlama" kuralı SADECE gerçekten aynı
 // aksiyon+hedef tekrar edilmek ÜZEREYKEN devreye giriyor (genel bir "emin değilsen bitir" izni
 // ARTIK YOK).
+// v3.46 — bkz. sohbet notu: canlı run kaydı (suggest-login-LZ6T4SfL4a.json) incelendi. Senaryo SADECE
+// "...tüm işlemler butonuna tıklanır" ile bitiyordu (login DIŞINDA "senaryo üret" gibi bir kapanış YOK).
+// Model, "Tüm İşlemler" butonuna (e5) BAŞARIYLA tıkladı (adım 6), sonra AÇILAN ekranda "Hepsi" adında
+// (yine e5 ref'i — DOM yenilendiği için ref'ler yeniden numaralanır, AYNI ref FARKLI bir elementi
+// gösterebilir) bir sekmeye de tıkladı (adım 7, BAŞARILI). Yani senaryodaki TEK adım (tüm işlemler'e
+// gir) fiilen TAMAMLANMIŞTI — ama model 8. adımda action="ask_clarification" seçip run'ı BAŞARISIZ
+// bitirdi, çünkü sayfada HARFİYEN "Tüm İşlemler" yazan başka bir element bulamadı ve "Hepsi" etiketinin
+// senaryodaki "tüm işlemler" ifadesiyle AYNI ŞEY olup olmadığından emin olamadı — v3.43'ün "adımları
+// eksiksiz tamamla" talimatı bu SEFER modeli GEREĞİNDEN FAZLA TEDBİRLİ/KURALCI yaptı: iş fiilen bittiği
+// halde sırf etiket birebir eşleşmiyor diye bitirmeyi REDDETTİ. Aşağıya eklenen "ÖNEMLİ İSTİSNA"
+// paragrafı bunu düzeltir: eş anlamlı/aynı kavramı ifade eden etiketler (Tüm İşlemler ≈ Hepsi ≈ Tümü)
+// arasında tereddüt etmemesini, ve senaryonun TÜM adımları (bu tür eşleştirmeler dahil) tamamlandıktan
+// SONRA ask_clarification yerine finish_success seçmesini AÇIKÇA söyler — ask_clarification artık SADECE
+// HENÜZ DENENMEMİŞ bir adım için gerçekten birbirinden bağımsız birden fazla makul aday varken kullanılır.
 const LOGIN_STEP_SYSTEM_INSTRUCTIONS = `EK KURAL — SADECE BU GÖREV İÇİN GEÇERLİ (giriş ön-adımı):
 Yukarıdaki senaryo, SIRAYLA yapılması gereken BİRDEN FAZLA adım tarif ediyor (ör. giriş yap, SONRA bir
 menüye/tab'a gir, SONRA ara, SONRA enter'a bas, SONRA bir seçenek işaretle). GÖREVİN, bu adımların
@@ -117,7 +131,17 @@ aksiyonu olan) TÜM adımlar başarıyla tamamlandıysa, VEYA (2) birkaç makul 
 bir sonraki adımın hedef elementi sayfada HİÇBİR ŞEKİLDE bulunamıyorsa (bu durumda action="finish_failure"
 kullanıp NEDENİNİ summary'ye yaz — sessizce erken bitirme). Sırf "muhtemelen buraya kadar yeterlidir" ya
 da "emin değilim" gibi bir gerekçeyle, senaryoda tarif edilen SONRAKİ adımları hiç denemeden erken
-action="finish_success" SEÇME — bu YANLIŞTIR.`;
+action="finish_success" SEÇME — bu YANLIŞTIR.
+ÖNEMLİ İSTİSNA: senaryodaki bir adımın kelimeleri (ör. "tüm işlemler") sayfadaki bir elementin TAM ETİKETİYLE
+birebir eşleşmeyebilir ama AÇIKÇA EŞ ANLAMLI/AYNI KAVRAMI ifade edebilir (ör. "Tüm İşlemler" ≈ "Hepsi" ≈
+"Tümü" — hepsi "hepsini göster/seç" anlamına gelir). Böyle durumlarda TEREDDÜT ETME: en yakın eş anlamlı
+elementi o adımın hedefi olarak KABUL ET (tıklayarak veya zaten seçili/aktifse "bu adım tamamlandı" sayarak).
+Senaryodaki TÜM adımları (bu şekilde eş anlamlı eşleştirmeler dahil) en az bir kez başarıyla denedikten SONRA
+— yani sırada denenecek BAŞKA bir adım kalmadığında — action="ask_clarification" SEÇME, action="finish_success"
+seç. action="ask_clarification" SADECE, senaryonun HENÜZ HİÇ denenmemiş bir adımı için sayfada GERÇEKTEN
+birden fazla, birbirinden BAĞIMSIZ ve eşit derecede uygun aday element varken (ör. iki farklı buton da
+mantıklı görünüyor, hangisi olduğu belli değil) kullanılır — senaryonun SON adımını (veya tüm adımlarını)
+zaten tamamlamışken, sadece etiket birebir eşleşmiyor diye ASLA kullanılmaz.`;
 
 // Aynı sitede (hostname) geçmişte kaç senaryoya kadar prompt'a dahil edilsin — hem prompt
 // boyutunu makul tutmak hem de en GÜNCEL/İLGİLİ geçmişe odaklanmak için (liste zaten en yeniden

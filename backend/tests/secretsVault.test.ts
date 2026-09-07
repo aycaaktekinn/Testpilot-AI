@@ -37,4 +37,21 @@ describe('SecretsVault', () => {
     const text = 'Hata: girilen değer sifre123 kabul edilmedi';
     expect(vault.redactSecretValuesFromText(text)).toBe('Hata: girilen değer *** kabul edilmedi');
   });
+
+  // v3.47 — bkz. sohbet notu: "Get More Suggestions ... variable kısmında tanımları düzgün
+  // uygulamıyorlar". Kullanıcı Login Variables tablosunda bir KEY'i boşluklu ("sicil no") girmiş,
+  // LLM de bunu doğru şekilde "{{var.sicil no}}" olarak referans etmişti — ama ESKİ regex
+  // (`[a-zA-Z0-9_\-]+`) boşluk kabul etmediği için bu hiç bir placeholder olarak TANINMIYOR, değer
+  // hiç çözülmeden (literal metin olarak) kalıyordu. Bu test AYNEN o senaryoyu (boşluklu isim)
+  // kapsar; ayrıca Türkçe karakterli bir isim ve fazladan boşluklu bir yazım da eklenmiştir.
+  it('boşluk/Türkçe karakter içeren değişken ve secret adlarını da çözer', () => {
+    const vault = new SecretsVault({ 'sicil no': 'VB12345' }, { 'şifre değeri': 'gizli-987' });
+
+    expect(vault.resolve('{{var.sicil no}}')).toBe('VB12345');
+    expect(vault.resolve('{{secret.şifre değeri}}')).toBe('gizli-987');
+    // Fazladan boşluklu yazım (LLM "{{var. sicil no }}" gibi yazsa bile) da doğru çözülmeli.
+    expect(vault.resolve('{{var. sicil no }}')).toBe('VB12345');
+    // Bu artık TANINAN bir placeholder olduğu için "unknown reference" listesine düşmemeli.
+    expect(vault.findUnknownReferences('{{var.sicil no}}')).toEqual([]);
+  });
 });
