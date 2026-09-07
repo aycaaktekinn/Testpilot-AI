@@ -39,6 +39,18 @@ export type AgentEvent =
   // OLMADAN) doğrudan tarama yapabilir, ve işi bitince browserManager.close()'u KENDİSİ çağırmakla
   // yükümlüdür (bkz. ScenarioSuggester.scanPage()). storage_state_captured olayındaki UYARI burada
   // da geçerlidir: genel bir WS yayın kanalına ASLA bağlanmamalıdır.
-  | { type: 'browser_handed_off'; runId: string; browserManager: BrowserManager };
+  | { type: 'browser_handed_off'; runId: string; browserManager: BrowserManager }
+  // v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log panelinde Live
+  // Streaming" özelliği. SADECE AgentLoopInput.enableLiveScreenshots=true iken (bkz. AgentLoop.run
+  // — LIVE_SCREENSHOT_INTERVAL_MS aralığıyla) yayınlanır. `enableLiveScreenshots` YALNIZCA
+  // LegacyTestService.generateAndRun() ve replayGeneratedTest() (yani TEKLİ "Run"/"Replay" akışları)
+  // tarafından true olarak ayarlanır; RunManager.startRun/startRunWithAutoRetry (toplu/paralel
+  // "Run Selected" akışı) kendi AgentLoopInput'unu SADECE sabit bir alan listesiyle (runId, url,
+  // scenario, variables, secrets, options, replaySteps) oluşturduğundan bu event YAPISAL OLARAK
+  // paralel koşumlarda asla üretilemez — bkz. RunManager dosya başı notu. Ekran görüntüsü küçük
+  // boyutlu (düşük kaliteli JPEG) base64 olarak taşınır; herhangi bir çerez/oturum/gizli veri
+  // İÇERMEZ, bu yüzden storage_state_captured/browser_handed_off'un aksine genel WS yayın kanalına
+  // (runManager.publishExternalEvent → ws/runSocket.ts) bağlanması güvenlidir.
+  | { type: 'live_frame'; runId: string; imageBase64: string; timestamp: string };
 
 export type AgentEventListener = (event: AgentEvent) => void;

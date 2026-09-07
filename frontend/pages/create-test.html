@@ -1160,6 +1160,33 @@
 
                         Watch Live (Grid)
                     </a>
+
+                    <!-- v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log
+                         panelinde Live Streaming". SADECE TEKLİ run/replay akışında (bkz.
+                         AgentLoopInput.enableLiveScreenshots dosya başı NOT'u) backend'den gelen
+                         ilk 'live_frame' olayında görünür olur (bkz. app.js openLiveLogSocket) —
+                         toplu/paralel ("Run Selected") koşumlarda bu olay YAPISAL OLARAK asla
+                         üretilmediği için bu link paralel koşumlarda HİÇBİR ZAMAN görünmez.
+                         target="_blank": ayrı bir sekmede açılsın, Execution Log paneli kaybolmasın. -->
+                    <a
+                            id="liveStreamingLink"
+                            href="#"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="hidden items-center gap-1
+                                   font-body-xs text-body-xs font-semibold
+                                   text-primary hover:underline
+                                   whitespace-nowrap"
+                    >
+                        <span
+                                class="material-symbols-outlined
+                                       text-[16px]"
+                        >
+                            sensors
+                        </span>
+
+                        Live Streaming
+                    </a>
                 </div>
 
                 <pre

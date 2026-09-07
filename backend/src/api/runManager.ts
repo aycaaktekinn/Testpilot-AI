@@ -85,6 +85,10 @@ class RunManager {
         // Doluysa AgentLoop bunu bir "Replay (No AI)" olarak çalıştırır (bkz. TestRunRequest.replaySteps
         // dosya başı açıklaması) — v2.0 toplu/paralel çalıştırma özelliği bunu bu şekilde kullanır.
         replaySteps: request.replaySteps,
+        // v3.52 — bkz. TestRunRequest.enableLiveScreenshots dosya başı NOT'u: burada KOŞULSUZ
+        // olarak taşınır — "tekli mi paralel mi" kararı ÇAĞIRANA (ör. LegacyTestService.
+        // runGeneratedTestsBatch, fileNames.length === 1 kontrolü) aittir, bu metod sadece iletir.
+        enableLiveScreenshots: request.enableLiveScreenshots,
       })
       .then((report) => {
         record.report = report;
@@ -182,6 +186,9 @@ class RunManager {
           secrets: request.secrets,
           options,
           replaySteps,
+          // v3.52 — bkz. TestRunRequest.enableLiveScreenshots dosya başı NOT'u — startRun()'daki
+          // AYNI koşulsuz aktarım, tutarlılık için burada da (retry denemesinde de) yapılır.
+          enableLiveScreenshots: request.enableLiveScreenshots,
         })
         .then((report) => {
           // Yukarıdaki callback ile aynı 'replay_mismatch İLK deneme' durumunda record.report/

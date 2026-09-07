@@ -222,6 +222,11 @@ export class LegacyTestService {
         // v3.24 — bkz. AgentLoopInput.disableVectorCacheRead / LegacyGenerateAndRunInput.
         // disableVectorCacheRead dosya başı açıklamaları.
         disableVectorCacheRead: input.disableVectorCacheRead,
+        // v3.51 — bkz. AgentLoopInput.enableLiveScreenshots dosya başı NOT'u: "Live Streaming"
+        // SADECE tekli run akışlarında (generateAndRun/runGeneratedTest ve replayGeneratedTest)
+        // açılır — runManager.startRun/startRunWithAutoRetry (toplu/paralel "Run Selected") bu
+        // alanı HİÇ göndermez, bkz. o dosyadaki sabit alan listesi.
+        enableLiveScreenshots: true,
       });
     } catch (err) {
       // v3.22 — bkz. sohbet notu: "koşum hata alsa dahi o bilgileri getirsin". loop.run()
@@ -767,6 +772,9 @@ export class LegacyTestService {
         secrets,
         replaySteps: meta.replaySteps,
         options,
+        // v3.51 — bkz. AgentLoopInput.enableLiveScreenshots dosya başı NOT'u: "Replay (No AI)"
+        // butonu da tekli run akışıdır (paralel/batch değildir) — Live Streaming burada da açılır.
+        enableLiveScreenshots: true,
       });
     } catch (err) {
       // v3.22 — bkz. persistCrashedAttempt() dosya başı NOT'u / generateAndRun'daki AYNI blok.
@@ -848,6 +856,17 @@ export class LegacyTestService {
     // sorgu, döngü dışı" deseni).
     const callerProjectIds = await getCallerProjectIds(caller);
 
+    // v3.52 — bkz. sohbet notu: "Suites kısmından başlatılan test için Live Streaming kısmı
+    // çalışmıyor" / TestRunRequest.enableLiveScreenshots dosya başı NOT'u (domain/types.ts).
+    // Suites (ve Generated Tests "Run Selected") HER ZAMAN bu batch metoduna gelir — TEK bir
+    // dosya seçilmiş olsa BİLE (bkz. runBatchSchema/disableAutoRetry dosya başı NOT'u). Burada
+    // `fileNames.length === 1` FİİLEN tekli bir run'dır (paralel DEĞİLDİR) — bu yüzden Live
+    // Streaming SADECE bu durumda açılır. 2 veya daha fazla dosya GERÇEKTEN paralel çalıştığında
+    // bu `false` kalır ve HİÇBİR run'a `enableLiveScreenshots` gitmez — "paralel koşumlarda
+    // kesinlikle aktif olmasın" gereksinimi burada, döngü BAŞLAMADAN ÖNCE, tek bir yerde karara
+    // bağlanarak korunur.
+    const isSingleRun = fileNames.length === 1;
+
     for (const fileName of fileNames) {
       try {
         const meta = await this.generatedTestStore.getMeta(fileName);
@@ -875,6 +894,9 @@ export class LegacyTestService {
           secrets,
           options,
           replaySteps: undefined,
+          // v3.52 — bkz. yukarıdaki isSingleRun NOT'u / TestRunRequest.enableLiveScreenshots
+          // dosya başı açıklaması.
+          enableLiveScreenshots: isSingleRun,
         };
 
         const summary = disableAutoRetry

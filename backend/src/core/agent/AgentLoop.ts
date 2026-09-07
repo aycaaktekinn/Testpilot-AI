@@ -113,6 +113,16 @@ function hasUnfilledTextLikeInput(snapshot: PageSnapshot): boolean {
 const AGENT_STEP_MAX_TOKENS = 16384;
 const AGENT_STEP_MAX_TOKENS_RETRY_CEILING = 24576;
 
+// v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log panelinde Live
+// Streaming" özelliği (bkz. AgentLoopInput.enableLiveScreenshots dosya başı NOT'u). Bu, bir
+// 'video' değil — belirli aralıklarla alınan JPEG ekran görüntülerinin WS üzerinden akıtılmasıdır
+// ("video gibi" görünmesi istemci tarafında ardışık karelerin bir <img>'e basılmasıyla sağlanır).
+// 1500ms: kullanıcı deneyimi açısından yeterince "canlı" hissettirirken (saniyede ~0.67 kare),
+// hem sunucu CPU'sunu (her karede bir JPEG encode) hem de WS bant genişliğini (her run için EK
+// bir trafik kanalı) makul tutar. Sadece `enableLiveScreenshots=true` olan (yani SADECE tekli
+// "Run"/"Replay" akışları) run'larda devreye girer.
+const LIVE_SCREENSHOT_INTERVAL_MS = 1500;
+
 export interface AgentLoopInput {
   runId: string;
   url: string;
@@ -204,6 +214,25 @@ export interface AgentLoopInput {
    * `undefined` iken (mevcut TÜM diğer çağıranlar) davranış birebir ESKİSİ GİBİ kalır.
    */
   extraSystemInstructions?: string;
+  /**
+   * v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log paneli içerisinde
+   * Live Streaming diye bir alan olsun... belirli aralıklarla ekran görüntüleri alınarak
+   * kullanıcılara video gibi gösterilecek şekilde ekrana yansısın... Bu Live streaming özellik
+   * SADECE tekli koşumda aktif olsun, paralel koşumlarda KESİNLİKLE aktif olmasın."
+   * `true` ise, tarayıcı başlatılıp (browserManager.launch() dönünce) sayfaya gitmeden HEMEN
+   * ÖNCE `LIVE_SCREENSHOT_INTERVAL_MS` aralığıyla periyodik bir ekran görüntüsü alma döngüsü
+   * başlatılır; her kare bir 'live_frame' olayıyla (bkz. types.ts) yayınlanır ve run'ın HER
+   * ÇIKIŞ YOLUNDA (finally bloğunun İLK satırı — clearTimeout) kesin olarak durdurulur.
+   * ÖNEMLİ — YAPISAL GÜVENCE: bu alanı YALNIZCA LegacyTestService.generateAndRun() ve
+   * replayGeneratedTest() (yani tekli "Run"/"Replay (No AI)" butonları) `true` olarak ayarlar.
+   * RunManager.startRun/startRunWithAutoRetry (toplu/paralel "Run Selected" akışı) kendi
+   * `loop.run({...})` çağrısında AgentLoopInput alanlarını TEK TEK, sabit bir listeyle
+   * (runId, url, scenario, variables, secrets, options, replaySteps) seçtiğinden — request'i
+   * spread ETMEDİĞİNDEN — bu alan oraya asla sızamaz; paralel bir run'da `undefined` kalır ve
+   * bu döngü hiç başlamaz. `undefined`/`false` iken (varsayılan) davranış birebir ESKİSİ GİBİ
+   * kalır, hiçbir ek maliyet/işlem oluşmaz.
+   */
+  enableLiveScreenshots?: boolean;
 }
 
 export class AgentLoop {
@@ -271,6 +300,13 @@ export class AgentLoop {
     // bittiğini bilir.
     let lastFinishedStatus: RunReport['status'] | undefined;
 
+    // v3.51 — bkz. AgentLoopInput.enableLiveScreenshots dosya başı NOT'u: periyodik ekran görüntüsü
+    // alma döngüsünün zamanlayıcısı. `finally` bloğunun İLK satırında KOŞULSUZ olarak
+    // `clearTimeout` ile durdurulur — run'ın PASS/FAIL/ERROR/CANCELLED hangi yoldan bittiğinden
+    // bağımsız olarak, açık kalan bir zamanlayıcının süreci sızdırmasını (process'in kapanmasını
+    // engellemesini) önler.
+    let liveScreenshotTimer: NodeJS.Timeout | undefined;
+
     // Tüm çıkış yolları (PASS/FAIL/ERROR/CANCELLED) buradan geçer, böylece 'run_finished'
     // olayının her koşulda tam olarak bir kez yayınlanması garanti edilir.
     const finishRun = async (status: RunReport['status'], failureReason?: string): Promise<RunReport> => {
@@ -336,6 +372,40 @@ export class AgentLoop {
       if (gridLiveViewUrl) {
         log.info({ runId, liveViewUrl: gridLiveViewUrl }, 'Selenium Grid canlı izleme adresi hazır');
         this.emit({ type: 'grid_live_view', runId, url: gridLiveViewUrl });
+      }
+
+      // v3.51 — bkz. AgentLoopInput.enableLiveScreenshots dosya başı NOT'u: tarayıcı açıldıktan
+      // HEMEN SONRA (page.goto()'dan ÖNCE, böylece ilk sayfa dahil TÜM navigasyon canlı akışta
+      // görünür) periyodik ekran görüntüsü döngüsü başlatılır. `browserManager.getPage()` HER
+      // seferinde YENİDEN çağrılır (dıştaki `page` değişkenine değil) — bir click aksiyonu yeni
+      // bir sekme açıp aktif sayfayı değiştirebileceği için (bkz. yukarıdaki `let page` NOT'u),
+      // aksi halde kapanmış/eski bir sekmenin ekran görüntüsü alınmaya çalışılırdı. Best-effort:
+      // tek bir karenin alınamaması (ör. geçiş anında sayfa geçici olarak kapalı) run'ı ASLA
+      // etkilemez, sadece o kare atlanır.
+      if (input.enableLiveScreenshots) {
+        const captureAndScheduleNext = async (): Promise<void> => {
+          try {
+            const currentPage = browserManager.getPage();
+            if (!currentPage.isClosed()) {
+              const buffer = await currentPage.screenshot({ type: 'jpeg', quality: 50 });
+              this.emit({
+                type: 'live_frame',
+                runId,
+                imageBase64: buffer.toString('base64'),
+                timestamp: new Date().toISOString(),
+              });
+            }
+          } catch (err) {
+            log.debug({ err, runId }, 'Canlı ekran görüntüsü alınamadı (yok sayıldı, best-effort)');
+          } finally {
+            liveScreenshotTimer = setTimeout(() => {
+              void captureAndScheduleNext();
+            }, LIVE_SCREENSHOT_INTERVAL_MS);
+          }
+        };
+        liveScreenshotTimer = setTimeout(() => {
+          void captureAndScheduleNext();
+        }, LIVE_SCREENSHOT_INTERVAL_MS);
       }
 
       await page.goto(url, { timeout: options.navigationTimeoutMs, waitUntil: 'domcontentloaded' });
@@ -758,6 +828,13 @@ export class AgentLoop {
       this.emit({ type: 'run_error', runId, message: prefixedMessage });
       return await finishRun('error', prefixedMessage);
     } finally {
+      // v3.51 — bkz. liveScreenshotTimer dosya başı NOT'u: run'ın HANGİ yoldan bittiğinden
+      // (PASS/FAIL/ERROR/CANCELLED) bağımsız olarak, `finally` bloğunun İLK satırında KOŞULSUZ
+      // olarak durdurulur — böylece açık kalan bir zamanlayıcı asla süreci sızdırmaz. Zamanlayıcı
+      // hiç başlamadıysa (`enableLiveScreenshots` false/undefined) `clearTimeout(undefined)`
+      // güvenle hiçbir şey yapmaz.
+      clearTimeout(liveScreenshotTimer);
+
       // Kanıt yakalama en iyi çaba (best-effort) prensibiyle çalışır: herhangi bir aşaması
       // başarısız olursa run'ın PASS/FAIL sonucunu asla etkilemez, sadece loglanır.
       try {

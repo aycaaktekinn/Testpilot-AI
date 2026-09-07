@@ -1375,6 +1375,10 @@ async function initCreateTestPage() {
     const gridLiveViewLink =
         document.getElementById('gridLiveViewLink');
 
+    // v3.51 — bkz. app.js "LIVE EXECUTION LOG" bölümündeki showLiveStreamingLink/hideLiveStreamingLink.
+    const liveStreamingLink =
+        document.getElementById('liveStreamingLink');
+
     const generatedFileName =
         document.getElementById('generatedFileName');
 
@@ -2558,6 +2562,31 @@ async function initCreateTestPage() {
     }
 
 
+    // v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log panelinde Live
+    // Streaming... ayrı bir tab da açılsın". `openLiveLogSocket` SADECE tekli Run/Replay akışında
+    // çağrılır (bkz. o fonksiyonun dosya başı NOT'u — toplu/paralel koşumlar trackBatchRuns/
+    // trackSuiteBatchRuns'ı kullanır, BU fonksiyonu HİÇ çağırmaz) — bu yüzden burada koşulsuzca
+    // gösterilmesi, "paralel koşumlarda kesinlikle aktif olmasın" gereksinimini frontend katmanında
+    // da yapısal olarak garanti eder. Link, backend'in `/ws/runs/:runId` üzerinden aynı runId için
+    // 'live_frame' olayları yayınladığı (bkz. AgentLoopInput.enableLiveScreenshots) YENİ, bağımsız
+    // bir sayfayı (live-view.html) ayrı bir sekmede açar — bu sayfa KENDİ WebSocket bağlantısını
+    // kurar, burada AYRICA bir dinleyici eklemeye gerek yoktur.
+    function showLiveStreamingLink(runId) {
+
+        liveStreamingLink.href = `/live-view.html?runId=${encodeURIComponent(runId)}`;
+        liveStreamingLink.classList.remove('hidden');
+        liveStreamingLink.classList.add('flex');
+    }
+
+
+    function hideLiveStreamingLink() {
+
+        liveStreamingLink.classList.add('hidden');
+        liveStreamingLink.classList.remove('flex');
+        liveStreamingLink.href = '#';
+    }
+
+
     function disconnectLiveLog() {
 
         if (liveLogPollTimer) {
@@ -2601,6 +2630,14 @@ async function initCreateTestPage() {
 
         disconnectLiveLog();
 
+        // v3.51 — bkz. showLiveStreamingLink dosya başı NOT'u: "Koşum bitince live steaming
+        // kapansın" — run PASS/FAIL/ERROR/CANCELLED hangi yoldan biterse bitsin (bu fonksiyon
+        // TÜM terminal durumların ortak yolu), link burada gizlenir. Halihazırda açık olan
+        // live-view.html sekmesi KENDİ WS bağlantısı üzerinden run_finished/run_error'ı ayrıca
+        // görüp kendi "run bitti" durumunu gösterecektir (bkz. live-view.html) — burada o sekmeyi
+        // kapatmıyoruz, sadece BU sayfadaki linki gizliyoruz.
+        hideLiveStreamingLink();
+
         generateRunButton.disabled = false;
         stopTestButton.disabled = true;
 
@@ -2617,6 +2654,21 @@ async function initCreateTestPage() {
     function openLiveLogSocket(runId) {
 
         liveLogConnected = true;
+
+        // v3.52 — bkz. sohbet notu: "Suites kısmından başlatılan test için Live Streaming kısmı
+        // çalışmıyor". ÖNCEKİ tasarım (v3.51) bu linki runId bilinir bilinmez KOŞULSUZCA
+        // gösteriyordu — bu, `openLiveLogSocket`'in SADECE generateAndRun/replayGeneratedTest'ten
+        // (enableLiveScreenshots HER ZAMAN true) değil, "Running" rozetine tıklayıp BİLİNEN bir
+        // runId ile bağlanıldığında da (bkz. goToRunningTestLog → appState.pendingLiveRun.
+        // knownRunId) çağrılabildiğini gözden kaçırıyordu — o runId GERÇEKTEN paralel bir batch
+        // koşumuna (bkz. TestRunRequest.enableLiveScreenshots dosya başı NOT'u — 2+ dosyalı
+        // runGeneratedTestsBatch çağrılarında bu HİÇBİR ZAMAN true olmaz) ait olabilir, bu
+        // durumda link görünür ama arkasında hiçbir kare gelmediği için sonsuza kadar
+        // "Waiting for the first frame…" durumunda asılı kalırdı. ÇÖZÜM: link artık burada değil,
+        // AŞAĞIDAKİ 'live_frame' mesaj işleyicisinde, İLK gerçek kare fiilen geldiğinde gösterilir
+        // — bu sayede link SADECE backend'in GERÇEKTEN akış ürettiği run'larda (tekli Run/Replay
+        // VEYA Suites/Generated Tests'ten TEK dosyalı "batch" run'lar, bkz. LegacyTestService.
+        // runGeneratedTestsBatch'teki isSingleRun) görünür.
 
         const protocol =
             window.location.protocol === 'https:'
@@ -2647,6 +2699,17 @@ async function initCreateTestPage() {
                     } else if (data.type === 'grid_live_view') {
 
                         showGridLiveViewLink(data.url);
+
+                    } else if (data.type === 'live_frame') {
+
+                        // v3.52 — bkz. openLiveLogSocket dosya başı NOT'u: link SADECE burada,
+                        // backend'den GERÇEKTEN bir kare geldiğinde gösterilir — bu run'ın
+                        // `enableLiveScreenshots=true` ile başlatıldığının kanıtıdır. Bu sayfanın
+                        // KENDİSİ kareyi ÇİZMEZ (o iş live-view.html'in kendi WS bağlantısındadır);
+                        // burada SADECE linkin görünürlüğü/hedef runId'si güncellenir. showLiveStreamingLink
+                        // idempotenttir (href/class'ı yeniden ayarlamak zararsızdır) — her kare için
+                        // ayrı bir "zaten gösterildi mi" kontrolüne gerek yoktur.
+                        showLiveStreamingLink(runId);
 
                     } else if (data.type === 'run_finished') {
 
@@ -2793,6 +2856,11 @@ async function initCreateTestPage() {
         bddSaveStatus.textContent = '';
 
         hideGridLiveViewLink();
+
+        // v3.51 — bkz. showLiveStreamingLink dosya başı NOT'u: önceki run'dan kalmış (artık geçersiz
+        // runId'ye işaret eden) linki temizle — openLiveLogSocket az sonra YENİ runId ile tekrar
+        // gösterecek.
+        hideLiveStreamingLink();
 
         updateStatusBadge('running');
         showPanel('log');
@@ -3200,6 +3268,10 @@ async function initCreateTestPage() {
             // Önceki bir Grid koşusundan kalmış olabilecek linki temizle — bu run Grid kullanmıyorsa
             // ya da henüz session açılmadıysa yanlışlıkla eski/geçersiz bir linkin görünmesini önler.
             hideGridLiveViewLink();
+
+            // v3.51 — bkz. showLiveStreamingLink dosya başı NOT'u: aynı sebeple önceki run'ın
+            // Live Streaming linkini de temizle.
+            hideLiveStreamingLink();
 
 
             updateStatusBadge(

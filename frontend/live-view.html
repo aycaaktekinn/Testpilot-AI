@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<!--
+    v3.51 — bkz. sohbet notu: "Scenario Definition sayfasındaki Execution Log paneli içerisinde
+    Live Streaming diye bir alan olsun... ayrı bir tab da açılsın... belirli aralıklarla ekran
+    görüntüleri alınarak kullanıcılara video gibi gösterilecek şekilde ekrana yansısın. Koşum
+    bitince live steaming kapansın. Bu Live steaming özellik sadece tekli koşumda aktif olsun,
+    paralel koşumlarda kesinlikle aktif olmasın."
+
+    Bu, `frontend/pages/*.html` altındaki parça (fragment) sayfalardan FARKLI, TAMAMEN BAĞIMSIZ,
+    kendi başına bir HTML belgesidir (kendi <!DOCTYPE>/<head>/<body>'si var) — SPA'nın (index.html
+    + app.js) istemci taraflı yönlendirmesine DAHİL DEĞİLDİR, çünkü `app.js`'teki
+    `showLiveStreamingLink()` bunu `target="_blank"` ile TAMAMEN AYRI bir sekmede açar (bkz.
+    create-test.html'deki `liveStreamingLink`). Backend bu dosyayı `frontend/` klasörünün geri
+    kalanıyla AYNI şekilde statik olarak sunar (bkz. app.ts — `express.static(frontendDir)`), bu
+    yüzden `/live-view.html?runId=...` adresinden doğrudan erişilebilir.
+
+    Bu sayfa KENDİ `WebSocket` bağlantısını `/ws/runs/:runId` adresine (bkz. backend/src/api/ws/
+    runSocket.ts — herhangi bir AgentEvent'i KOŞULSUZ olarak ileten aynı genel kanal) açar ve
+    SADECE 'live_frame' olaylarını (bkz. AgentEvent tip tanımı, types.ts) dinleyerek bir <img>
+    öğesinin `src`'ini her karede günceller — ardışık JPEG karelerin hızlıca değişmesi "video gibi"
+    bir izlenim verir. `run_finished`/`run_error` geldiğinde akış durur ve net bir "run bitti"
+    durumu gösterilir (sekme OTOMATİK KAPATILMAZ — kullanıcı son kareyi/sonucu görebilsin diye,
+    tıpkı mevcut "Watch Live (Grid)" özelliğinin de sekmeyi kendiliğinden kapatmaması gibi).
+-->
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Live Streaming — TestPilot AI</title>
+
+    <link
+            href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
+            rel="stylesheet"
+    />
+    <link
+            href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600;700&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;500&display=swap"
+            rel="stylesheet"
+    />
+
+    <style>
+        /* v3.51 — renk paleti bilerek frontend/index.html'deki tailwind.config renkleriyle BİREBİR
+           aynı hex değerleriyle eşleştirildi (Tailwind CDN'e bağımlı olmadan, saf CSS ile) — bu
+           sayede bu bağımsız sayfa da uygulamanın geri kalanıyla görsel olarak tutarlı görünür. */
+        :root {
+            --background: #0b1326;
+            --surface-container: #171f33;
+            --surface-container-high: #222a3d;
+            --surface-container-highest: #2d3449;
+            --on-surface: #dae2fd;
+            --on-surface-variant: #c7c4d8;
+            --outline-variant: #464555;
+            --primary: #c3c0ff;
+            --primary-container: #4f46e5;
+            --secondary: #4edea3;
+            --error: #ffb4ab;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: var(--background);
+            color: var(--on-surface);
+            font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 16px 24px;
+            background: var(--surface-container);
+            border-bottom: 1px solid var(--outline-variant);
+        }
+
+        header h1 {
+            font-family: 'Geist', 'Inter', ui-sans-serif, system-ui, sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #runIdLabel {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 12px;
+            color: var(--on-surface-variant);
+        }
+
+        #statusBadge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        #statusBadge.status-connecting {
+            background: rgba(195, 192, 255, 0.15);
+            color: var(--primary);
+        }
+
+        #statusBadge.status-live {
+            background: rgba(78, 222, 163, 0.15);
+            color: var(--secondary);
+        }
+
+        #statusBadge.status-finished {
+            background: rgba(195, 192, 255, 0.15);
+            color: var(--primary);
+        }
+
+        #statusBadge.status-error {
+            background: rgba(255, 180, 171, 0.15);
+            color: var(--error);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 9999px;
+            background: currentColor;
+        }
+
+        #statusBadge.status-live .pulse-dot {
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        main {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            overflow: auto;
+        }
+
+        #frameWrapper {
+            position: relative;
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--outline-variant);
+            background: var(--surface-container);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        #frameImage {
+            display: block;
+            max-width: 100%;
+            max-height: calc(100vh - 140px);
+        }
+
+        #placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 64px 48px;
+            color: var(--on-surface-variant);
+            font-size: 14px;
+            text-align: center;
+        }
+
+        #placeholder .material-symbols-outlined {
+            font-size: 40px;
+            color: var(--on-surface-variant);
+        }
+
+        #finishedOverlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 8px;
+            background: rgba(11, 19, 38, 0.72);
+            color: var(--on-surface);
+            font-size: 14px;
+            font-weight: 600;
+            text-align: center;
+            padding: 24px;
+        }
+
+        #finishedOverlay .material-symbols-outlined {
+            font-size: 32px;
+        }
+
+        footer {
+            padding: 10px 24px;
+            font-size: 12px;
+            color: var(--on-surface-variant);
+            background: var(--surface-container);
+            border-top: 1px solid var(--outline-variant);
+            text-align: center;
+        }
+
+        .material-symbols-outlined {
+            font-family: 'Material Symbols Outlined';
+            font-weight: normal;
+            font-style: normal;
+            font-size: 20px;
+            line-height: 1;
+            letter-spacing: normal;
+            text-transform: none;
+            display: inline-block;
+            white-space: nowrap;
+            word-wrap: normal;
+            direction: ltr;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>
+        <span class="material-symbols-outlined">sensors</span>
+        Live Streaming
+        <span id="runIdLabel"></span>
+    </h1>
+
+    <span class="status-connecting" id="statusBadge">
+        <span class="pulse-dot"></span>
+        <span id="statusText">Connecting…</span>
+    </span>
+</header>
+
+<main>
+    <div id="frameWrapper">
+        <div id="placeholder">
+            <span class="material-symbols-outlined">hourglass_top</span>
+            <span>Waiting for the first frame…</span>
+        </div>
+
+        <img alt="Live run screenshot" id="frameImage" style="display:none;"/>
+
+        <div id="finishedOverlay">
+            <span class="material-symbols-outlined" id="finishedIcon">check_circle</span>
+            <span id="finishedText"></span>
+        </div>
+    </div>
+</main>
+
+<footer>
+    Periodic screenshots, refreshed automatically while the run is in progress. This tab can be closed at any time.
+</footer>
+
+<script>
+    (function () {
+        'use strict';
+
+        var params = new URLSearchParams(window.location.search);
+        var runId = params.get('runId');
+
+        var runIdLabel = document.getElementById('runIdLabel');
+        var statusBadge = document.getElementById('statusBadge');
+        var statusText = document.getElementById('statusText');
+        var placeholder = document.getElementById('placeholder');
+        var frameImage = document.getElementById('frameImage');
+        var finishedOverlay = document.getElementById('finishedOverlay');
+        var finishedIcon = document.getElementById('finishedIcon');
+        var finishedText = document.getElementById('finishedText');
+
+        function setStatus(kind, text) {
+            statusBadge.className = 'status-' + kind;
+            statusText.textContent = text;
+        }
+
+        if (!runId) {
+            setStatus('error', 'Missing runId');
+            placeholder.innerHTML =
+                '<span class="material-symbols-outlined">error</span>' +
+                '<span>No runId was provided in the URL (?runId=...).</span>';
+            return;
+        }
+
+        runIdLabel.textContent = runId;
+
+        var frameCount = 0;
+        var finished = false;
+
+        function showFrame(imageBase64) {
+            frameCount += 1;
+            placeholder.style.display = 'none';
+            frameImage.style.display = 'block';
+            frameImage.src = 'data:image/jpeg;base64,' + imageBase64;
+
+            if (!finished) {
+                setStatus('live', 'Live (frame ' + frameCount + ')');
+            }
+        }
+
+        function showFinished(kind, label, icon) {
+            if (finished) {
+                return;
+            }
+            finished = true;
+
+            setStatus(kind === 'error' ? 'error' : 'finished', label);
+            finishedIcon.textContent = icon;
+            finishedIcon.style.color = kind === 'error' ? 'var(--error)' : 'var(--secondary)';
+            finishedText.textContent = label;
+            finishedOverlay.style.display = 'flex';
+        }
+
+        var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var socket;
+
+        try {
+            socket = new WebSocket(protocol + '//' + window.location.host + '/ws/runs/' + encodeURIComponent(runId));
+        } catch (err) {
+            setStatus('error', 'Connection failed');
+            return;
+        }
+
+        socket.addEventListener('open', function () {
+            if (!finished) {
+                setStatus('live', 'Connected — waiting for frames…');
+            }
+        });
+
+        socket.addEventListener('message', function (event) {
+            var data;
+
+            try {
+                data = JSON.parse(event.data);
+            } catch (err) {
+                return;
+            }
+
+            if (data.type === 'live_frame') {
+
+                showFrame(data.imageBase64);
+
+            } else if (data.type === 'run_finished') {
+
+                var status = data.status;
+                var icon = status === 'passed' ? 'check_circle' : 'cancel';
+                var label = 'Run finished: ' + status;
+                showFinished(status === 'passed' ? 'finished' : 'error', label, icon);
+
+            } else if (data.type === 'run_error') {
+
+                showFinished('error', 'Run error: ' + (data.message || 'unknown error'), 'error');
+
+            } else if (data.type === 'run_snapshot') {
+
+                // Geç bağlanan bir istemci — run WS bağlanmadan önce zaten bitmiş olabilir (bkz.
+                // app.js'teki AYNI desen). Bu durumda canlı kare beklemeden doğrudan bitiş
+                // durumunu gösteriyoruz.
+                var summaryStatus = data.summary && data.summary.status;
+                if (summaryStatus && ['passed', 'failed', 'error', 'cancelled'].indexOf(summaryStatus) !== -1) {
+                    var snapIcon = summaryStatus === 'passed' ? 'check_circle' : 'cancel';
+                    showFinished(summaryStatus === 'passed' ? 'finished' : 'error', 'Run finished: ' + summaryStatus, snapIcon);
+                }
+            }
+        });
+
+        socket.addEventListener('close', function () {
+            if (!finished) {
+                setStatus('finished', 'Connection closed');
+            }
+        });
+
+        socket.addEventListener('error', function () {
+            // Sessizce yok say — WS best-effort'tur, bağlantı kendiliğinden 'close' ile de düşebilir.
+        });
+    })();
+</script>
+
+</body>
+</html>

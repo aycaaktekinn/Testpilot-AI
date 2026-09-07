@@ -22,6 +22,29 @@ export interface TestRunRequest {
    * AI çağrısından kaçınır; yoksa bu alan boş bırakılıp normal (AI'lı) bir run başlatılır.
    */
   replaySteps?: ReplayStep[];
+  /**
+   * v3.52 — bkz. sohbet notu: "Suites kısmından başlatılan test için Live Streaming kısmı
+   * çalışmıyor". Kök sebep: Suites (ve Generated Tests "Run Selected") sayfası, TEK bir senaryo
+   * seçilse bile HER ZAMAN `/api/generated-tests/run-batch` uç noktasına gider (bkz.
+   * LegacyTestService.runGeneratedTestsBatch dosya başı NOT'u — `disableAutoRetry`'nin SADECE
+   * Suites tarafından gönderildiği açıklaması) — bu da `runManager.startRun`/
+   * `startRunWithAutoRetry`'ye düşer; bu iki metod `AgentLoopInput.enableLiveScreenshots`'ı HİÇ
+   * ayarlamadığından (bkz. o alanın AgentLoop.ts dosya başı NOT'u — bilerek SADECE
+   * generateAndRun/replayGeneratedTest'in ayarladığı bir alandı) Suites'ten (ya da Generated
+   * Tests'in toplu "Run Selected" düğmesinden) başlatılan HİÇBİR run canlı ekran görüntüsü
+   * yayınlamıyordu — TEK bir dosya seçilmiş olsa BİLE.
+   * ÇÖZÜM: bu alan, `runManager.startRun`/`startRunWithAutoRetry` üzerinden `AgentLoopInput.
+   * enableLiveScreenshots`'a KOŞULSUZ olarak taşınır (bkz. runManager.ts). Gerçek "tekli mi
+   * paralel mi" kararı ÇAĞIRAN tarafından (bkz. LegacyTestService.runGeneratedTestsBatch —
+   * `fileNames.length === 1` iken `true`, 2+ dosya İSE `false`/`undefined`) verilir — bu sayede
+   * "paralel koşumlarda kesinlikle aktif olmasın" gereksinimi KORUNUR (birden fazla dosya
+   * seçilip GERÇEKTEN paralel çalıştırıldığında bu alan hiçbir run'a `true` olarak gitmez), ama
+   * Suites/Generated Tests'ten TEK bir dosya çalıştırıldığında (ki bu FİİLEN tekli bir run'dır,
+   * sadece batch-şekilli bir uç noktadan geçer) artık Live Streaming DOĞRU şekilde çalışır.
+   * `undefined`/`false` iken (`/api/runs` genel API'sinin mevcut TÜM çağıranları dahil) davranış
+   * birebir ESKİSİ GİBİ kalır.
+   */
+  enableLiveScreenshots?: boolean;
 }
 
 export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
