@@ -294,6 +294,15 @@ export class LegacyTestService {
    * silinen kaydın `createdAt`/`ownerId` bilgisiyle (bkz. TestRunStore.delete dosya başı NOT'u)
    * WEB_RUNS'taki karşılığı da (varsa) best-effort silinmeye çalışılıyor — clearTestRunsBefore ile
    * AYNI desen: JSON tarafı asıl kaynak-of-truth'tur, Oracle hatası yanıtı ASLA etkilemez.
+   *
+   * v3.50 — GÜVENCE (bkz. sohbet notu: "koşumlardan herhangi biri ya da hepsi silindiğinde
+   * ilişkili senaryo suites sayfasında kesinlikle silinmesin"): bu metod (ve clearTestRuns/
+   * clearTestRunsBefore) SADECE `testRunStore` (JSON) ve WEB_RUNS (Oracle) satırlarını hedefler —
+   * `generatedTestStore`/`suiteStore`'a (Suites sayfasının veri kaynağı) VEYA Oracle'daki
+   * WEB_SCENARIOS'a KASITLI OLARAK HİÇ dokunmaz. Bir "run" bir senaryonun geçmişteki TEK BİR
+   * çalıştırılmasıdır; senaryo/suite kaydı bundan TAMAMEN BAĞIMSIZ yaşar ve run'ları silmek
+   * (hatta tüm run geçmişini) senaryoyu/suite üyeliğini SİLMEMELİDİR. Bu metodlara İLERİDE
+   * generatedTestStore/suiteStore çağrısı EKLEMEYİN — bu bilinçli bir tasarım kararıdır.
    */
   async deleteTestRun(id: string, caller: CallerContext): Promise<{ id: string }> {
     await this.assertRunAccess(id, caller);
@@ -308,6 +317,8 @@ export class LegacyTestService {
     return { id };
   }
 
+  // v3.50 — bkz. deleteTestRun dosya başı GÜVENCE notu: AYNI kural burada da geçerli — sadece
+  // testRunStore/WEB_RUNS'ı hedefler, generatedTestStore/suiteStore/WEB_SCENARIOS'a HİÇ dokunmaz.
   async clearTestRuns(caller: CallerContext): Promise<{ count: number }> {
     // ADMIN: predicate YOK — eski davranış (hepsini temizle) AYNEN korunur. MEMBER: sadece kendi
     // koşumlarını hedefleyen bir predicate (bkz. TestRunStore.clear() dosya başı NOT'u).
@@ -335,6 +346,9 @@ export class LegacyTestService {
    * clearTestRuns ile tutarlı kalması için MEMBER dalı da bilinçli olarak korundu), buna EK
    * olarak `createdAt < cutoffDate` filtresi ekler — yani "cutoffDate'TEN ESKİ (ondan önce
    * oluşturulmuş) koşumları sil" anlamına gelir; cutoffDate'in kendisi ve sonrası SİLİNMEZ.
+   *
+   * v3.50 — bkz. deleteTestRun dosya başı GÜVENCE notu: AYNI kural burada da geçerli — sadece
+   * testRunStore/WEB_RUNS'ı hedefler, generatedTestStore/suiteStore/WEB_SCENARIOS'a HİÇ dokunmaz.
    */
   async clearTestRunsBefore(cutoffDateIso: string, caller: CallerContext): Promise<{ count: number }> {
     const cutoff = new Date(cutoffDateIso);

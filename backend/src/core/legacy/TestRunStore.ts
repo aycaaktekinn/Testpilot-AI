@@ -12,6 +12,14 @@ const log = createLogger('TestRunStore');
  * özeti) için beklediği hafif koşum geçmişini tek bir JSON dosyasında (append-only index) tutar.
  * Bu, AgentLoop'un yazdığı DETAYLI adım-adım JSON loglarından (RunLogger) farklı ve ayrı bir
  * kayıttır — burası sadece liste/istatistik görünümleri için gereken özet alanları içerir.
+ *
+ * v3.50 — GÜVENCE (bkz. sohbet notu: "koşumlardan herhangi biri ya da hepsi silindiğinde ilişkili
+ * senaryo suites sayfasında kesinlikle silinmesin"): bu store SADECE `test-runs-index.json` + run
+ * detay/artefakt dosyalarını yönetir. `GeneratedTestStore`/`SuiteStore` (Suites sayfasının veri
+ * kaynağı, bkz. o dosyaların başı) TAMAMEN AYRI dosyalardır (generated-tests/index.json,
+ * suites-index.json) — bu sınıfın `delete()`/`clear()` metodları onlara HİÇBİR ZAMAN dokunmaz ve
+ * dokunmamalıdır; bir run'ı (hatta tüm run geçmişini) silmek, o run'ın ait olduğu senaryo/suite
+ * kaydını SİLMEZ.
  */
 export class TestRunStore {
   private readonly indexPath: string;

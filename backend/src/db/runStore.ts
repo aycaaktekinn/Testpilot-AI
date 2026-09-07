@@ -6,6 +6,15 @@ import { withConnection } from './oracleClient.js';
  * Her test çalıştırması (generate-and-run / replay / batch içindeki her item) için TEK bir
  * WEB_SCENARIOS satırı + TEK bir WEB_RUNS satırı oluşturulur (mevcut JSON davranışıyla birebir aynı
  * semantik: "her çalıştırma yeni bir kayıt" — dedup/reuse mantığı YOK, bilinçli olarak).
+ *
+ * v3.50 — GÜVENCE (bkz. sohbet notu: "koşumlardan herhangi biri ya da hepsi silindiğinde ilişkili
+ * senaryo suites sayfasında kesinlikle silinmesin"): bu dosyadaki HER silme fonksiyonu
+ * (deleteRunsBefore/deleteRunByFinishedAt/deleteAllRuns) SADECE `DELETE FROM WEB_RUNS` çalıştırır —
+ * WEB_SCENARIOS'a (Suites sayfasının Oracle karşılığı) HİÇBİR ZAMAN dokunmaz. Zaten FK yönü de
+ * bunu yapısal olarak imkansız kılar: FK_RUNS_SCENARIO (WEB_RUNS.SCENARIO_ID -> WEB_SCENARIOS,
+ * ON DELETE CASCADE) SADECE ebeveynden (WEB_SCENARIOS) çocuğa (WEB_RUNS) doğru kaskad yapar —
+ * bir WEB_RUNS satırını silmek asla WEB_SCENARIOS'u etkilemez. Bu dosyaya İLERİDE WEB_SCENARIOS
+ * hedefleyen bir DELETE eklemeyin.
  */
 export interface CreateRunInput {
   scenarioId: number;
