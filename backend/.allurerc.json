@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    "packages",
+    "behaviors",
+    "timeline",
+    "test-runs",
+    "environment-info"
+  ]
+}

@@ -18,7 +18,10 @@
     "playwright:install": "playwright install --with-deps chromium firefox webkit",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:rename-web-tables": "tsx src/db/renameWebTables.ts",
-    "create-admin": "tsx src/db/createAdminUser.ts"
+    "create-admin": "tsx src/db/createAdminUser.ts",
+    "allure:generate": "allure generate allure-results -o allure-report --clean",
+    "allure:open": "allure open allure-report",
+    "allure:serve": "allure serve allure-results"
   },
   "dependencies": {
     "@zilliz/milvus2-sdk-node": "^2.4.9",

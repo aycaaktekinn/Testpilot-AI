@@ -119,6 +119,9 @@ export class AllureReportService {
    * `allure generate` CLI'ını çalıştırıp statik HTML raporunu üretir. Bu bir "iş mantığı" hatası
    * (ör. Java/JVM kurulu değil) olabileceğinden, çağıran tarafın generic bir 500 yerine anlaşılır
    * bir mesaj gösterebilmesi için HİÇBİR ZAMAN fırlatmaz — her zaman { ok, message } döner.
+   * 
+   * v3.50 — Global allure (npm install -g allure-commandline) kullanılır, böylece standart
+   * Allure 2.43.0 formatında sol menülü modern rapor üretilir.
    */
   async generateReport(): Promise<{ ok: boolean; message: string }> {
     const hasResults = await this.hasAnyResults();
@@ -126,20 +129,25 @@ export class AllureReportService {
       return { ok: false, message: 'Henüz hiç test koşumu kaydedilmedi; önce en az bir test çalıştırın.' };
     }
 
-    const allureBin = path.join(
-      process.cwd(),
-      'node_modules',
-      '.bin',
-      process.platform === 'win32' ? 'allure.cmd' : 'allure',
-    );
+    // Allure binary'sinin absolute path'sini bul
+    const allurePath = '/usr/local/bin/allure';
+    
+    // Allure'un varlığını kontrol et
+    try {
+      await stat(allurePath);
+    } catch {
+      return { ok: false, message: 'Allure CLI bulunamadı. Lütfen global olarak kurun: npm install -g allure-commandline' };
+    }
 
     try {
       await rm(this.reportDir, { recursive: true, force: true });
       await mkdir(this.reportDir, { recursive: true });
-      await execFileAsync(allureBin, ['generate', this.resultsDir, '-o', this.reportDir], {
+      
+      await execFileAsync(allurePath, ['generate', this.resultsDir, '-o', this.reportDir, '--clean'], {
         timeout: GENERATE_TIMEOUT_MS,
       });
-      log.info({ resultsDir: this.resultsDir, reportDir: this.reportDir }, 'Allure raporu oluşturuldu');
+      
+      log.info({ resultsDir: this.resultsDir, reportDir: this.reportDir }, 'Allure raporu oluşturuldu (global allure)');
       return { ok: true, message: 'Allure raporu oluşturuldu.' };
     } catch (err) {
       const message = this.friendlyGenerateError(err);
@@ -244,15 +252,13 @@ export class AllureReportService {
     const raw = extractErrorText(err);
 
     if (isEnoentError(err) || /command not found|not recognized as an internal/i.test(raw)) {
-      return 'Allure CLI bulunamadı. Backend klasöründe "npm install" çalıştırıp tekrar deneyin.';
+      return 'Allure CLI bulunamadı. Lütfen global olarak kurun: npm install -g allure-commandline';
     }
 
     // Allure'ın Java tabanlı komutları (v2 "allure-commandline") JVM bulunamazsa genelde
-    // stderr'de "java"/"jvm" geçen bir mesaj verir — v3'ün saf Node.js CLI'ı için bu artık
-    // beklenmiyor, ama farklı bir kurulumla (ör. eski bir global "allure" komutu PATH'te) yine
-    // de karşılaşılabilir; kullanıcıya en azından NEDEN başarısız olduğuna dair bir ipucu verelim.
+    // stderr'de "java"/"jvm" geçen bir mesaj verir
     if (/java|jvm/i.test(raw) && /(not found|no such file|unable to find|is not recognized)/i.test(raw)) {
-      return 'Java (JVM) bulunamadı. Bu sistemdeki Allure kurulumu Java gerektiriyor olabilir — Java 8+ kurup tekrar deneyin.';
+      return 'Java (JVM) bulunamadı. Allure çalışması için Java 17+ gereklidir — Java kurup tekrar deneyin.';
     }
 
     return raw ? `Rapor oluşturulamadı: ${truncate(raw, 400)}` : 'Rapor oluşturulamadı (bilinmeyen hata).';

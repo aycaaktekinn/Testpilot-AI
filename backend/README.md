@@ -319,11 +319,184 @@ bağlama göre çeşitlendirilmiş, gerçekçi senaryo önerileri ister (`POST /
 
 ## Allure raporlama
 
-Her run tamamlandığında (legacy adaptör üzerinden), `AllureReportService` sonucu `ALLURE_RESULTS_DIR`
-altına Allure'ın beklediği `*-result.json` formatında yazar (best-effort — bu asla run'ın PASS/FAIL
-sonucunu etkilemez). Reports sayfasındaki "Generate Report" butonu, `POST /api/allure/generate` ile
-bu sonuçlardan statik bir HTML raporu üretir (`allure` npm paketi, ekstra bir kurulum gerekmez) ve
-`ALLURE_REPORT_DIR` altına yazar; bu klasör `/allure-report` altında sunulur.
+Bu proje **Allure 3** ile tam entegredir ve detaylı, görsel test raporları oluşturur.
+
+### 📋 Gereksinimler
+
+- ✅ **Java 17+** (JDK 25 yüklü) - Allure CLI çalışması için gerekli
+- ✅ **allure-commandline** - `package.json`'da zaten tanımlı (`^2.43.0`)
+
+### 🚀 Hızlı Başlangıç
+
+#### 1. Kurulum Kontrolü
+
+```bash
+cd backend
+./scripts/setup-allure.sh
+```
+
+Bu script Java ve Allure kurulumunuzu doğrular.
+
+#### 2. Testleri Çalıştırın
+
+Testleri çalıştırdığınızda, sonuçlar otomatik olarak `allure-results` klasörüne kaydedilir:
+
+```bash
+npm test
+# veya
+npm run dev  # backend çalışırken testler otomatik kaydedilir
+```
+
+#### 3. Rapor Oluştur
+
+```bash
+npm run allure:generate
+```
+
+Bu komut:
+- `allure-results` klasöründeki tüm test sonuçlarını okur
+- Temiz bir HTML raporu oluşturur
+- `allure-report` klasörüne yazar
+
+#### 4. Raporu Aç
+
+**Seçenek A: Statik Raporu Aç**
+```bash
+npm run allure:open
+```
+
+**Seçenek B: Canlı Önizleme (Önerilen)**
+```bash
+npm run allure:serve
+```
+
+Bu komut:
+- Geçici bir HTTP sunucusu başlatır
+- Raporu otomatik olarak tarayıcınızda açar
+- Yeni test çalıştırıldığında sayfayı yenilemeniz yeterlidir
+
+### 📊 Kullanım Senaryoları
+
+#### Tek Seferlik Rapor
+
+```bash
+# Testleri çalıştır
+npm test
+
+# Rapor oluştur ve aç
+npm run allure:generate
+npm run allure:open
+```
+
+#### Sürekli Geliştirme (Live Preview)
+
+```bash
+# Backend'i başlat
+npm run dev
+
+# Yeni bir terminalde canlı önizleme başlat
+npm run allure:serve
+
+# Testleri çalıştırdıkça rapor otomatik güncellenir
+```
+
+#### CI/CD Entegrasyonu
+
+```bash
+# Testler
+npm test
+
+# Rapor oluştur
+npm run allure:generate
+
+# Raporu artifact olarak kaydet
+# (GitHub Actions, Jenkins, vb. için allure-report klasörünü yükle)
+```
+
+### 🎨 Rapor Özellikleri
+
+Allure raporu şu bilgileri içerir:
+
+- ✅ **Test Durumu**: Geçti/Failed/Beklemede
+- 📝 **Adım Adım Loglar**: Her aksiyon detaylı
+- 🖼️ **Ekran Görüntüleri**: Screenshot'lar
+- 🎬 **Video Kayıtları**: Test akışı videosu
+- 🔍 **Trace Dosyaları**: Playwright trace
+- 📊 **Trend Grafiği**: Zaman içinde test performansı
+- 🏷️ **Etiketler**: Suite, framework, browser
+- 🔗 **Parametreler**: URL, Browser, Variables
+
+### 🛠️ Scriptler
+
+| Komut | Açıklama |
+|-------|----------|
+| `npm run allure:generate` | Test sonuçlarından HTML raporu oluştur |
+| `npm run allure:open` | Raporu varsayılan tarayıcıda aç |
+| `npm run allure:serve` | Canlı önizleme sunucusu başlat (önerilen) |
+| `./scripts/setup-allure.sh` | Kurulum kontrolü yap |
+
+### 📁 Klasör Yapısı
+
+```
+backend/
+├── allure-results/          # Ham test sonuçları (JSON)
+│   ├── *-result.json
+│   └── *-attachment.png
+├── allure-report/           # Oluşturulmuş HTML raporu
+│   ├── index.html
+│   ├── widgets/
+│   └── ...
+└── scripts/
+    └── setup-allure.sh      # Kurulum kontrol scripti
+```
+
+### 🔧 Sorun Giderme
+
+#### "Allure CLI bulunamadı" hatası
+
+```bash
+npm install
+```
+
+#### "Java bulunamadı" hatası
+
+```bash
+# Java 25 zaten yüklü, PATH kontrolü yapın:
+java -version
+
+# Eğer bulunamazsa:
+echo 'export PATH="/opt/homebrew/opt/openjdk@25/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### Rapor boş görünüyor
+
+```bash
+# Önce test çalıştırın, sonra rapor oluşturun:
+npm test
+npm run allure:generate
+```
+
+### 🌐 Frontend Entegrasyonu
+
+Backend, Allure raporlarını otomatik olarak sunar:
+
+- **Rapor Durumu**: `http://localhost:4000/api/allure/status`
+- **Rapor Oluştur**: `POST http://localhost:4000/api/allure/generate`
+- **Rapor Temizle**: `DELETE http://localhost:4000/api/allure/results`
+- **Statik Rapor**: `http://localhost:4000/allure-report`
+
+Frontend'deki "Reports" sayfası bu endpoint'leri kullanarak:
+- Rapor durumunu kontrol eder
+- Rapor oluşturur
+- Raporu görüntüler
+- Eski sonuçları temizler
+
+### 📚 Daha Fazla Bilgi
+
+- [Allure Documentation](https://allurereport.org/)
+- [Allure Playwright](https://www.npmjs.com/package/allure-playwright)
+- [Allure Commandline](https://www.npmjs.com/package/allure-commandline)
 
 ## Örnek istek
 
